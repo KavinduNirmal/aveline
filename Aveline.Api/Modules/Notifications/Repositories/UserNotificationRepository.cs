@@ -46,6 +46,8 @@ public class UserNotificationRepository : IUserNotificationRepository
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
+        await AttachOrganizationsAsync(items, cancellationToken);
+
         return (items, total);
     }
 
@@ -60,12 +62,60 @@ public class UserNotificationRepository : IUserNotificationRepository
 
     public async Task<UserNotification?> GetByIdAsync(Guid id, Guid userId, CancellationToken cancellationToken = default)
     {
-        return await _context.UserNotifications
+        var item = await _context.UserNotifications
             .AsNoTracking()
             .Include(n => n.Notification)
             .FirstOrDefaultAsync(
                 n => n.Id == id && n.UserId == userId && n.DismissedAt == null,
                 cancellationToken);
+
+        if (item is not null)
+        {
+            await AttachOrganizationsAsync([item], cancellationToken);
+        }
+
+        return item;
+    }
+
+    /// <summary>
+    /// Populates the dispatching organisation on each item's notification, for the inbox's
+    /// per-row boutique label.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately a second query rather than <c>ThenInclude(r =&gt; r.Organization)</c>.
+    /// <see cref="NotificationRecord.OrganizationId"/> is a required FK, so EF treats the
+    /// navigation as a required reference and its include drops any row whose organisation
+    /// row is absent. A label is not worth losing an inbox row over, so the org is looked up
+    /// separately and a missing one simply leaves the name null. No schema change.
+    /// </remarks>
+    private async Task AttachOrganizationsAsync(
+        IReadOnlyList<UserNotification> items,
+        CancellationToken cancellationToken)
+    {
+        var organizationIds = items
+            .Where(item => item.Notification is not null)
+            .Select(item => item.Notification!.OrganizationId)
+            .Distinct()
+            .ToList();
+
+        if (organizationIds.Count == 0)
+        {
+            return;
+        }
+
+        var organizations = await _context.Organizations
+            .AsNoTracking()
+            .Where(organization => organizationIds.Contains(organization.Id))
+            .ToDictionaryAsync(organization => organization.Id, cancellationToken);
+
+        foreach (var item in items)
+        {
+            if (item.Notification is not null
+                && organizations.TryGetValue(item.Notification.OrganizationId, out var organization))
+            {
+                item.Notification.Organization = organization;
+            }
+        }
     }
 
     public async Task MarkReadAsync(Guid id, Guid userId, CancellationToken cancellationToken = default)

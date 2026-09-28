@@ -1,0 +1,108 @@
+# Grafana unified-alerting rules (Slice 3), file-provisioned (apiVersion: 1).
+# ONE operator alert to start, plus the recording-rule-backed error-ratio alert. The eleven
+# seeded product rules stay in SystemAlertRuleSeed and are surfaced by the product, not here.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: aveline-operator
+    folder: Aveline
+    folderUid: aveline
+    interval: 1m
+    rules:
+      - uid: aveline-api-scrape-down
+        title: Aveline API scrape down
+        condition: C
+        for: 3m
+        noDataState: Alerting
+        execErrState: Error
+        labels:
+          severity: critical
+        annotations:
+          summary: Prometheus cannot scrape the Aveline API /metrics endpoint
+          description: >-
+            The scrape has been failing for three minutes. Check that the API is running and that
+            METRICS_SCRAPE_TOKEN matches the contents of
+            observability/prometheus/secrets/scrape_token.
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: aveline-prometheus
+            model:
+              editorMode: code
+              expr: up{job="aveline-api"}
+              instant: true
+              range: false
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+              conditions:
+                - evaluator:
+                    params: [0]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query
+
+      - uid: aveline-api-error-ratio
+        title: Aveline API error ratio high
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: Aveline API 5xx ratio above 5% for 10 minutes
+          description: >-
+            The product's own api.error.rate rule notifies boutique roles through the product
+            inbox; this operator alert must never share its contact point (plan §3.4).
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: aveline-prometheus
+            model:
+              editorMode: code
+              expr: aveline:api_error_ratio:rate5m
+              instant: true
+              range: false
+              intervalMs: 15000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+              conditions:
+                - evaluator:
+                    params: [0.05]
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    type: last
+                  type: query

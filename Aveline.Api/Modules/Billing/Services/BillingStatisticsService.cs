@@ -5,6 +5,7 @@ using Aveline.Api.Modules.Billing.DTOs;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Statistics.DTOs;
+using Aveline.Api.Modules.Statistics.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace Aveline.Api.Modules.Billing.Services;
@@ -45,12 +46,10 @@ public class BillingStatisticsService(
             }
         }
 
-        var dataQuality = new AgentDataQualityDto(
-            LatencyInstrumented: true,
-            NodeFailuresObserved: true,
-            PerStepAttribution: true,
-            ToolInstrumented: true,
-            CostInstrumented: false);
+        // M-6: derive from the agent rows in the window; never assert a flag because an
+        // instrument exists. An empty window must report every flag as false.
+        var dataQuality = await DeriveAgentDataQualityAsync(
+            organizationId, start, now, cancellationToken);
 
         return new BurnRateResponseDto(
             Window: $"{days}d",
@@ -151,12 +150,8 @@ public class BillingStatisticsService(
         var totalRevenue = series.Sum(s => s.BlossomRevenue);
         var totalCost = series.Sum(s => s.ActualCostUsd);
 
-        var dataQuality = new AgentDataQualityDto(
-            LatencyInstrumented: true,
-            NodeFailuresObserved: true,
-            PerStepAttribution: true,
-            ToolInstrumented: true,
-            CostInstrumented: records.Any(r => r.ActualCostUsd > 0));
+        // M-6: the profitability window is system-wide, so derive from every run in it.
+        var dataQuality = await DeriveAgentDataQualityAsync(null, start, end, cancellationToken);
 
         return new BillingProfitabilityDto(
             GroupBy: mode,
@@ -348,5 +343,35 @@ public class BillingStatisticsService(
             Blocked: (int)totalBlocked,
             BlockedRate: Math.Round(blockedRate, 4),
             ByViolatedKey: byKey);
+    }
+
+    /// <summary>
+    /// M-6 — derive the agent <c>dataQuality</c> block from the rows in the window. The
+    /// deriver (which had zero call sites) is the only honest source: a flag becomes
+    /// <c>true</c> only when a run or step row justifies it, and an empty window is all false.
+    /// </summary>
+    private async Task<AgentDataQualityDto> DeriveAgentDataQualityAsync(
+        Guid? organizationId,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken)
+    {
+        var runsQuery = db.AgentWorkflowRuns
+            .Where(run => run.StartedAt >= from && run.StartedAt <= to);
+
+        if (organizationId is { } scopedOrganizationId)
+        {
+            runsQuery = runsQuery.Where(run => run.OrganizationId == scopedOrganizationId);
+        }
+
+        var runs = await runsQuery.ToListAsync(cancellationToken);
+        var runIds = runs.Select(run => run.Id).ToList();
+        var steps = runIds.Count == 0
+            ? new List<AgentStepRun>()
+            : await db.AgentStepRuns
+                .Where(step => runIds.Contains(step.WorkflowRunId))
+                .ToListAsync(cancellationToken);
+
+        return AgentDataQualityDto.Derive(runs, steps);
     }
 }

@@ -31,6 +31,7 @@ import { PhoneMockup } from '@/components/site/PhoneMockup'
 import { HeroSlideshow } from '@/components/site/HeroSlideshow'
 import { SocialProofBar } from '@/components/site/SocialProofBar'
 import { ProblemSection } from '@/components/site/ProblemSection'
+import { PrivacySection } from '@/components/site/PrivacySection'
 import { TestimonialsSection } from '@/components/site/TestimonialsSection'
 import { AppleIcon, CurvedArrow, PlayStoreIcon } from '@/components/site/Icons'
 import { cn } from '@/lib/utils'
@@ -143,9 +144,9 @@ const AGENTS: Agent[] = [
   },
   {
     name: 'Lina',
-    tint: 'from-rose-200/70 via-[#ffe9ef] to-white',
-    ink: 'text-commerce',
-    chip: 'bg-commerce',
+    tint: 'from-lilac/20 via-lilac-soft to-white',
+    ink: 'text-lilac',
+    chip: 'bg-lilac',
     tag: 'The commerce agent',
     line: 'She closes with care.',
     copy: 'Checks margins, issues deposits, and pauses big decisions for your approval before delivery.',
@@ -196,7 +197,7 @@ function AgentWorkflow() {
   const flows = [
     { key: 'ava', d: 'M450 0 L450 56 L150 56 L150 130', color: '#b0566b' },
     { key: 'elle', d: 'M450 0 L450 56 L450 130', color: '#8a6a14' },
-    { key: 'lina', d: 'M450 0 L450 56 L750 56 L750 130', color: '#7a303f' },
+    { key: 'lina', d: 'M450 0 L450 56 L750 56 L750 130', color: '#6b5a9e' },
   ]
 
   return (
@@ -608,6 +609,10 @@ export function LandingPage() {
 
       {/* ------------------------------------------------ 5. Problem Section (2 by 2 Whimsical Cards) */}
       <ProblemSection />
+
+      {/* ------------------------------------------------ 5b. Privacy & Transparency — the
+          commitment that answers the problem, placed immediately after it (plan §8.5.5 item 2). */}
+      <PrivacySection />
 
       {/* ------------------------------------------------ Persona Quote */}
       <section className="relative overflow-hidden border-y-2 border-dashed border-neutral-200 bg-white">

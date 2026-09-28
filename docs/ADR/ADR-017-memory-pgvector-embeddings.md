@@ -59,7 +59,13 @@ in-memory provider cannot exercise the vector column.
   embeds the query text server-side via `IEmbeddingService`.
 - CI's `build-api` job must be able to run Docker (Testcontainers) for the pgvector tests.
 - Because the column is external to EF, the `.NET` model never reads the raw vector into memory —
-  search returns projected `(content, category, similarity)` results, never the embedding blob.
+  search returns a projection (`content`, `category`, `source`, `confidence`, `isExplicit`,
+  `similarity`), never the embedding blob. `source` and `isExplicit` are selected because the
+  stated-versus-inferred distinction is the one a reader acts on, and it used to be unrecoverable
+  from a search round trip.
+- Search accepts a `minSimilarity` floor and applies it as a predicate rather than a post-filter,
+  alongside the tenant, customer, soft-delete and expiry predicates. Ranking alone always returns
+  `topK` rows however irrelevant, which is the wrong answer for an agent asking for context.
 - `Embeddings:ApiKey`/`Embeddings:BaseUrl`/`Embeddings:Model` must be configured before the
   search/save endpoints can call the provider.
 
@@ -67,6 +73,7 @@ in-memory provider cannot exercise the vector column.
 - [ADR-002](ADR-002-agent-framework.md) — LangGraph agent layer consuming these endpoints.
 - [ADR-003](ADR-003-database-strategy.md) — PostgreSQL + pgvector single datastore.
 - [ADR-009](ADR-009-internal-service-authentication.md) — internal endpoints use `X-Internal-Token`.
+- [ADR-025](ADR-025-handbook-knowledge-base.md) — the hybrid (dense + lexical, RRF-fused) retrieval pattern customer memory now adopts.
 
 ## Follow-up (Slice 1 finalization, Issues #163–#167)
 
@@ -74,7 +81,7 @@ The LLM is now live in the running path (previously the memory agent was rule-ba
 and `create_chat_model` was dead code):
 
 - **Draft generation** uses `create_chat_model` when `AGENT_LLM_ENABLED` and an `LLM_API_KEY` +
-  `LLM_MODEL` are configured (`agnet-service/app/llm/runtime.py`). A deterministic template is the
+  `LLM_MODEL` are configured (`agent-service/app/llm/runtime.py`). A deterministic template is the
   fallback whenever no model/key is present or the provider call fails, so CI and keyless local
   dev stay green and production degrades gracefully.
 - **Usage / Blossoms** are reported for every completed workflow run to `/internal/usage/record`
@@ -83,4 +90,45 @@ and `create_chat_model` was dead code):
 - **Agent outputs** are validated against the `MemoryAgentOutput` Pydantic schema in the running
   path (`app/schemas/customer_memory.py`), so contract drift between the graph's dicts and the
   typed schema fails loudly instead of silently.
+
+## Implementation note: customer memory adopts the hybrid pattern (ADR-025)
+
+Customer-memory search was the last dense-only retrieval in the system. It now mirrors
+[ADR-025](ADR-025-handbook-knowledge-base.md): one statement runs a pgvector cosine leg and a
+PostgreSQL full-text leg over the same tenant + customer + live + unexpired filter, and fuses them
+with Reciprocal Rank Fusion.
+
+**Why adopt it here.** Parity is not the reason by itself - the reason is that the two stores answer
+different query shapes and memory was only serving one of them. Memory queries are frequently exact
+tokens: a garment or product name a customer mentioned ("Kanjeevaram", "Banarasi silk", "bridal
+lehenga"), a label-like phrase, or a term a paraphrase-trained embedding ranks mid-pack. The
+handbook's eval showed the lexical leg is what carries those (competitive with the dense leg on
+exact queries, and collapsed on paraphrases), and the fused result was never worse than either leg.
+
+- **The store is small and customer-scoped, and that is the point.** The lexical leg is not earning
+  its place on corpus size (the handbook's corpus needed `websearch_to_tsquery` precision across
+  many sources). Its recall is bounded to one customer's live notes, so the candidate set is tiny
+  and the GIN lookup is cheap; what the leg buys is exact-token *precision* on the vocabulary the
+  customer actually used. A dense leg alone blurs a specific garment name into a general "elegant
+  clothing" region, which a boutique experiences as "it forgot the saree I told it about".
+- **RRF is rank-based for the same reason it is in the handbook.** Cosine similarity and
+  `ts_rank_cd` are not on a comparable scale, so a hit found by only one leg must still place.
+
+**What was added (migration `AddCustomerMemorySearchVector`).** A generated `SearchVector tsvector`
+weighted `Content` `'A'` then `Category` `'B'`, plus a GIN index. Like the `embedding vector(1536)`
+column, `SearchVector` is **not** part of the EF model - EF cannot map `tsvector`, and mapping it
+would break the in-memory provider for the whole suite - so it is created by raw SQL and searched
+through raw SQL in `CustomerMemoryRepository`. The GIN index is **partial on `DeletedAt IS NULL`**:
+every search leg filters live rows, and rows are only ever soft-deleted except by a GDPR erase, so
+indexing withdrawn notes would be dead weight (and the predicate matches the existing partial unique
+index's definition of "present").
+
+**Eval surface.** `MemorySearchRequest.Mode` is `hybrid` (default) | `lexical` | `vector`, and each
+hit carries `VectorRank`, `LexicalRank` and the fused `Score` alongside the dense `Similarity`. An
+unknown mode is refused (`400`) rather than defaulted: a misspelled single-leg request silently
+answered by fusion would be read as a leg measurement. `MinSimilarity` continues to bound the
+**dense leg only** - a lexical hit has no cosine to floor, and a post-fusion floor would delete
+exactly the lexical-only hits the hybrid exists to surface. A failed query embedding degrades the
+search to the lexical leg, as it does for the handbook, with `VectorRank` NULL so the degradation is
+visible on the wire.
 

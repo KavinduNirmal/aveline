@@ -64,7 +64,7 @@ graph TD
 | REQ-001 | Disallowed Lockfile Rejection | High | Fails if `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml` are present. |
 | REQ-002 | Secret and Environment File Guard | High | Fails if non-example `.env` files are pushed. |
 | REQ-003 | ASP.NET Core Compilation & Tests | High | Restores, builds, and runs the xUnit suite for `Aveline.Api.sln`. |
-| REQ-004 | Python Agent Lint & Tests | High | Ruff passes on `agnet-service/app/`; pytest passes on `agnet-service/tests/`. |
+| REQ-004 | Python Agent Lint & Tests | High | Ruff passes on `agent-service/app/`; pytest passes on `agent-service/tests/`. |
 | REQ-005 | Web Build, Lint & Tests | High | oxlint, Vitest, and `tsc -b && vite build` pass in `frontend/web`. |
 | REQ-006 | Flutter Analyze, Tests & APK | High | `flutter analyze`, `flutter test --coverage`, and `flutter build apk --release` pass. |
 | REQ-007 | Deployment Artifacts | High | API publish, web `dist`, and mobile APK are uploaded as artifacts. |

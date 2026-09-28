@@ -64,7 +64,7 @@ mapping (`blocks.test.tsx` unchanged).
 uses it — but the only production call site still passes no LLM:
 
 ```python
-# agnet-service/app/workflows/concierge_workflow.py:132
+# agent-service/app/workflows/concierge_workflow.py:132
 graph = build_visual_graph(registry)      # llm is never passed
 ```
 
@@ -97,7 +97,7 @@ First-parent chain: `4b6b2e1 → cc73a67 → 0de511a → 2850b7c → 2d55785`, m
 `development` = `2d55785`. The branch therefore lacks development's `#160` (Gemini embeddings),
 `#161/#162` (shared customer resolution + `choice` block) and the LLM runtime. A trial merge
 `development ← feature/visual-insight-agent` yields **3 conflicts**:
-`agnet-service/tests/test_concierge_workflow.py`,
+`agent-service/tests/test_concierge_workflow.py`,
 `frontend/web/src/components/conversation/MessageBubble.tsx`,
 `frontend/web/src/components/conversation/blocks.tsx` (the visual `persona` prop vs development's
 `onSelectCustomer`/`ChoiceBlock`). Post-merge, `run_memory_agent` gets an LLM but

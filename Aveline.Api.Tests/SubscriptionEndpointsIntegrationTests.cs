@@ -37,6 +37,7 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -94,7 +95,7 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
         decimal? blossomOverride = null)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var owner = new User
@@ -246,6 +247,31 @@ public class SubscriptionEndpointsIntegrationTests : IAsyncLifetime
             "change-plan-downgrade-override"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Plan §9.5(c): the un-cancel route is only meaningful where the provider supports it. With the
+    /// default `manual` provider, which has no provider-side agreement to restore, the answer is the
+    /// documented `501 payment-provider-capability-missing` rather than a cleared flag the provider
+    /// would still act on.
+    /// </summary>
+    [Fact]
+    public async Task Resume_WithAProviderThatCannotResume_Returns501()
+    {
+        var (orgId, clerk) = await SeedBoutiqueAsync("resume");
+        var token = CreateToken(clerk, orgRole: Roles.BoutiqueOwner);
+
+        var cancel = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/orgs/{orgId}/subscription/cancel", token,
+            new { reason = "The owner asked to stop renewing." }));
+        Assert.Equal(HttpStatusCode.OK, cancel.StatusCode);
+
+        var resume = await _client.SendAsync(Authorized(
+            HttpMethod.Post, $"/api/v1/orgs/{orgId}/subscription/resume", token));
+
+        Assert.Equal(HttpStatusCode.NotImplemented, resume.StatusCode);
+        var body = JsonDocument.Parse(await resume.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("payment-provider-capability-missing", body.GetProperty("code").GetString());
     }
 
     [Fact]

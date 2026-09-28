@@ -36,6 +36,14 @@ public class Message
     /// <summary>Parent message id for threaded replies.</summary>
     public Guid? ReplyToMessageId { get; set; }
 
+    /// <summary>
+    /// Client-generated idempotency key for one composed message, stable across a send and every
+    /// retry. A filtered unique index on <c>(ConversationId, ClientMessageId)</c> makes a replay
+    /// land on the stored row instead of writing the sentence twice. Null for anything the
+    /// server authored (agent output, inbound channel messages).
+    /// </summary>
+    public Guid? ClientMessageId { get; set; }
+
     /// <summary>LangGraph run id for audit.</summary>
     public Guid? WorkflowRunId { get; set; }
 

@@ -1,5 +1,6 @@
 import 'package:clerk_auth/clerk_auth.dart' as clerk;
 import 'package:clerk_flutter/clerk_flutter.dart';
+import 'package:flutter/foundation.dart';
 
 import '../domain/auth_claims.dart';
 import '../domain/auth_repository.dart';
@@ -131,8 +132,10 @@ class ClerkAuthRepository implements AuthRepository {
       await action();
       return null;
     } on clerk.ClerkError catch (error) {
+      debugPrint('[clerk auth error] ClerkError: ${error.message} - ${error.code}');
       return error.message;
-    } on Exception catch (error) {
+    } catch (error, stack) {
+      debugPrint('[clerk auth error] $error\n$stack');
       return error.toString().replaceFirst('Exception: ', '');
     }
   }

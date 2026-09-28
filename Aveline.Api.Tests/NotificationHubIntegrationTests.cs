@@ -40,6 +40,7 @@ public class NotificationHubIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
     }
@@ -66,7 +67,7 @@ public class NotificationHubIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }
@@ -179,7 +180,9 @@ public class NotificationHubIntegrationTests : IAsyncLifetime
             NotificationType.PaymentConfirmed,
             "Payment confirmed",
             "Order #1234 paid",
-            new Dictionary<string, string?> { ["orderId"] = "ord-1" });
+            new Dictionary<string, string?> { ["orderId"] = "ord-1" },
+            Guid.NewGuid(),
+            1);
 
         var delivered = await SendUntilReceivedAsync(
             hubContext, $"user:{user.Id}", notification, received.Task, TimeSpan.FromSeconds(10));
@@ -205,11 +208,44 @@ public class NotificationHubIntegrationTests : IAsyncLifetime
             NotificationType.NewMessage,
             "New message",
             "A customer sent a message",
-            new Dictionary<string, string?>());
+            new Dictionary<string, string?>(),
+            Guid.NewGuid(),
+            1);
 
         var delivered = await SendUntilReceivedAsync(
             hubContext, $"org:{org.Id}", notification, received.Task, TimeSpan.FromSeconds(10));
         Assert.Equal(NotificationType.NewMessage, delivered.Type);
+    }
+
+    [Fact]
+    public async Task AuthenticatedUser_CanResubscribe_AndStillReceivesOnUserGroup()
+    {
+        // The reconnect path: SignalR does not preserve group membership across a
+        // rebuilt socket, so the client re-joins by invoking SubscribeAsync. The
+        // call must be idempotent and must leave the connection in user:{id}.
+        var (user, _) = await SeedActiveMemberAsync("hub_resub_user");
+        var token = CreateToken(user.ClerkId);
+
+        await using var connection = BuildConnection(token);
+        var received = new TaskCompletionSource<NotificationDto>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.On<NotificationDto>("ReceiveNotification", dto => received.TrySetResult(dto));
+
+        await connection.StartAsync();
+        await connection.InvokeAsync("SubscribeAsync");
+        await connection.InvokeAsync("SubscribeAsync"); // idempotent
+
+        var hubContext = _factory.Services.GetRequiredService<IHubContext<NotificationHub>>();
+        var notification = new NotificationDto(
+            NotificationType.IntegrationExpired,
+            "Integration expired",
+            "The WhatsApp token has expired",
+            new Dictionary<string, string?> { ["conversationId"] = "cnv-1" },
+            Guid.NewGuid(),
+            2);
+
+        var delivered = await SendUntilReceivedAsync(
+            hubContext, $"user:{user.Id}", notification, received.Task, TimeSpan.FromSeconds(10));
+        Assert.Equal(NotificationType.IntegrationExpired, delivered.Type);
     }
 
     [Fact]

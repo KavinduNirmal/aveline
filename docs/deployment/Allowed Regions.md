@@ -1,0 +1,1 @@
+["indonesiacentral","indiasouthcentral","koreacentral","malaysiawest","uaenorth"]

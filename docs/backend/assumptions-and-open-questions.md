@@ -127,9 +127,9 @@ fail-closed quota decision (§8.4 of the implementation plan) becomes unreachabl
 the deployment platform; that document was read but the managed Redis service was
 not confirmed.
 
-### A8 · `agnet-service` is the canonical spelling and will not be renamed
+### A8 · `agent-service` is the canonical spelling and will not be renamed
 
-**Assumption.** The directory is spelled `agnet-service` (not `agent-service`) in
+**Assumption.** The directory is spelled `agent-service` (not `agent-service`) in
 the repository, the Dockerfile, the CI workflow, and every document. This plan
 uses the existing spelling everywhere to avoid breaking paths.
 
@@ -144,7 +144,7 @@ which ignores the response body.
 
 **Grounding.** `usage_reporter.py` posts and checks the status code; it does not
 deserialise the response. Verified by reading
-`agnet-service/app/services/usage_reporter.py:85-105`.
+`agent-service/app/services/usage_reporter.py:85-105`.
 
 **If wrong.** The agent service breaks on ingest. The mitigation is that the
 endpoint keeps its existing `201` shape and the new fields are additive.
@@ -368,7 +368,7 @@ same developer-days.
 
 ### OQ-11 · Who owns the Python instrumentation work?
 
-**Question.** Gaps G-1 through G-14 are changes to `agnet-service`, which belongs
+**Question.** Gaps G-1 through G-14 are changes to `agent-service`, which belongs
 to Slice 1 and Slice 2, not to the billing/statistics slice. Who implements them,
 and on what schedule?
 
@@ -400,9 +400,21 @@ Recorded so the plan is falsifiable.
 | The deployment is multi-region | Period boundaries must move to UTC-aligned and the quota counters must be region-scoped; `Organization.TimeZone` becomes load-bearing |
 | `btree_gist` is unavailable | M2 uses the application-level overlap check and a detection alert (OQ-8) |
 | Enforcement of Blossom exhaustion is required | A new Phase 7 is inserted; this plan's ledger is the prerequisite and nothing is rework |
-| A payment provider is chosen | `OrganizationSubscriptions` already carries `ExternalProvider`/`ExternalSubscriptionId`; the provider client is additive but webhook signature verification and reconciliation become new work |
+| An external payment provider is chosen for production | The provider-neutral abstraction has shipped under its own plan ([ADR-029](../ADR/ADR-029-payment-gateway-abstraction.md)): a persisted intent, the `IPaymentProvider` SPI, a webhook inbox and the `manual`/`mock` adapters. Attaching a real gateway is a registration + configuration swap, not new plumbing. Public webhook ingress, hosted checkout and LKR settlement remain the new work — see the payment-plan assumptions below |
 | `NULLS NOT DISTINCT` is unavailable (PostgreSQL < 15) | Every unique index in §3/§6/§7 of the domain model is rewritten with `coalesce` sentinels |
 | The 30 % backend coverage gate is considered a grading requirement rather than a floor | Coverage becomes a Phase 0 blocker and the phasing is re-sequenced |
+
+### Payment-provider plan assumptions (recorded at P10)
+
+The payment-gateway plan (`.agents/plans/payment-gateway-abstraction-implementation.ignore.md` §5.2)
+recorded three assumptions of its own, numbered **A1–A3 in that plan**. They are recorded here so the
+deployment condition above is falsifiable; they do not replace A1–A11 of this document.
+
+| # (payment plan) | Assumption | Status at P10 |
+| --- | --- | --- |
+| A1 | A webhook endpoint can be publicly reachable at a stable URL | **Unverified.** `docs/deployment.md` was not audited for ingress. Confirm with the deployment owner before an external adapter is enabled. The poll route and the reconciliation read are the degradation path, so a webhook outage is "slower settlement", not "lost money" |
+| A2 | The chosen provider supports hosted checkout or a redirect flow, so no card data reaches Aveline | **Confirmed at the abstraction level.** `PaymentProviderCapabilities.SupportsHostedCheckout` exists, the mock renders a Development-only page, and no card/PAN/CVC/expiry field exists on the wire (C11). Unverified for any *specific* external provider |
+| A3 | LKR is acceptable to the chosen provider | **Unverified.** The intent stores `Currency` and the settlement guard refuses a mismatch rather than reconciling it, so an LKR-hostile provider fails loudly rather than silently |
 
 ---
 
@@ -441,3 +453,63 @@ mandatory cross-platform workflow's human-approval pause does not survive a
 restart. It is flagged here because it affects the *statistics* this plan defines
 (S-21, `agentApprovalWaitTime`) and because the plan would otherwise be silently
 built on top of a broken assumption.
+
+---
+
+## 6. The media workstream's numbers and its decided retention semantics
+
+Recorded here because the media strategy named them as inputs this document tracks. See
+[ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
+[docs/architecture/media-rollout-flags.md](../architecture/media-rollout-flags.md).
+
+### A11 · The two measured media numbers
+
+**Assumption.** The Free-plan arithmetic rests on two numbers: the **average stored image size**
+and the **real derivation count per asset**.
+
+**The values the strategy reports (strategy §3.7, §R8).**
+
+- **Average stored image size: 200–400 KB.** Not the 5 MB safety ceiling. Both clients shrink
+  before uploading: the web catalog resizes to a longest edge of 1280 px at JPEG q0.85 and
+  re-encodes every source format to JPEG; the mobile chat resizes to width 1600 px at q82. The
+  exceptional upload is the one that matters — the web optimizer falls back to the **raw** bytes
+  when its canvas path errors, which is why a server-side cap exists at all.
+- **Real derivation count: 2 per catalog asset** (one width × the `f_auto` WebP + JPEG fallback),
+  → 10 credits at 5,000 assets and **30 credits at 15,000** — the dimension that breaks first.
+
+**The measurement state, stated plainly.** The strategy labels both numbers **Unmeasured**, and
+nothing in this repository records a live measurement. The opt-in smoke test
+(`Aveline.Api.Tests/CloudinaryLiveSmokeTests.CatalogDelivery_ReportsDeliveredSizeAndDerivationCount`)
+**prints** the delivered sizes and the Admin API's reported derivation count but persists no
+artefact, and it returns early unless a Cloudinary credential is present. So the values above are
+the design estimates from the clients' resize behaviour and the delivery contract, not the output
+of a recorded live run. Any cost statement that depends on them remains conditional until the live
+run is recorded.
+
+### The conversation retention semantics are **decided**, not open
+
+The retention job's semantics were the strategy's open implementation input (§10 item 7). They are
+now pinned in `ConversationAttachmentRetentionJob` and in
+[ADR-022](../ADR/ADR-022-media-storage-and-access.md), so they are no longer an open question:
+
+1. **The window is measured from the attachment's own creation** (`MessageAttachment.CreatedAtUtc`),
+   not the conversation's last activity and not the message's timestamp.
+2. **A live conversation is swept.** Retention is per attachment; no later message resets an older
+   attachment's clock. A boutique permanently loses a customer's photo one week after it arrived.
+3. **The catalog is exempt.** The job selects only `MessageAttachment`; a catalog image is an
+   `InventoryImage`, and its own delete path is S8's (deferred).
+4. **The store is told before the row disappears**, and a store failure keeps the row for the next
+   run.
+5. The window is configuration (`Conversations:AttachmentRetentionDays`, default 7), and the job
+   can be stopped outright — the documented rollback.
+
+### Still open
+
+- **A7.2** — whether PDF/ZIP delivery can be enabled on this Cloudinary product environment (a
+  Security-settings toggle, not code). It is testable now that the account exists, but it has not
+  been tested and no live run is recorded.
+- **The `externalUrl` arm's permissiveness** (Q7, deferred): any host is forwarded to the provider
+  with no validation.
+- **The item cap** (`≤1250 assets/tenant`) is a stated intention with nothing enforcing it: there
+  is no `MaxCatalogItems`-style constant and `AddImageAsync` performs no count check.
+

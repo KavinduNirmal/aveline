@@ -10,8 +10,16 @@ namespace Aveline.Api.Modules.Notifications.Models;
 /// <param name="Title">Short human-readable title.</param>
 /// <param name="Body">Human-readable body text.</param>
 /// <param name="Data">Type-specific structured payload (e.g. order id, approval id).</param>
+/// <param name="NotificationId">The per-user inbox row id, so a client can mark it read.</param>
+/// <param name="UnreadCount">
+/// That recipient's unread count after the row was written, meaning "open work under the
+/// model in force". It lets the badge move without a list read; the semantics can change
+/// to "work items not acted upon" without a rename.
+/// </param>
 public sealed record NotificationDto(
     NotificationType Type,
     string Title,
     string Body,
-    IReadOnlyDictionary<string, string?> Data);
+    IReadOnlyDictionary<string, string?> Data,
+    Guid NotificationId,
+    int UnreadCount);

@@ -18,12 +18,21 @@ public static class BillingModule
         services.AddScoped<IBlossomLedgerRepository, BlossomLedgerRepository>();
         services.AddScoped<IBlossomService, BlossomService>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
+        // Plan §9.1 F1 / G8: prices and records the subscription onboarding provisions at plan selection.
+        services.AddScoped<ISubscriptionProvisioner, SubscriptionProvisioner>();
         services.AddScoped<IPricingRepository, PricingRepository>();
         services.AddScoped<IPricingService, PricingService>();
         services.AddScoped<IEntitlementRepository, EntitlementRepository>();
         services.AddScoped<IEntitlementResolver, EntitlementResolver>();
+        services.AddScoped<ISubscriptionPriceResolver, SubscriptionPriceResolver>();
+        // Plan §9.3 F3: prices the proration an immediate upgrade owes, consulting the active
+        // provider's SupportsProration capability and falling back to the local formula.
+        services.AddScoped<IProrationCalculator, ProrationCalculator>();
         services.AddScoped<IEntitlementOverrideService, EntitlementOverrideService>();
         services.AddScoped<IBillingStatisticsService, BillingStatisticsService>();
+        // Plan §9.4 F4: the renewing half of the rollover. Scoped because the rollover resolves it
+        // from the per-run scope (a singleton job must not capture a scoped service).
+        services.AddScoped<ISubscriptionRenewalService, SubscriptionRenewalService>();
         services.AddSingleton<PricingRuleCache>();
         services.AddHostedService<PricingRuleCacheWarmer>();
         services.AddHostedService<Jobs.BlossomExpiryJob>();
@@ -38,6 +47,7 @@ public static class BillingModule
     public static IEndpointRouteBuilder MapBillingEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapUsageEndpoints();
+        app.MapBlossomReconciliationEndpoints();
         return app;
     }
 }

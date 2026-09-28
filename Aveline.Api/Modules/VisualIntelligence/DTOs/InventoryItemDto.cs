@@ -14,6 +14,7 @@ public class InventoryItemDto
     public string ItemName { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
+    public string? ColorHex { get; set; }
     public List<string> Sizes { get; set; } = new();
     public decimal Price { get; set; }
     public decimal Cost { get; set; }
@@ -28,6 +29,7 @@ public class InventoryItemDto
     public DateTime? DeletedAt { get; set; }
     public bool IsAvailable { get; set; }
     public DateTime CreatedAtUtc { get; set; }
+    public List<string> Tags { get; set; } = new();
 
     public static InventoryItemDto FromDomain(InventoryItem item)
     {
@@ -38,6 +40,7 @@ public class InventoryItemDto
             ItemName = item.ItemName,
             Category = item.Category,
             Color = item.Color,
+            ColorHex = item.ColorHex,
             Sizes = item.Sizes?.ToList() ?? new List<string>(),
             Price = item.Price,
             Cost = item.Cost,
@@ -51,7 +54,8 @@ public class InventoryItemDto
             Metadata = item.Metadata,
             DeletedAt = item.DeletedAt,
             IsAvailable = item.IsAvailable,
-            CreatedAtUtc = item.CreatedAtUtc
+            CreatedAtUtc = item.CreatedAtUtc,
+            Tags = item.ItemTags?.Where(it => it.Tag != null).Select(it => it.Tag.Slug).ToList() ?? new List<string>()
         };
     }
 }

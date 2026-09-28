@@ -27,4 +27,26 @@ public static class AuditAction
     public const string SystemAlertRuleDeleted = "system.alert_rule.deleted";
     public const string SystemAlertAcknowledged = "system.alert.acknowledged";
     public const string SystemAlertResolved = "system.alert.resolved";
+
+    // Consent, transparency and data-subject rights (plan §3.2). Extend this list, do not invent
+    // action names at the call site.
+    public const string ConsentRowCreated = "consent.row.created";
+    public const string ConsentGranted = "consent.granted";
+    public const string ConsentRevoked = "consent.revoked";
+    public const string ConsentRegranted = "consent.regranted";
+    public const string DisclosureShown = "consent.disclosure.shown";
+    public const string DataExportRequested = "privacy.data.export.requested";
+    public const string DataExportCompleted = "privacy.data.export.completed";
+    public const string DataDeletionRequested = "privacy.data.deletion.requested";
+    public const string DataDeletionCompleted = "privacy.data.deletion.completed";
+    public const string OtpIssued = "privacy.otp.issued";
+    public const string OtpVerified = "privacy.otp.verified";
+    public const string OtpFailed = "privacy.otp.failed";
+
+    /// <summary>
+    /// The single non-personalised opt-out acknowledgement was sent (plan §11 item 4.5, §15 Q-9).
+    /// It is separate from <see cref="ConsentRevoked"/> so an auditor can tell the objection from the
+    /// confirmation that followed it.
+    /// </summary>
+    public const string ConsentRevokedAcknowledged = "consent.revoked.acknowledged";
 }

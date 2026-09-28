@@ -290,7 +290,9 @@ void main() {
       await tester.tap(find.byKey(const Key('notifications_filter_all')));
       await tester.pumpAndSettle();
 
-      expect(controller.items, hasLength(9));
+      // Eleven: the seed now carries one tile for every known kind, so the two
+      // kinds S1 added are represented alongside the original nine.
+      expect(controller.items, hasLength(11));
     });
 
     testWidgets('states the end of the inbox', (tester) async {
@@ -595,6 +597,31 @@ void main() {
       // Neither gesture ran: the drag never reached the threshold that commits.
       expect(_tile('un_msg_nadeesha'), findsOneWidget);
       expect(controller.unreadCount, 4);
+    });
+  });
+
+  group('NotificationsScreen with no provider', () {
+    testWidgets('renders an honest empty inbox, not the demo seed', (tester) async {
+      // The production path always mounts the controller provider, so this
+      // branch is the widget-test/preview fallback. It must be empty rather than
+      // fiction: nine invented rows on a real screen read as a working inbox.
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light,
+          home: const MediaQuery(
+            data: MediaQueryData(
+              disableAnimations: true,
+              size: Size(390, 844),
+            ),
+            child: Scaffold(body: NotificationsScreen()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('notifications_empty')), findsOneWidget);
+      expect(find.text('No notifications yet'), findsOneWidget);
+      expect(_tile('un_msg_nadeesha'), findsNothing);
     });
   });
 }

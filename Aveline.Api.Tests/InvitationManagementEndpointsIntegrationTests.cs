@@ -37,6 +37,7 @@ public class InvitationManagementEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("App:BaseUrl", "https://app.aveline.lk");
             });
@@ -66,12 +67,20 @@ public class InvitationManagementEndpointsIntegrationTests : IAsyncLifetime
         return handler.CreateToken(descriptor);
     }
 
-    private HttpRequestMessage AuthorizedJson(HttpMethod method, string path, string token, object payload) =>
-        new(method, path)
+    private HttpRequestMessage AuthorizedJson(HttpMethod method, string path, string token, object payload)
+    {
+        var request = new HttpRequestMessage(method, path)
         {
             Headers = { Authorization = new AuthenticationHeaderValue("Bearer", token) },
             Content = JsonContent.Create(payload),
         };
+
+        // T6: the invitation creation routes carry `IdempotencyEndpointFilter`, so a POST must
+        // present a key. A fresh key per request keeps these tests about invitation semantics
+        // rather than about replay.
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", Guid.NewGuid().ToString());
+        return request;
+    }
 
     private HttpRequestMessage Authorized(HttpMethod method, string path, string token) =>
         new(method, path)
@@ -230,7 +239,7 @@ public class InvitationManagementEndpointsIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }

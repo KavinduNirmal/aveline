@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Aveline.Api.Modules.Notifications.Channels;
+using Aveline.Api.Modules.Notifications.Metrics;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Microsoft.Extensions.Logging;
@@ -22,6 +23,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
     private readonly IRealtimeChannel _realtime;
     private readonly IEmailChannel _email;
     private readonly ILogger<NotificationDispatcher> _logger;
+    private readonly NotificationMetrics? _metrics;
 
     public NotificationDispatcher(
         IRecipientResolver resolver,
@@ -31,7 +33,8 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         IPushChannel push,
         IRealtimeChannel realtime,
         IEmailChannel email,
-        ILogger<NotificationDispatcher> logger)
+        ILogger<NotificationDispatcher> logger,
+        NotificationMetrics? metrics = null)
     {
         _resolver = resolver;
         _router = router;
@@ -41,15 +44,16 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         _realtime = realtime;
         _email = email;
         _logger = logger;
+        _metrics = metrics;
     }
 
-    public async Task DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
+    public async Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
     {
         var recipients = await _resolver.ResolveAsync(notification, cancellationToken);
         if (recipients.Count == 0)
         {
             _logger.LogInformation("Notification {Type} resolved to no recipients; nothing dispatched.", notification.Type);
-            return;
+            return null;
         }
 
         var record = await _repository.AddAsync(new NotificationRecord
@@ -72,10 +76,16 @@ public sealed class NotificationDispatcher : INotificationDispatcher
                 NotificationRecordId = record.Id,
             }, cancellationToken);
 
-            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Realtime, _realtime, cancellationToken);
-            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Push, _push, cancellationToken);
-            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Email, _email, cancellationToken);
+            // Computed after this recipient's row is written, so the payload's count means
+            // "open work after this arrival", not before it.
+            var unreadCount = await _inbox.GetUnreadCountAsync(recipient.UserId, cancellationToken);
+
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Realtime, _realtime, unreadCount, cancellationToken);
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Push, _push, unreadCount, cancellationToken);
+            await TrySendAsync(record, inboxItem, recipient, notification, allowed, NotificationChannel.Email, _email, unreadCount, cancellationToken);
         }
+
+        return record;
     }
 
     private async Task TrySendAsync(
@@ -86,6 +96,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         NotificationChannel allowed,
         NotificationChannel channel,
         object channelService,
+        int unreadCount,
         CancellationToken cancellationToken)
     {
         if ((allowed & channel) == 0)
@@ -103,7 +114,7 @@ public sealed class NotificationDispatcher : INotificationDispatcher
 
         try
         {
-            await SendAsync(channelService, recipient, notification, cancellationToken);
+            await SendAsync(channelService, recipient, notification, inboxItem.Id, unreadCount, cancellationToken);
             delivery.Status = DeliveryStatus.Delivered;
             await _inbox.SetDeliveredAsync(inboxItem.Id, recipient.UserId, cancellationToken);
         }
@@ -115,16 +126,23 @@ public sealed class NotificationDispatcher : INotificationDispatcher
         }
 
         await _repository.AddDeliveryAsync(delivery, cancellationToken);
+
+        // Slice 7: the delivery counter is incremented here, on the send path, not derived at
+        // scrape time. A scrape-time derivation would need a query per scrape and still could not
+        // express the notification type.
+        _metrics?.RecordDelivery(channel, delivery.Status);
     }
 
     private static Task SendAsync(
         object channelService,
         ResolvedRecipient recipient,
         Notification notification,
+        Guid inboxItemId,
+        int unreadCount,
         CancellationToken cancellationToken) => channelService switch
     {
-        IRealtimeChannel realtime => realtime.SendAsync(recipient, notification, cancellationToken),
-        IPushChannel push => push.SendAsync(recipient, notification, cancellationToken),
+        IRealtimeChannel realtime => realtime.SendAsync(recipient, notification, inboxItemId, unreadCount, cancellationToken),
+        IPushChannel push => push.SendAsync(recipient, notification, inboxItemId, cancellationToken),
         IEmailChannel email => email.SendAsync(recipient, notification, cancellationToken),
         _ => Task.CompletedTask,
     };

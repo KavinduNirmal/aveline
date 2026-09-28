@@ -26,7 +26,11 @@ public interface IAlertService
     Task<SystemAlert?> EvaluateRuleAsync(
         SystemAlertRule rule, Guid? organizationId = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Acknowledges an alert, or returns <c>null</c> when it does not exist.</summary>
+    /// <summary>
+    /// Acknowledges an alert, or returns <c>null</c> when it does not exist. A
+    /// <c>Resolved</c> alert is terminal and throws <see cref="AlertStateConflictException"/>
+    /// (HTTP 409) rather than being silently re-opened to <c>Acknowledged</c>.
+    /// </summary>
     Task<SystemAlert?> AcknowledgeAsync(
         Guid alertId, Guid userId, string? note = null, CancellationToken cancellationToken = default);
 

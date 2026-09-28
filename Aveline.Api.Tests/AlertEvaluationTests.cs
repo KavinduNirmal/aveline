@@ -4,6 +4,7 @@ using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Audit.Services;
 using Aveline.Api.Modules.Billing.Models;
+using Aveline.Api.Modules.Notifications.Channels;
 using Aveline.Api.Modules.Notifications.Models;
 using Aveline.Api.Modules.Notifications.Repositories;
 using Aveline.Api.Modules.Notifications.Services;
@@ -229,6 +230,118 @@ public class AlertEvaluationTests
     }
 
     [Fact]
+    public async Task CriticalAlert_CreatesOneInboxRowPerRecipientThroughTheDispatcher()
+    {
+        var harness = Build();
+        var organizationId = Guid.CreateVersion7();
+        var rule = Rule(
+            "test.fanout", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m,
+            AlertSeverity.Critical);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.fanout", 1m);
+
+        var owner = Guid.CreateVersion7();
+        var manager = Guid.CreateVersion7();
+        harness.Recipients.Recipients =
+        [
+            new ResolvedRecipient(owner, "owner@aveline.lk", true, default, []),
+            new ResolvedRecipient(manager, "manager@aveline.lk", true, default, []),
+        ];
+
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+
+        await using var context = harness.Context();
+        Assert.Equal(1, await context.NotificationRecords.CountAsync());
+        var inbox = await context.UserNotifications.ToListAsync();
+        Assert.Equal(2, inbox.Count);
+        Assert.Contains(inbox, item => item.UserId == owner);
+        Assert.Contains(inbox, item => item.UserId == manager);
+
+        var alert = await context.SystemAlerts.SingleAsync();
+        Assert.Equal(alert.NotificationRecordId, (await context.NotificationRecords.SingleAsync()).Id);
+    }
+
+    [Fact]
+    public async Task CriticalAlert_ReFire_DoesNotCreateANewRecordOrInboxRow()
+    {
+        var harness = Build();
+        var organizationId = Guid.CreateVersion7();
+        var rule = Rule(
+            "test.refire.notify", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m,
+            AlertSeverity.Critical);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.refire.notify", 1m);
+        harness.Recipients.Recipients =
+        [
+            new ResolvedRecipient(Guid.CreateVersion7(), "owner@aveline.lk", true, default, []),
+        ];
+
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+
+        // Age the fire past the cooldown, as a sustained breach does. Q6: one row
+        // per rule per breach, however many times the alert re-fires.
+        await using (var context = harness.Context())
+        {
+            var open = await context.SystemAlerts.SingleAsync();
+            open.FiredAt = DateTime.UtcNow.AddSeconds(-(rule.CooldownSeconds + 1));
+            await context.SaveChangesAsync();
+        }
+
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+
+        await using var verify = harness.Context();
+        Assert.Equal(1, await verify.NotificationRecords.CountAsync());
+        Assert.Equal(1, await verify.UserNotifications.CountAsync());
+        // The alert is still firing, so the event still publishes.
+        Assert.Equal(2, harness.EventBus.PublishedEventTypes.Count(type => type == "system.alert.fired"));
+    }
+
+    [Fact]
+    public async Task CriticalAlert_NewBreachAfterResolve_NotifiesAgain()
+    {
+        var harness = Build();
+        var organizationId = Guid.CreateVersion7();
+        var rule = Rule(
+            "test.rebreach", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m,
+            AlertSeverity.Critical);
+        await SeedAsync(harness, rule);
+        await SeedSampleAsync(harness, "test.rebreach", 1m);
+        harness.Recipients.Recipients =
+        [
+            new ResolvedRecipient(Guid.CreateVersion7(), "owner@aveline.lk", true, default, []),
+        ];
+
+        await EvaluateRuleOnceAsync(harness, rule, organizationId); // fire
+
+        // Resolve: three consecutive below-threshold evaluations.
+        await ReplaceSamplesAsync(harness, "test.rebreach", 0m);
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+
+        await using (var mid = harness.Context())
+        {
+            Assert.Equal(AlertStatus.Resolved, (await mid.SystemAlerts.SingleAsync()).Status);
+        }
+
+        // A fresh breach opens a new alert and notifies again.
+        await ReplaceSamplesAsync(harness, "test.rebreach", 1m);
+        await EvaluateRuleOnceAsync(harness, rule, organizationId);
+
+        await using var context = harness.Context();
+        Assert.Equal(2, await context.NotificationRecords.CountAsync());
+        Assert.Equal(2, await context.UserNotifications.CountAsync());
+    }
+
+    private static async Task EvaluateRuleOnceAsync(
+        Harness harness, SystemAlertRule rule, Guid organizationId)
+    {
+        using var scope = harness.Provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IAlertService>()
+            .EvaluateRuleAsync(rule, organizationId);
+    }
+
+    [Fact]
     public async Task WarningAlert_DoesNotCreateANotification()
     {
         var harness = Build();
@@ -281,6 +394,50 @@ public class AlertEvaluationTests
 
         Assert.Contains(harness.Audit.Entries, entry => entry.Action == "system.alert.acknowledged");
         Assert.Contains("system.alert.acknowledged", harness.EventBus.PublishedEventTypes);
+    }
+
+    [Fact]
+    public async Task Acknowledge_ResolvedAlertIsRejectedAndLeavesTheRowUnchanged()
+    {
+        // A9 B3: the acknowledgement path had no state guard, so it happily moved an
+        // already-Resolved alert back to Acknowledged and stamped AcknowledgedAt.
+        var harness = Build();
+        await SeedAsync(harness, Rule("test.ack.resolved", AlertAggregation.Max, AlertComparisonOperator.Gt, 0m));
+        await SeedSampleAsync(harness, "test.ack.resolved", 1m);
+
+        Guid alertId;
+        using (var scope = harness.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IAlertService>().EvaluateAsync();
+        }
+
+        await using (var context = harness.Context())
+        {
+            var alert = await context.SystemAlerts.SingleAsync();
+            alert.Status = AlertStatus.Resolved;
+            alert.ResolvedAt = DateTime.UtcNow;
+            await context.SaveChangesAsync();
+            alertId = alert.Id;
+        }
+
+        var actorId = Guid.CreateVersion7();
+        using (var scope = harness.Provider.CreateScope())
+        {
+            var service = scope.ServiceProvider.GetRequiredService<IAlertService>();
+
+            // Rejection may be a typed failure throw; the invariant is that it does not
+            // silently succeed.
+            var rejection = await Record.ExceptionAsync(
+                () => service.AcknowledgeAsync(alertId, actorId, "should not apply"));
+            Assert.IsType<AlertStateConflictException>(rejection);
+        }
+
+        await using var verify = harness.Context();
+        var stored = await verify.SystemAlerts.SingleAsync(candidate => candidate.Id == alertId);
+        Assert.Equal(AlertStatus.Resolved, stored.Status);
+        Assert.Null(stored.AcknowledgedAt);
+        Assert.Null(stored.AcknowledgedByUserId);
+        Assert.DoesNotContain(harness.Audit.Entries, entry => entry.Action == "system.alert.acknowledged");
     }
 
     [Fact]
@@ -520,6 +677,14 @@ public class AlertEvaluationTests
         services.AddSingleton<IAuditService>(audit);
         services.AddSingleton<IRecipientResolver>(recipients);
         services.AddScoped<INotificationRepository, NotificationRepository>();
+        // The alert path goes through the dispatcher, which is the only code that
+        // creates inbox rows. The channels are the production logging fallbacks.
+        services.AddScoped<IUserNotificationRepository, UserNotificationRepository>();
+        services.AddScoped<IChannelRouter, ChannelRouter>();
+        services.AddScoped<IRealtimeChannel, LoggingRealtimeChannel>();
+        services.AddScoped<IPushChannel, LoggingPushChannel>();
+        services.AddScoped<IEmailChannel, LoggingEmailChannel>();
+        services.AddScoped<INotificationDispatcher, NotificationDispatcher>();
         services.AddScoped<IAlertService, AlertService>();
 
         return new Harness(services.BuildServiceProvider(), databaseName, eventBus, audit, recipients);

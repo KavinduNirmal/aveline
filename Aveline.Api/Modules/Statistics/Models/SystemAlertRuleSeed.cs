@@ -3,7 +3,7 @@ using Aveline.Api.Authorization;
 namespace Aveline.Api.Modules.Statistics.Models;
 
 /// <summary>
-/// The eleven seeded alert rules from implementation-plan.md §7.4, with stable GUIDs so the
+/// The twelve seeded alert rules from implementation-plan.md §7.4, with stable GUIDs so the
 /// migration is idempotent and tests can reference a rule by id. Thresholds are the
 /// documented ones; a rule whose condition has no numeric threshold (the "5× org baseline"
 /// runaway rule) stores the multiplier.
@@ -11,12 +11,16 @@ namespace Aveline.Api.Modules.Statistics.Models;
 /// <remarks>
 /// Every <see cref="SystemAlertRule.MetricName"/> must be a name
 /// <c>SystemMetricCollector</c> produces; <c>SystemMetricCollectorTests</c> asserts this so a
-/// rule can never again watch a metric nothing writes (C-5). The <c>db.pool.saturated</c>
-/// rule from implementation-plan.md §7.4 is deliberately absent: the database connection-pool
-/// gauges are not instrumented (S-37), so there is no metric to watch. The operator set has
+/// rule can never again watch a metric nothing writes (C-5). The operator set has
 /// no <c>Ne</c> (domain-model.md §8.2), so the <c>blossom.ledger.drift</c> rule is encoded as
 /// <c>Max &gt; 0</c> and the collector records the drift magnitude; any non-zero drift
 /// therefore breaches it. This is documented in docs/backend/README.md.
+/// <para>
+/// <c>db.pool.saturated</c> was absent because the connection-pool gauges were not instrumented
+/// (S-37). Slice 5 closed M-9: Npgsql 10.0.3 already emits them on a meter named exactly
+/// <c>Npgsql</c>, the meter is now registered, and the collector emits <c>used / max</c> as
+/// <c>aveline.db.pool.saturation</c> — so the rule has a producer path and the C-5 guard holds.
+/// </para>
 /// </remarks>
 public static class SystemAlertRuleSeed
 {
@@ -58,6 +62,11 @@ public static class SystemAlertRuleSeed
         Rule(
             "44bbc6e3-5c24-40d7-aad8-f4c089640f30", "eventbus.failed", "aveline.eventbus.failed",
             AlertAggregation.Rate, AlertComparisonOperator.Gt, 10m, 60, AlertSeverity.Critical),
+        // M-9 closed in Slice 5: Npgsql 10 emits the pool instruments on an unregistered `Npgsql`
+        // meter; the meter is now registered and the collector emits used/max as a produced metric.
+        Rule(
+            "b0f9a0f5-6d5e-4a1f-9f2b-1f4a0c9e7d21", "db.pool.saturated", "aveline.db.pool.saturation",
+            AlertAggregation.Max, AlertComparisonOperator.Gt, 0.9m, 300, AlertSeverity.Warning),
     ];
 
     private static SystemAlertRule Rule(

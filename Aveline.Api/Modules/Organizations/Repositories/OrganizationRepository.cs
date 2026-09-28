@@ -93,6 +93,12 @@ public class OrganizationRepository : IOrganizationRepository
         return organization;
     }
 
+    /// <inheritdoc />
+    public Task<OrganizationSubscription?> GetSubscriptionAsync(
+        Guid organizationId, CancellationToken cancellationToken = default) =>
+        _context.OrganizationSubscriptions
+            .FirstOrDefaultAsync(s => s.OrganizationId == organizationId, cancellationToken);
+
     public async Task<OrganizationMembership?> GetMembershipAsync(
         Guid organizationId,
         Guid userId,

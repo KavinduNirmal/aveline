@@ -76,13 +76,16 @@ public class ConversationHubTests
         public Task<Conversation?> GetByThreadIdAsync(string threadId, CancellationToken cancellationToken = default)
             => Task.FromResult<Conversation?>(null);
 
-        public Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
-            => Task.FromResult<(IReadOnlyList<Conversation>, int)>(([], 0));
+        public Task<(IReadOnlyList<ConversationListRow> Items, int Total)> ListAsync(Guid orgId, Guid userId, int page, int pageSize, CancellationToken cancellationToken = default)
+            => Task.FromResult<(IReadOnlyList<ConversationListRow>, int)>(([], 0));
+
+        public Task<ConversationListRow?> GetRowAsync(Guid conversationId, CancellationToken cancellationToken = default)
+            => Task.FromResult<ConversationListRow?>(null);
 
         public Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(Guid orgId, Guid userId, Guid? customerId, string threadId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
-        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, CancellationToken cancellationToken = default)
+        public Task<Conversation> GetOrCreateSalonByExternalRefAsync(Guid orgId, string externalRef, string threadId, Guid? customerId, CancellationToken cancellationToken = default)
             => throw new NotImplementedException();
 
         public Task SaveAsync(Conversation conversation, CancellationToken cancellationToken = default)
@@ -107,6 +110,9 @@ public class ConversationHubTests
 
         public Task<OrganizationMembership?> GetMembershipAsync(Guid organizationId, Guid userId, CancellationToken cancellationToken = default)
             => Task.FromResult(memberships.FirstOrDefault(m => m.OrganizationId == organizationId && m.UserId == userId));
+
+        // Subscriptions are irrelevant to the hub group-joining behaviour under test.
+        public Task<Aveline.Api.Modules.Billing.Models.OrganizationSubscription?> GetSubscriptionAsync(Guid organizationId, CancellationToken cancellationToken = default) => Task.FromResult<Aveline.Api.Modules.Billing.Models.OrganizationSubscription?>(null);
 
         public Task<Organization?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);
         public Task<Organization?> GetByOwnerUserIdAsync(Guid ownerUserId, CancellationToken cancellationToken = default) => Task.FromResult<Organization?>(null);

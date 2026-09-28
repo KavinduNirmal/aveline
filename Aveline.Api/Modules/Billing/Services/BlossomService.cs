@@ -26,6 +26,22 @@ public sealed class BlossomService(
     private const int MinReasonLength = 10;
     private const int MaxReasonLength = 500;
 
+    /// <summary>Default page for a statement request that names no page size.</summary>
+    public const int DefaultStatementPageSize = 50;
+
+    /// <summary>
+    /// Largest statement page. A request beyond it is rejected by the endpoint naming the range
+    /// rather than silently clamped: a caller who asked for 500 rows and received 200 would page on
+    /// a false assumption.
+    /// </summary>
+    public const int MaxStatementPageSize = 200;
+
+    /// <summary>
+    /// Longest statement window. Was 92 days at the endpoint, shorter than the 400-day retention the
+    /// S-catalog claims for S-3; 400 now matches it.
+    /// </summary>
+    public const int MaxStatementWindowDays = 400;
+
     /// <summary>
     /// The balance implied by the append-only ledger:
     /// <c>MonthlyBlossomLimit + Σ non-allocation deltas − BlossomUsed</c>. Shared with the
@@ -255,7 +271,9 @@ public sealed class BlossomService(
     }
 
     public async Task<BlossomStatement> GetStatementAsync(
-        Guid organizationId, DateTime from, DateTime to, string? kind, int page, int pageSize,
+        Guid organizationId, DateTime from, DateTime to, string? kind,
+        BlossomLedgerEntryType? entryType, BlossomSourceKind? sourceKind, string? query,
+        decimal? minAmount, decimal? maxAmount, int page, int pageSize,
         CancellationToken cancellationToken = default)
     {
         if (to <= from)
@@ -268,52 +286,69 @@ public sealed class BlossomService(
         var includeEntitlements = normalizedKind is null or "all" or "entitlement";
         var includeConsumption = normalizedKind is null or "all" or "consumption";
 
-        var entries = includeEntitlements
-            ? await ledgerRepository.ListEntriesAsync(organizationId, from, to, null, 1, int.MaxValue, cancellationToken)
-            : [];
-        var usage = includeConsumption
-            ? await usageRepository.ListRecordsInWindowAsync(organizationId, from, to, cancellationToken)
-            : [];
+        var safePage = Math.Max(page, 1);
+        var safePageSize = Math.Clamp(pageSize <= 0 ? DefaultStatementPageSize : pageSize, 1, MaxStatementPageSize);
 
-        // Derive the opening balance from the projection: closing = opening + ledger - usage.
-        var windowLedger = entries.Sum(entry => entry.BlossomDelta);
-        var windowUsage = usage.Sum(record => record.BlossomUnits);
+        var filter = new BlossomStatementFilter(
+            from, to, includeEntitlements, includeConsumption, entryType, sourceKind,
+            string.IsNullOrWhiteSpace(query) ? null : query.Trim(),
+            minAmount, maxAmount);
+
+        // Paged across the merged source **in the database**. The delivered version read the whole
+        // window with `pageSize = int.MaxValue` and skipped in memory, which materialised every
+        // ledger entry and every consumption row on every request.
+        var (total, pageRows) = await ledgerRepository.ListStatementPageAsync(
+            organizationId, filter, safePage, safePageSize, cancellationToken);
+
+        // The opening balance is derived backwards from the projection, which is why the response
+        // says so. It is the balance before the *window*, so it does not move with the page.
+        var windowLedger = await ledgerRepository.SumDeltasInWindowAsync(
+            organizationId, from, to, cancellationToken);
+        var windowUsage = await usageRepository.SumBlossomUnitsInWindowAsync(
+            organizationId, from, to, cancellationToken);
         var openingBalance = account.BlossomRemaining - windowLedger + windowUsage;
 
-        var timeline = new List<(DateTime At, BlossomLedgerEntry? Ledger, AiUsageRecord? Usage)>();
-        timeline.AddRange(entries.Select(entry => (entry.CreatedAt, (BlossomLedgerEntry?)entry, (AiUsageRecord?)null)));
-        timeline.AddRange(usage.Select(record => (record.CreatedAt, (BlossomLedgerEntry?)null, (AiUsageRecord?)record)));
-        timeline.Sort((left, right) => left.At.CompareTo(right.At));
-
         var running = openingBalance;
-        var accumulated = new List<BlossomStatementItem>(timeline.Count);
-
-        foreach (var node in timeline)
+        if (safePage > 1)
         {
-            if (node.Ledger is { } ledgerEntry)
-            {
-                running += ledgerEntry.BlossomDelta;
-                accumulated.Add(new BlossomStatementItem(
-                    ledgerEntry.Id, ledgerEntry.CreatedAt, "Entitlement", ledgerEntry.EntryType,
-                    ledgerEntry.BlossomDelta, running, ledgerEntry.Reason, ledgerEntry.SourceKind,
-                    ledgerEntry.SourceRef, ledgerEntry.ExpiresAt, ledgerEntry.CreatedByUserId));
-            }
-            else if (node.Usage is { } usageRecord)
-            {
-                running -= usageRecord.BlossomUnits;
-                accumulated.Add(new BlossomStatementItem(
-                    usageRecord.Id, usageRecord.CreatedAt, "Consumption", null, -usageRecord.BlossomUnits,
-                    running, "Agent workflow", null, usageRecord.WorkflowId, null, null));
-            }
+            // Everything the filter matched before this page, so each row's running balance is
+            // correct on every page rather than restarting at the window's opening.
+            running += await ledgerRepository.SumStatementMovementBeforeAsync(
+                organizationId, filter, (safePage - 1) * safePageSize, cancellationToken);
         }
 
-        var safePage = Math.Max(page, 1);
-        var safePageSize = Math.Clamp(pageSize, 1, 200);
-        var pageItems = accumulated
-            .OrderByDescending(item => item.OccurredAt)
-            .Skip((safePage - 1) * safePageSize)
-            .Take(safePageSize)
-            .ToArray();
+        var revocable = await ledgerRepository.GetRevocableAmountsAsync(
+            pageRows.Where(row => row.IsEntitlement).Select(row => row.Id).ToArray(), cancellationToken);
+
+        var items = new List<BlossomStatementItem>(pageRows.Count);
+        foreach (var row in pageRows)
+        {
+            if (row.IsEntitlement)
+            {
+                running += row.BlossomDelta;
+                items.Add(new BlossomStatementItem(
+                    row.Id, row.OccurredAt, "Entitlement", row.EntryType,
+                    row.BlossomDelta, running, row.Reason, row.SourceKind,
+                    row.SourceRef, row.ExpiresAt, row.CreatedByUserId)
+                {
+                    AvailableToRevoke = revocable.TryGetValue(row.Id, out var amount) ? amount : null,
+                });
+            }
+            else
+            {
+                running -= row.BlossomUnits;
+                items.Add(new BlossomStatementItem(
+                    row.Id, row.OccurredAt, "Consumption", null, -row.BlossomUnits,
+                    running, $"AI workflow on {row.Model ?? "an unknown model"}.", null,
+                    row.SourceRef, null, null)
+                {
+                    Provider = row.Provider,
+                    Model = row.Model,
+                    NormalizedUnits = row.NormalizedUnits,
+                    ActualCostUsd = row.ActualCostUsd,
+                });
+            }
+        }
 
         var nonAllocationDeltas = await ledgerRepository.SumDeltasExcludingAsync(
             account.Id, BlossomLedgerEntryType.PeriodAllocation, cancellationToken);
@@ -325,14 +360,27 @@ public sealed class BlossomService(
             account.PeriodStart,
             account.PeriodEnd,
             openingBalance,
-            pageItems,
-            accumulated.Count,
+            items,
+            total,
             safePage,
             safePageSize,
             account.BlossomRemaining,
             new BlossomStatementReconciliation(
                 account.BlossomRemaining, ledgerDerivedBalance, drift, drift == 0m),
-            DateTime.UtcNow);
+            DateTime.UtcNow,
+            MaxStatementWindowDays,
+            new BlossomStatementDataQuality(
+                ReconciliationChecked: true,
+                // The projection is the source, so the opening balance inherits its state. Stated
+                // rather than implied, because a reader cannot tell otherwise.
+                OpeningBalanceFromProjection: true,
+                WindowCapped: (to - from).TotalDays > MaxStatementWindowDays,
+                MaxWindowDays: MaxStatementWindowDays,
+                Notes:
+                [
+                    "The opening balance is derived from the balance projection, not accumulated "
+                    + "forward from the ledger rows in this window.",
+                ]));
     }
 
     public async Task<BlossomUsage> GetUsageAsync(

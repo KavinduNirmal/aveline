@@ -36,6 +36,15 @@ function DialogOverlay({
   )
 }
 
+/**
+ * The content width for a dialog that genuinely needs more room than the default 512px.
+ *
+ * It exists as a named constant because getting this wrong is silent: an unprefixed `max-w-3xl`
+ * does **not** replace `DialogContent`'s `sm:max-w-lg`, and the `sm:` one wins from 640px up, so the
+ * dialog looks like it ignored the width. Passing this replaces the default at the same variant.
+ */
+export const DIALOG_CONTENT_WIDE = 'sm:max-w-3xl'
+
 function DialogContent({
   className,
   children,
@@ -50,7 +59,17 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border p-6 shadow-lg duration-200 sm:max-w-lg",
+          // This is a grid, and a grid item defaults to `min-width: auto`, so a wide child (a table,
+          // a long unbroken string) widens its track past the dialog's `max-w-*` instead of
+          // scrolling inside it. `min-w-0` on the content is what lets it shrink to the box.
+          //
+          // The width is `sm:max-w-lg` and deliberately **not** an unprefixed `max-w-*` default:
+          // tailwind-merge treats `max-w-2xl` and `sm:max-w-lg` as different utilities and keeps
+          // both, after which the `sm:` one wins from 640px up — so a caller passing `max-w-*`
+          // silently got 512px, and the `max-w-[calc(100%-2rem)]` viewport guard was replaced by a
+          // fixed width that can exceed a phone screen. A caller that wants a different width must
+          // pass a `sm:`/`md:` width (see `DialogContentWide`), which replaces this cleanly.
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full min-w-0 max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border p-6 shadow-lg duration-200 sm:max-w-lg",
           className
         )}
         {...props}

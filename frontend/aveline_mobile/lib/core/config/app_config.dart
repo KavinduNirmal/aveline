@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// Compile-time configuration read from `--dart-define`.
 class AppConfig {
   const AppConfig({
@@ -20,15 +22,37 @@ class AppConfig {
   /// (`user_role`, `org_role`, `org_id`, `org_slug`).
   final String jwtTemplateName;
 
-  /// Default API base URL: the host machine's local API as seen from an
-  /// Android emulator (`10.0.2.2`).
-  static const String _defaultApiBaseUrl = 'http://10.0.2.2:5091';
+  /// Default API base URL: platform-aware localhost mapping.
+  /// Android emulator uses `10.0.2.2`, while Windows/macOS/Linux/Web/iOS use `localhost`.
+  static String get defaultApiBaseUrl {
+    if (kIsWeb) return 'http://localhost:5091';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'http://10.0.2.2:5091';
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+      case TargetPlatform.fuchsia:
+        return 'http://localhost:5091';
+    }
+  }
 
   static const String _defaultJwtTemplateName = 'jwt-aveline-v1';
 
   /// Default Clerk test publishable key for local development.
   static const String _defaultClerkKey =
       'pk_test_aW5zcGlyZWQtd2FydGhvZy04MjA4LmNsZXJrLmFjY291bnRzLmRldiQ';
+
+  /// Public origin of the web app, used to turn a handbook citation's path (`/docs/team`) into a
+  /// link the mobile app can open (ADR-025).
+  ///
+  /// Supplied via `--dart-define=AVELINE_WEB_BASE_URL=https://...`.
+  ///
+  /// Empty by default on purpose: a guessed host would send staff to a page that may not exist, so
+  /// with no origin configured the citation is still shown and tapping tells the reader where it
+  /// lives instead of opening an address nobody confirmed.
+  static const String webBaseUrl = String.fromEnvironment('AVELINE_WEB_BASE_URL');
 
   /// Reads the app configuration from the compile-time environment.
   factory AppConfig.fromEnvironment() {
@@ -45,12 +69,11 @@ class AppConfig {
       );
     }
 
+    final envApiUrl = const String.fromEnvironment('API_BASE_URL');
+
     return AppConfig(
       clerkPublishableKey: clerkPublishableKey,
-      apiBaseUrl: const String.fromEnvironment(
-        'API_BASE_URL',
-        defaultValue: _defaultApiBaseUrl,
-      ),
+      apiBaseUrl: envApiUrl.isNotEmpty ? envApiUrl : defaultApiBaseUrl,
       jwtTemplateName: const String.fromEnvironment(
         'JWT_TEMPLATE_NAME',
         defaultValue: _defaultJwtTemplateName,

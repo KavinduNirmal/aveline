@@ -91,10 +91,11 @@ class ThreadDelivery {
 /// The server's refusal to deliver, with the reason code it named.
 ///
 /// The codes are the API's own (`no_customer`, `no_channel_handle`,
-/// `channel_not_connected`, `channel_unsupported`, `provider_refused`), carried
-/// un-translated so the layer that owns the copy can turn each into a sentence. A
-/// refusal is a 409 or a 502 rather than a transport failure: the request was
-/// understood and declined, and nothing was sent.
+/// `channel_not_connected`, `channel_unsupported`, `consent_revoked`,
+/// `provider_refused`), carried un-translated so the layer that owns the copy can
+/// turn each into a sentence. A refusal is a 409, a 403 or a 502 rather than a
+/// transport failure: the request was understood and declined, and nothing was
+/// sent. `consent_revoked` is the one the client asked for rather than a fault.
 class DeliveryRefused implements Exception {
   const DeliveryRefused(this.refusal, {this.detail});
 

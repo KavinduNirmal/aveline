@@ -120,6 +120,7 @@ class VisualAgentOutput(BaseModel):
     outfit_proposal: dict[str, Any] | None = None
     sourcing_request: SourcingRequestDto | None = None
     sourcing_suggestion: dict[str, Any] | None = None
+    partner_sourcing_options: list[dict[str, Any]] | None = None
     image_attributes: ImageAttributes | None = None
     analyzed_image: dict[str, Any] | None = None
     customer_matches: list[dict[str, Any]] | None = None

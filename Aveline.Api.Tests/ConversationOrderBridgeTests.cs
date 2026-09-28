@@ -59,7 +59,7 @@ public class ConversationOrderBridgeTests
             .Setup(service => service.IdentifyOrCreateAsync(
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid org, string phone, string? name, CancellationToken _) => new CustomerProfileDto(
-                Guid.CreateVersion7(), phone, null, name, "new", 0m, 0,
+                Guid.CreateVersion7(), phone, null, name, null, "new", 0m, 0,
                 Array.Empty<CustomerPreferenceDto>(), Array.Empty<string>(), "pending"));
 
         return new Harness(

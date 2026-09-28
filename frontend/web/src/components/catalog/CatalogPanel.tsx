@@ -721,7 +721,16 @@ export function CatalogPanel({
           />
         )}
 
-        {activeTab === 'suppliers' && <SuppliersTab suppliers={suppliers} />}
+        {activeTab === 'suppliers' && (
+          <SuppliersTab
+            suppliers={suppliers}
+            organizationId={orgId}
+            onAddSupplier={(newSupplier) => {
+              setSuppliers((prev) => [newSupplier, ...prev.filter((s) => s.id !== newSupplier.id)])
+              setSuppliersMeasured(true)
+            }}
+          />
+        )}
       </div>
         </>
       )}

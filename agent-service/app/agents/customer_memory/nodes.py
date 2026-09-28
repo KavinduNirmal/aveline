@@ -33,6 +33,18 @@ OUT_OF_SCOPE = "out_of_scope"
 #: the fail-closed outcome, and it tells the orchestrator to stop the whole ordered pipeline.
 CONSENT_UNAVAILABLE = "unavailable"
 
+#: How near a stored note must be to the current message to count as context for it (gap B1).
+#: The backend applies this as a cosine-similarity predicate, so a customer whose notes say nothing
+#: about this message retrieves nothing instead of the five least-unrelated notes on file. It is
+#: deliberately low: the cost of missing a marginally relevant note is a less personal reply, while
+#: the cost of including an unrelated one is a draft that contradicts what the customer just said.
+MEMORY_SIMILARITY_FLOOR = 0.25
+
+#: The provenance the agent attaches to a preference the customer stated themselves. A stated
+#: preference is explicit and is believed strongly; the value is the extraction's own confidence, not
+#: a property of the store.
+STATED_PREFERENCE_CONFIDENCE = 0.9
+
 
 def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
     """Validate an assembled ``MemoryAgentOutput``-shaped dict in the running path.
@@ -57,16 +69,20 @@ def _unwrap_reply(content: str) -> str:
     return unwrap_reply(content, fallback=content if isinstance(content, str) else "")
 
 
-def _unique_notes(memories: Any) -> list[dict[str, str]]:
+def _unique_notes(memories: Any) -> list[dict[str, Any]]:
     """The customer's stored notes, first occurrence first, near-identical rows collapsed.
 
-    The store has no write-time de-duplication, so one fact can sit in it several times: a real
-    thread held three identical "The customer has a party" rows plus a reworded fourth, and reciting
-    them produced a sentence that read as a malfunction. This collapses what a reader would call the
-    same note. It cannot collapse a reworded one, which is the remaining gap - on the write path,
-    not here.
+    The store now enforces one live note per normalised statement (a partial unique index over the
+    statement key), so this is the second line of defence rather than the only one: it still collapses
+    rows written before that constraint existed, and it makes the block's own de-duplication
+    independent of what the write path did. What it cannot collapse is a *reworded* statement, which
+    is a different problem and needs a similarity threshold rather than a key.
+
+    Each note keeps the provenance the search returned (source, explicitness, confidence and
+    similarity). Dropping it here is what left the one surface that shows a reader what is on file
+    unable to say whether a note was stated or inferred (gaps B2, B3).
     """
-    notes: list[dict[str, str]] = []
+    notes: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for memory in memories or []:
@@ -79,12 +95,24 @@ def _unique_notes(memories: Any) -> list[dict[str, str]]:
         if key in seen:
             continue
         seen.add(key)
-        notes.append(
-            {
-                "content": content,
-                "category": str(memory.get("category") or "").strip() or "memory",
-            }
-        )
+
+        note: dict[str, Any] = {
+            "content": content,
+            "category": str(memory.get("category") or "").strip() or "memory",
+        }
+        source = memory.get("source")
+        if isinstance(source, str) and source.strip():
+            note["source"] = source.strip()
+        if isinstance(memory.get("isExplicit"), bool):
+            note["is_explicit"] = memory["isExplicit"]
+        confidence = memory.get("confidence")
+        if isinstance(confidence, (int, float)):
+            note["confidence"] = float(confidence)
+        similarity = memory.get("similarity")
+        if isinstance(similarity, (int, float)):
+            note["similarity"] = float(similarity)
+
+        notes.append(note)
 
     return notes
 
@@ -293,7 +321,7 @@ class CustomerMemoryAgent:
         return {"consent_status": status}
 
     async def parse(self, state: MemoryAgentState) -> dict[str, Any]:
-        """Extract structured intent and preference/event signals from the message."""
+        """Extract structured intent and preference/event/experience signals from the message."""
         parsed = parse_message(state.get("message", ""), intent_hint=state.get("intent_type"))
         return {
             "parsed_intent": parsed["parsed_intent"],
@@ -306,6 +334,7 @@ class CustomerMemoryAgent:
             if parsed["event_type"]
             else [],
             "_preference_signals": parsed["preference_signals"],
+            "_experience_signal": parsed["experience"],
         }
 
     async def retrieve(self, state: MemoryAgentState) -> dict[str, Any]:
@@ -319,7 +348,11 @@ class CustomerMemoryAgent:
         customer_id = state.get("customer_id")
         try:
             results = await self.registry.get_customer_memories(
-                str(org_id), str(customer_id), state.get("message", ""), top_k=5
+                str(org_id),
+                str(customer_id),
+                state.get("message", ""),
+                top_k=5,
+                min_similarity=MEMORY_SIMILARITY_FLOOR,
             )
             memories = results if isinstance(results, list) else results.get("results", [])
             return {"semantic_context": memories}
@@ -351,22 +384,57 @@ class CustomerMemoryAgent:
                 content = f"{name} dislikes {signal['preference_value']}"
             else:
                 content = f"{name} prefers {signal['preference_value']}"
-            if await self._try_save_memory(org_id, customer_id, content, "preference"):
+            # The customer said this about themselves in the message being processed, so it is an
+            # explicit, conversation-sourced statement. Both facts were computed here and then
+            # dropped by a tool that accepted only content and category, which is why every
+            # agent-written memory read as an unvouched-for inference (gap A1).
+            if await self._try_save_memory(
+                org_id,
+                customer_id,
+                content,
+                "preference",
+                source="conversation",
+                is_explicit=True,
+                confidence=STATED_PREFERENCE_CONFIDENCE,
+            ):
                 extracted.append(
                     {
                         "content": content,
                         "category": "preference",
+                        "source": "conversation",
                         "is_explicit": True,
-                        "confidence": 0.9,
+                        "confidence": STATED_PREFERENCE_CONFIDENCE,
                     }
                 )
+                # The interaction brief's preference summary is assembled from the preferences
+                # table, not from memories, so a stated preference that only became a memory row
+                # left the brief's own summary empty while the store held the fact (gap C4).
+                # The memory row stays: it is the searchable, dated record of what was said.
+                await self._try_save_preference(org_id, customer_id, signal)
 
         for event in state.get("detected_events", []):
             on_date = f" on {event['event_date']}" if event.get("event_date") else ""
             content = f"{name} has a {event['event_type']}{on_date}"
-            if await self._try_save_memory(org_id, customer_id, content, "event"):
+            # A date the customer gave in this conversation is a stated event, so it gets the same
+            # provenance as a stated preference. The agent's own parse is what makes it explicit; a
+            # date inferred from context rather than stated would not be.
+            if await self._try_save_memory(
+                org_id,
+                customer_id,
+                content,
+                "event",
+                source="conversation",
+                is_explicit=True,
+                confidence=STATED_PREFERENCE_CONFIDENCE,
+            ):
                 extracted.append(
-                    {"content": content, "category": "event", "is_explicit": True, "confidence": 0.9}
+                    {
+                        "content": content,
+                        "category": "event",
+                        "source": "conversation",
+                        "is_explicit": True,
+                        "confidence": STATED_PREFERENCE_CONFIDENCE,
+                    }
                 )
             # Persist a structured Customer_Event row when a concrete date is known, so event
             # queries and reminders answer from real data (not just free-text memories).
@@ -381,6 +449,32 @@ class CustomerMemoryAgent:
                     )
                 except Exception:  # noqa: BLE001 - best-effort event persistence
                     logger.warning("Failed to persist customer event (event_type=%s).", event["event_type"])
+
+        # What the customer reported about the service, which the store had no record of before
+        # (gap A7): the complaint/sentiment categories were declared and never written. The message
+        # is the evidence, so the note quotes it rather than paraphrasing - a paraphrase is where
+        # "the delivery was late" becomes "the customer is impatient".
+        experience = state.get("_experience_signal")
+        if experience in {"complaint", "sentiment"}:
+            content = self._experience_note(name, experience, state.get("message", ""))
+            if await self._try_save_memory(
+                org_id,
+                customer_id,
+                content,
+                experience,
+                source="conversation",
+                is_explicit=True,
+                confidence=STATED_PREFERENCE_CONFIDENCE,
+            ):
+                extracted.append(
+                    {
+                        "content": content,
+                        "category": experience,
+                        "source": "conversation",
+                        "is_explicit": True,
+                        "confidence": STATED_PREFERENCE_CONFIDENCE,
+                    }
+                )
 
         # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
         # Staff queries are not customer interactions, so only genuine inbound messages are logged.
@@ -400,14 +494,65 @@ class CustomerMemoryAgent:
 
         return {"extracted_memories": extracted}
 
-    async def _try_save_memory(self, org_id: str, customer_id: str, content: str, category: str) -> bool:
+    async def _try_save_memory(
+        self,
+        org_id: str,
+        customer_id: str,
+        content: str,
+        category: str,
+        source: str | None = None,
+        is_explicit: bool | None = None,
+        confidence: float | None = None,
+    ) -> bool:
         """Attempt to persist a memory; returns True on success (best-effort)."""
         try:
-            await self.registry.save_customer_memory(org_id, customer_id, content, category)
+            await self.registry.save_customer_memory(
+                org_id,
+                customer_id,
+                content,
+                category,
+                source=source,
+                is_explicit=is_explicit,
+                confidence=confidence,
+            )
             return True
         except Exception:  # noqa: BLE001 - best-effort memory save
             logger.warning("Failed to save customer memory (category=%s).", category)
             return False
+
+    async def _try_save_preference(
+        self, org_id: str, customer_id: str, signal: dict[str, Any]
+    ) -> None:
+        """Mirror a stated preference into the preferences table the brief reads (gap C4).
+
+        Best-effort like every other write here: the memory row is the record of what was said, and
+        a failure to also update the summary must not fail the run.
+        """
+        try:
+            await self.registry.save_customer_preference(
+                org_id,
+                customer_id,
+                key=str(signal.get("preference_key") or "general"),
+                value=str(signal.get("preference_value") or "").strip(),
+                source="conversation",
+                is_explicit=True,
+                confidence=STATED_PREFERENCE_CONFIDENCE,
+            )
+        except Exception:  # noqa: BLE001 - best-effort preference save
+            logger.warning("Failed to save customer preference (key=%s).", signal.get("preference_key"))
+
+    @staticmethod
+    def _experience_note(name: str, experience: str, message: str) -> str:
+        """A note recording what the customer reported, quoting the message they sent.
+
+        Quoted, not paraphrased: this is the sentence an associate will read to decide how serious
+        the complaint is, and the customer's own words are the evidence for it.
+        """
+        verb = "reported a problem" if experience == "complaint" else "was pleased"
+        said = " ".join(message.split())
+        if len(said) > 280:
+            said = said[:277].rstrip() + "..."
+        return f'{name} {verb}: "{said}"'
 
     async def compose_output(self, state: MemoryAgentState) -> dict[str, Any]:
         """Assemble the final output.

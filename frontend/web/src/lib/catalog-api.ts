@@ -732,6 +732,19 @@ export async function updateSourcingRequestStatus(
   return normalizeSourcingRequest(response.data)
 }
 
+export interface CreateSupplierPayload {
+  name: string
+  specialty?: string
+  location?: string
+  contactEmail?: string
+  contactPhone?: string
+  websiteUrl?: string
+  apiEndpoint?: string
+  minimumOrder?: number
+  deliveryTimeDays?: number
+  isActive?: boolean
+}
+
 /**
  * Lists integrated suppliers.
  */
@@ -742,6 +755,39 @@ export async function fetchSuppliers(
     `${catalogBase(organizationId)}/suppliers`,
   )
   return response.data || []
+}
+
+/**
+ * Registers a new partner atelier or supplier.
+ */
+export async function createSupplier(
+  organizationId: string,
+  payload: CreateSupplierPayload,
+): Promise<Supplier> {
+  const response = await apiClient.post<Supplier>(
+    `${catalogBase(organizationId)}/suppliers`,
+    {
+      supplierName: payload.name,
+      specialty: payload.specialty,
+      location: payload.location,
+      contactEmail: payload.contactEmail,
+      contactPhone: payload.contactPhone,
+      websiteUrl: payload.websiteUrl,
+      apiEndpoint: payload.apiEndpoint || payload.websiteUrl,
+      minimumOrder: payload.minimumOrder,
+      deliveryTimeDays: payload.deliveryTimeDays,
+      isActive: payload.isActive ?? true,
+    },
+  )
+  return {
+    ...response.data,
+    name: response.data.name || (response.data as unknown as { supplierName?: string }).supplierName || payload.name,
+    specialty: response.data.specialty || payload.specialty || '',
+    location: response.data.location || payload.location || '',
+    websiteUrl: response.data.websiteUrl || payload.websiteUrl || '',
+    apiEndpoint: response.data.apiEndpoint || payload.apiEndpoint || payload.websiteUrl || '',
+    sampleCatalogCount: response.data.sampleCatalogCount ?? 0,
+  }
 }
 
 /**

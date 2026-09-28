@@ -1111,4 +1111,71 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         return (await response.Content.ReadFromJsonAsync<InventoryItemDto>())!;
     }
+
+    [Fact]
+    public async Task CreateSupplier_WithValidData_Returns201CreatedAndPersists()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_supplier_owner");
+        var token = CreateToken(user.ClerkId);
+
+        var payload = new CreateSupplierDto
+        {
+            SupplierName = "Colombo Heritage Silk Weavers",
+            Specialty = "Handloom Pure Mulberry Silk",
+            Location = "Pettah, Colombo",
+            ContactEmail = "orders@colombosilks.lk",
+            ContactPhone = "+94 11 234 5678",
+            MinimumOrder = 35000m,
+            DeliveryTimeDays = 5,
+            IsActive = true
+        };
+
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/suppliers",
+                token,
+                JsonContent.Create(payload)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await response.Content.ReadFromJsonAsync<SupplierDto>();
+        created.Should().NotBeNull();
+        created!.SupplierName.Should().Be("Colombo Heritage Silk Weavers");
+        created.Specialty.Should().Be("Handloom Pure Mulberry Silk");
+        created.Location.Should().Be("Pettah, Colombo");
+        created.ContactEmail.Should().Be("orders@colombosilks.lk");
+        created.MinimumOrder.Should().Be(35000m);
+        created.DeliveryTimeDays.Should().Be(5);
+        created.IsActive.Should().BeTrue();
+
+        // Verify it is returned in GetSuppliers
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/suppliers", token));
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var list = await getResponse.Content.ReadFromJsonAsync<List<SupplierDto>>();
+        list.Should().NotBeNull();
+        list!.Should().Contain(s => s.Id == created.Id && s.SupplierName == "Colombo Heritage Silk Weavers");
+    }
+
+    [Fact]
+    public async Task CreateSupplier_WithMissingName_Returns400BadRequest()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_supplier_bad");
+        var token = CreateToken(user.ClerkId);
+
+        var payload = new CreateSupplierDto
+        {
+            SupplierName = "",
+            ContactEmail = "invalid@test.com"
+        };
+
+        var response = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/suppliers",
+                token,
+                JsonContent.Create(payload)));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
 }

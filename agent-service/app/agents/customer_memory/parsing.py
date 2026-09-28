@@ -32,6 +32,21 @@ _EVENT_TYPE_KEYWORDS = {
     "anniversary": ("anniversary",),
 }
 
+# What a customer says when something went wrong. Two vocabularies, deliberately separate:
+# a *complaint* is a fault the boutique must act on, a *sentiment* is how the customer feels.
+# The memory categories exist for both and nothing ever wrote either (gap A7), so the store held
+# no record of a bad experience at all - only the preference half of what customers say.
+_COMPLAINT_PHRASES = (
+    "not happy", "unhappy", "disappointed", "complaint", "complain", "wrong item",
+    "damaged", "defective", "broken", "never arrived", "not delivered", "late delivery",
+    "delayed", "rude", "overcharged", "refund", "return it", "still waiting", "no response",
+    "poor quality", "bad quality", "faulty",
+)
+_SENTIMENT_PHRASES = (
+    "love it", "loved it", "absolutely love", "so happy", "delighted", "amazing", "beautiful work",
+    "thank you so much", "excited", "perfect fit", "much appreciated", "very pleased",
+)
+
 
 def detect_intent_type(message: str) -> str:
     """Return the primary intent type for ``message``.
@@ -66,6 +81,22 @@ def extract_iso_date(message: str) -> str | None:
     return match.group(0) if match else None
 
 
+def detect_experience_signal(message: str) -> str | None:
+    """Return ``"complaint"``, ``"sentiment"`` or None for how the customer is reporting things.
+
+    A complaint wins over a sentiment when both vocabularies match, because a fault is the one the
+    boutique has to act on: "I love the saree but it arrived damaged" is a complaint with a
+    compliment attached, not a compliment. These are the two memory categories the schema declared
+    and no code path wrote (gap A7).
+    """
+    lowered = message.lower()
+    if any(phrase in lowered for phrase in _COMPLAINT_PHRASES):
+        return "complaint"
+    if any(phrase in lowered for phrase in _SENTIMENT_PHRASES):
+        return "sentiment"
+    return None
+
+
 def _has_size(message: str) -> str | None:
     lowered = message.upper()
     for size in _SIZE_KEYWORDS:
@@ -87,7 +118,8 @@ def parse_message(message: str, intent_hint: str | None = None) -> dict[str, Any
           ``parsed_intent`` — intent_type/occasion/color/size/budget/urgency,
           ``preference_signals`` — list of dicts {statement, is_explicit},
           ``event_type`` — detected event type or None,
-          ``iso_date`` — detected ISO date or None.
+          ``iso_date`` — detected ISO date or None,
+          ``experience`` — "complaint" | "sentiment" | None.
     """
     lowered = message.lower()
 
@@ -142,4 +174,5 @@ def parse_message(message: str, intent_hint: str | None = None) -> dict[str, Any
         "preference_signals": preference_signals,
         "event_type": detect_event_type(message),
         "iso_date": extract_iso_date(message),
+        "experience": detect_experience_signal(message),
     }

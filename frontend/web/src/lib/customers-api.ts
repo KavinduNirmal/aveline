@@ -42,6 +42,118 @@ export interface TenantCustomerDetail {
   updatedAtUtc: string | null
   interactionCount: number
   tags: string[]
+  /** The boutique's own prose about this client. Null when nobody has written one yet. */
+  description: string | null
+  /**
+   * `pending` | `granted` | `revoked`.
+   *
+   * Shown, never offered: the customer's own consent is not a staff decision, and the staff
+   * surfaces that write it are deliberately separate from this record.
+   */
+  consentStatus: string
+  /**
+   * The preferences the boutique holds, excluding the nickname alias.
+   *
+   * Optional on the type because the book row does not carry it and an older payload would omit
+   * it; the readers default to an empty list rather than rendering a broken tile.
+   */
+  preferences?: TenantCustomerPreference[]
+}
+
+/** One stated or inferred preference (`CustomerPreferenceDto`). */
+export interface TenantCustomerPreference {
+  id: string
+  preferenceKey: string
+  preferenceValue: string
+  isExplicit: boolean
+  confidence: number
+}
+
+/**
+ * One note the boutique holds about a client, as the brief and the memory panel show it.
+ */
+export interface TenantCustomerMemory {
+  id: string
+  customerId: string
+  content: string
+  category: string
+  source: string
+  isExplicit: boolean
+  confidence: number
+  createdAtUtc: string
+}
+
+/** One occasion on a client's calendar (`CustomerEventDto`). */
+export interface TenantCustomerEvent {
+  id: string
+  eventType: string
+  eventDate: string
+  description: string | null
+  isActive: boolean
+}
+
+/**
+ * A client's occasions.
+ *
+ * The list is filtered on `isActive` alone, so it carries occasions that have already happened; the
+ * reader decides which are still ahead rather than trusting the collection to be "upcoming".
+ */
+export async function fetchCustomerEvents(
+  organizationId: string,
+  customerId: string,
+  signal?: AbortSignal,
+): Promise<TenantCustomerEvent[]> {
+  const response = await apiClient.get<TenantCustomerEvent[]>(
+    `${customersBase(organizationId)}/${customerId}/events`,
+    { signal },
+  )
+  return response.data
+}
+
+/**
+ * A client's live memories, newest first.
+ *
+ * A read of its own rather than a projection of the brief: the brief collapses the notes into what
+ * an associate reads before contact, while the panel below the fold is the full store, including
+ * the categories (complaint, sentiment) that would otherwise appear nowhere on the screen.
+ */
+export async function fetchCustomerMemories(
+  organizationId: string,
+  customerId: string,
+  signal?: AbortSignal,
+): Promise<TenantCustomerMemory[]> {
+  const response = await apiClient.get<TenantCustomerMemory[]>(
+    `${customersBase(organizationId)}/${customerId}/memories`,
+    { signal },
+  )
+  return response.data
+}
+
+/** One upcoming occasion on the pre-contact brief. */
+export interface TenantCustomerBriefEvent {
+  id: string
+  eventType: string
+  eventDate: string
+  description: string | null
+}
+
+/**
+ * The pre-contact brief: who the client is, what is known, and what is coming up.
+ *
+ * `memories` is empty unless consent is granted; `consentStatus` says why, so the caller can
+ * label an empty section instead of showing it as "nothing on file".
+ */
+export interface TenantCustomerBrief {
+  customerId: string
+  customerName: string
+  description: string | null
+  status: string
+  consentStatus: string
+  preferenceSummary: string | null
+  tags: string[]
+  upcomingEvents: TenantCustomerBriefEvent[]
+  memories: TenantCustomerMemory[]
+  generatedAtUtc: string
 }
 
 export interface CustomerInteractionItem {
@@ -70,6 +182,7 @@ export interface UpdateCustomerRequest {
   phoneNumber?: string
   email?: string
   level?: string
+  description?: string
 }
 
 export interface CreateWalkInCustomerRequest {
@@ -132,9 +245,26 @@ export async function fetchCustomer(
   return response.data
 }
 
-/** The client's interaction history, newest first. */
-export async function fetchCustomerInteractions(
+/**
+ * The pre-contact brief for one client.
+ *
+ * A read of its own rather than a projection of the detail: it is what an associate opens
+ * *before* making contact, and its memories section is consent-gated on the server.
+ */
+export async function fetchCustomerBrief(
   organizationId: string,
+  customerId: string,
+  signal?: AbortSignal,
+): Promise<TenantCustomerBrief> {
+  const response = await apiClient.get<TenantCustomerBrief>(
+    `${customersBase(organizationId)}/${customerId}/brief`,
+    { signal },
+  )
+  return response.data
+}
+
+/** The client's interaction history, newest first. */
+export async function fetchCustomerInteractions(  organizationId: string,
   customerId: string,
   options: { page?: number; pageSize?: number } = {},
   signal?: AbortSignal,

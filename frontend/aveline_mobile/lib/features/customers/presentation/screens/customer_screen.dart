@@ -479,6 +479,14 @@ class _Profile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: _ClientSheet(detail: detail, now: now),
         ),
+        // Who this client is, in the boutique's own words. It sits above the facts because it is
+        // what an associate reads before making contact (the pre-contact brief), and a list of
+        // tags is not that.
+        if (customer.hasDescription)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+            child: _DescriptionCard(description: customer.description!),
+          ),
         // The deadline is the one thing on this page that expires, so it is the
         // one block allowed to be loud, and it sits above everything read for
         // interest rather than for work.
@@ -527,6 +535,47 @@ class _Profile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The boutique's own prose about this client.
+///
+/// Shown verbatim and attributed, because it is the one field an associate wrote rather than the
+/// agent extracted: reading it as anything else would be attributing a person's words to a model.
+class _DescriptionCard extends StatelessWidget {
+  const _DescriptionCard({required this.description});
+
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Who they are',
+            style: theme.textTheme.labelSmall?.copyWith(
+              letterSpacing: 0.6,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            description,
+            key: const Key('customer_description'),
+            style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+          ),
+        ],
+      ),
     );
   }
 }

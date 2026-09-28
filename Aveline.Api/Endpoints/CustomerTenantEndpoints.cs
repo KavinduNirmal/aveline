@@ -248,6 +248,20 @@ public static class CustomerTenantEndpoints
             return Results.Ok(dtos);
         });
 
+        // The pre-contact brief: the staff surface reads who the client is before making contact,
+        // rather than only seeing the brief as a by-product of a salon conversation (gap B-brief).
+        group.MapGet("/{customerId:guid}/brief", async (
+            Guid organizationId,
+            Guid customerId,
+            ICustomerTenantService customers,
+            CancellationToken ct) =>
+        {
+            var brief = await customers.GetBriefAsync(organizationId, customerId, ct);
+            return brief is null
+                ? Results.NotFound(new { message = "That client is not in this boutique." })
+                : Results.Ok(brief);
+        });
+
         group.MapGet("/{customerId:guid}/events", async (
             Guid organizationId,
             Guid customerId,

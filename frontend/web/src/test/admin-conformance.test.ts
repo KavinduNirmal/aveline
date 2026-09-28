@@ -93,7 +93,7 @@ describe('A3 blocking conformance rules', () => {
     for (const file of adminFiles) {
       const text = source(file)
       for (const match of text.matchAll(/conformance-allow:\s*([a-z-]+)/g)) {
-        markers.push(`${file.replace(srcRoot, 'src')}: ${match[1]}`)
+        markers.push(`${file.replace(srcRoot, 'src').replace(/\\/g, '/')}: ${match[1]}`)
       }
     }
     // Grow this list only with a reason beside the exception.

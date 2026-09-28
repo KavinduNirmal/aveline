@@ -9,7 +9,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-MemoryCategory = Literal["preference", "event", "complaint", "fact", "sentiment"]
+# The categories the write paths actually store. `observation` and `constraint` were added with
+# model-driven extraction: the deterministic classes only ever produced preference/event/complaint,
+# but a model reading a message also records what the boutique noticed ("browsed a brown dress") and
+# the operational boundaries a customer states (an allergy, a size, a budget). This Literal is the
+# output contract, so a category the store accepts but this rejects would make the extracted facts
+# fail `MemoryAgentOutput` validation and turn the whole run into an error.
+MemoryCategory = Literal[
+    "preference", "event", "complaint", "observation", "constraint", "fact", "sentiment", "note"
+]
 MemorySource = Literal["conversation", "staff_note", "purchase", "inferred"]
 EventType = Literal["wedding", "birthday", "party", "office", "other"]
 ChannelType = Literal["whatsapp", "instagram", "in_person", "phone"]

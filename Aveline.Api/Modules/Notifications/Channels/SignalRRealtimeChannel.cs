@@ -22,9 +22,17 @@ public sealed class SignalRRealtimeChannel : IRealtimeChannel
     public async Task SendAsync(
         ResolvedRecipient recipient,
         Notification notification,
+        Guid inboxItemId,
+        int unreadCount,
         CancellationToken cancellationToken = default)
     {
-        var dto = new NotificationDto(notification.Type, notification.Title, notification.Body, notification.Data);
+        var dto = new NotificationDto(
+            notification.Type,
+            notification.Title,
+            notification.Body,
+            notification.Data,
+            inboxItemId,
+            unreadCount);
         await _hubContext.Clients
             .Group(GroupName.ForUser(recipient.UserId))
             .SendAsync("ReceiveNotification", dto, cancellationToken);

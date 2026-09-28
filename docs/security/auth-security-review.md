@@ -2,7 +2,7 @@
 
 > **Issue:** #28 · **Date:** 2026-09-01 · **Scope:** Clerk JWT validation, role
 > authorization, internal service-to-service auth, and the auth API surface
-> (`Aveline.Api` + `agnet-service`).
+> (`Aveline.Api` + `agent-service`).
 
 ## Methodology
 
@@ -22,7 +22,7 @@
 | Component | Surface |
 |---|---|
 | `Aveline.Api` | JwtBearer (issuer/lifetime/signing-key validation), role claim promotion, role + permission policies, CORS allow-list, internal token outbound handler, `/auth/claims`, `/policies/*`, `/agents/ping` |
-| `agnet-service` | `X-Internal-Token` dependency check, health endpoint |
+| `agent-service` | `X-Internal-Token` dependency check, health endpoint |
 | Clients | Flutter + React request interceptors (Bearer attachment, 401/403 handling) |
 
 ## Findings

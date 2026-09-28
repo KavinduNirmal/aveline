@@ -37,6 +37,7 @@ public class OnboardingEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.ConfigureServices(services =>
                 {
@@ -177,6 +178,123 @@ public class OnboardingEndpointsIntegrationTests : IAsyncLifetime
         Assert.NotNull(finalStatus);
         Assert.True(finalStatus.HasCompletedOnboarding);
         Assert.Equal(6, finalStatus.CurrentStep);
+    }
+
+    /// <summary>
+    /// Plan §9.1 F1 acceptance (3), priced half: a book that carries a Bloom price makes
+    /// <c>POST /api/v1/onboarding/plan</c> return that price on the widened DTO and persist a
+    /// <c>Trialing</c> subscription. Defer mode means no checkout and no intent.
+    /// </summary>
+    [Fact]
+    public async Task SelectPlanEndpoint_WithAPricedBloomBook_ReturnsThePriceAndTrials()
+    {
+        var clerkId = $"user_owner_priced_{Guid.NewGuid():N}";
+        var token = CreateToken(clerkId);
+        Guid orgId;
+
+        var ownerReq = AuthorizedJson(HttpMethod.Post, "/api/v1/onboarding/owner", token,
+            new SaveBoutiqueDetailsRequest(
+                Name: "The Priced Pavilion",
+                Address: "50 Park Street, Colombo 02",
+                PhoneNumber: "+94 77 987 6543"));
+        var ownerRes = await _client.SendAsync(ownerReq);
+        Assert.Equal(HttpStatusCode.OK, ownerRes.StatusCode);
+        var ownerDto = await ownerRes.Content.ReadFromJsonAsync<OnboardingOrganizationDto>();
+        Assert.NotNull(ownerDto);
+        orgId = ownerDto.Id;
+
+        await SeedPlanAllowanceAsync(PlanTier.Bloom, 3500m, orgId);
+
+        var planReq = AuthorizedJson(HttpMethod.Post, "/api/v1/onboarding/plan", token,
+            new SelectPlanRequest(PlanTier.Bloom));
+        var planRes = await _client.SendAsync(planReq);
+
+        Assert.Equal(HttpStatusCode.OK, planRes.StatusCode);
+        var planDto = await planRes.Content.ReadFromJsonAsync<OnboardingOrganizationDto>();
+        Assert.NotNull(planDto);
+        Assert.Equal(PlanTier.Bloom, planDto.PlanTier);
+        Assert.Equal(3500m, planDto.PriceLkr);
+        Assert.Equal("LKR", planDto.Currency);
+        Assert.Equal("Trialing", planDto.SubscriptionStatus);
+        Assert.Null(planDto.PaymentIntentId);
+        Assert.Null(planDto.CheckoutUrl);
+
+        // Defer mode never creates a payment intent (plan §9.1 / §14 Q1).
+        await using var context = Context();
+        var subscription = await context.OrganizationSubscriptions
+            .SingleAsync(s => s.OrganizationId == orgId);
+        Assert.Equal(3500m, subscription.PriceLkr);
+        Assert.Equal(SubscriptionStatus.Trialing, subscription.Status);
+        Assert.Equal(0, await context.PaymentIntents.CountAsync(i => i.OrganizationId == orgId));
+    }
+
+    /// <summary>
+    /// Plan §9.1 F1 acceptance (3), unpriced half: a book with no row for the chosen tier must not
+    /// be coerced to zero. The tier is still recorded and the subscription still trials.
+    /// </summary>
+    [Fact]
+    public async Task SelectPlanEndpoint_WithAnUnpricedTier_ReturnsANullPriceAndStillTrials()
+    {
+        var clerkId = $"user_owner_unpriced_{Guid.NewGuid():N}";
+        var token = CreateToken(clerkId);
+        Guid orgId;
+
+        var ownerReq = AuthorizedJson(HttpMethod.Post, "/api/v1/onboarding/owner", token,
+            new SaveBoutiqueDetailsRequest(
+                Name: "The Unpriced Pavilion",
+                Address: "51 Park Street, Colombo 02",
+                PhoneNumber: "+94 77 987 6544"));
+        var ownerRes = await _client.SendAsync(ownerReq);
+        Assert.Equal(HttpStatusCode.OK, ownerRes.StatusCode);
+        var ownerDto = await ownerRes.Content.ReadFromJsonAsync<OnboardingOrganizationDto>();
+        Assert.NotNull(ownerDto);
+        orgId = ownerDto.Id;
+
+        // The book is not empty, so this is specifically "no price for this tier", not "no book".
+        await SeedPlanAllowanceAsync(PlanTier.Rose, 20000m, Guid.CreateVersion7());
+
+        var planReq = AuthorizedJson(HttpMethod.Post, "/api/v1/onboarding/plan", token,
+            new SelectPlanRequest(PlanTier.Bloom));
+        var planRes = await _client.SendAsync(planReq);
+
+        Assert.Equal(HttpStatusCode.OK, planRes.StatusCode);
+        var planDto = await planRes.Content.ReadFromJsonAsync<OnboardingOrganizationDto>();
+        Assert.NotNull(planDto);
+        Assert.Null(planDto.PriceLkr);
+        Assert.Equal("Trialing", planDto.SubscriptionStatus);
+        Assert.Null(planDto.CheckoutUrl);
+
+        await using var context = Context();
+        var subscription = await context.OrganizationSubscriptions
+            .SingleAsync(s => s.OrganizationId == orgId);
+        Assert.Equal(0m, subscription.PriceLkr);
+        Assert.Equal(SubscriptionStatus.Trialing, subscription.Status);
+    }
+
+    private static AppDbContext Context() => new(new DbContextOptionsBuilder<AppDbContext>()
+        .UseInMemoryDatabase(databaseName: TestDatabase.Name())
+        .Options);
+
+    /// <summary>
+    /// An organisation-scoped <c>PlanAllowance</c> row, which the resolver prefers over the tier
+    /// list price, so a test's book cannot leak into another test's organisation.
+    /// </summary>
+    private static async Task SeedPlanAllowanceAsync(PlanTier tier, decimal priceLkr, Guid organizationId)
+    {
+        await using var context = Context();
+        context.BlossomPriceEntries.Add(new BlossomPriceEntry
+        {
+            PlanTier = tier,
+            OrganizationId = organizationId,
+            SkuKind = BlossomSkuKind.PlanAllowance,
+            BlossomQuantity = 750m,
+            PriceLkr = priceLkr,
+            EffectiveFrom = DateTime.UtcNow.AddDays(-1),
+            Status = BlossomRuleStatus.Active,
+            ChangeReason = "Seeded by the onboarding plan-selection endpoint tests.",
+            CreatedByUserId = Guid.CreateVersion7(),
+        });
+        await context.SaveChangesAsync();
     }
 
     private class FakeIntegrationAgentClient : IAgentServiceClient

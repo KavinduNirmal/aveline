@@ -8,9 +8,13 @@ namespace Aveline.Api.Modules.Statistics.Services;
 
 /// <summary>
 /// Implements the agentic statistics catalog (S-13…S-23) over a caller-supplied window.
-/// All aggregation is on the fly: there is no <c>DailyAgentMetrics</c> rollup yet
-/// (statistics-catalog.md §9), which is sufficient at current volumes.
 /// </summary>
+/// <remarks>
+/// All aggregation here is on the fly. A <c>DailyAgentMetrics</c> rollup **does** exist
+/// (<c>AgentStatsRollupJob</c> writes it daily; statistics-catalog.md §9); this service predates it
+/// and keeps the on-the-fly path, which is sufficient at current volumes. The business-KPI usage
+/// read (S-48) is the rollup's reader.
+/// </remarks>
 public sealed class AgentStatisticsService(
     IAgentRunRepository repository,
     IConfiguration configuration) : IAgentStatisticsService

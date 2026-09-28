@@ -18,6 +18,7 @@ public sealed class ApiTelemetryMiddleware(
     RequestDelegate next,
     TelemetryChannel channel,
     IOptions<TelemetryOptions> options,
+    IClaimIdentityMap identities,
     ILogger<ApiTelemetryMiddleware> logger)
 {
     private readonly TelemetryOptions _options = options.Value;
@@ -76,7 +77,7 @@ public sealed class ApiTelemetryMiddleware(
         var durationMs = (int)Math.Clamp(elapsed.TotalMilliseconds, 0, int.MaxValue);
         var statusCode = (short)Math.Clamp(context.Response.StatusCode, 0, short.MaxValue);
 
-        var (organizationId, apiKeyId, userId) = RequestPrincipal.Resolve(context.User);
+        var (organizationId, apiKeyId, userId) = RequestPrincipal.Resolve(context.User, identities);
         var errorCode = context.Items["TelemetryErrorCode"] as string
             ?? (context.Response.Headers.TryGetValue("X-Error-Code", out var codeHeader) ? codeHeader.ToString() : null)
             ?? (context.Items["ErrorCode"] as string)

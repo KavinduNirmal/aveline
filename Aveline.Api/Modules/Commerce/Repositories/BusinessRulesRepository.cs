@@ -83,7 +83,17 @@ public class BusinessRulesRepository : IBusinessRulesRepository
     {
         rule.UpdatedAt = DateTime.UtcNow;
 
-        _context.BusinessRules.Update(rule);
+        var tracked = _context.BusinessRules.Local.FirstOrDefault(e => e.Id == rule.Id);
+        if (tracked is not null && !ReferenceEquals(tracked, rule))
+        {
+            _context.Entry(tracked).CurrentValues.SetValues(rule);
+            rule = tracked;
+        }
+        else
+        {
+            _context.BusinessRules.Update(rule);
+        }
+
         await _context.SaveChangesAsync(cancellationToken);
 
         return rule;

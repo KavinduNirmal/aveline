@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Aveline.Api.Common.Jobs;
+using Aveline.Api.Configurations;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.Billing.Models;
@@ -40,6 +41,13 @@ public sealed record MetricSnapshot
 
     public long? EventBusFailed { get; init; }
 
+    /// <summary>
+    /// Interpolated p95 publish latency in milliseconds (M-8). Null below
+    /// <see cref="EventBusMetrics.MinLatencySamplesForPercentile"/>, so the metric is omitted
+    /// rather than computed from one observation.
+    /// </summary>
+    public double? EventBusPublishLatencyMs { get; init; }
+
     public double? ApiRequestsPerSecond { get; init; }
 
     public double? ApiErrorRate { get; init; }
@@ -61,11 +69,34 @@ public sealed record MetricSnapshot
     /// <summary>Agent runs currently paused for approval.</summary>
     public long? AgentPausedCount { get; init; }
 
+    /// <summary>
+    /// Terminal agent runs, cumulative over the retained window. A counter, not a window: it is
+    /// what a rate or an increase is computed over, and the only agent metric that answers "is the
+    /// agent being used at all?" - the running and paused counts are instantaneous and read zero
+    /// between runs, however much work the agent is doing.
+    /// </summary>
+    /// <remarks>
+    /// Runs are pruned after <c>AgentStats:RunRetentionDays</c> (default 400), so this is monotonic
+    /// only within that window: it steps <em>down</em> when a day of runs ages out. That is a
+    /// counter reset as far as Prometheus is concerned, and <c>increase()</c> handles one by
+    /// restarting its accumulation - the interval spanning the prune under-reports, and no interval
+    /// reports a spike that did not happen. Preferred over an in-process counter because the value
+    /// then survives an API restart.
+    /// </remarks>
+    public long? AgentRunsTotal { get; init; }
+
     /// <summary>Mean step count of agent runs started in the last hour.</summary>
     public double? AgentStepsPerRun { get; init; }
 
     /// <summary>Bucket-interpolated p95 API latency over the current hour, in milliseconds.</summary>
     public double? ApiLatencyP95Ms { get; init; }
+
+    /// <summary>
+    /// Worst connection-pool saturation across the process, <c>used / max</c> (Slice 5, M-9).
+    /// Read from Npgsql's instruments through <c>NpgsqlPoolMetricsListener</c>, not from the
+    /// (internal) Npgsql statistics API.
+    /// </summary>
+    public double? DbPoolSaturation { get; init; }
 }
 
 /// <summary>
@@ -79,7 +110,8 @@ public class SystemMetricCollector(
     IServiceScopeFactory scopeFactory,
     IDistributedJobLock jobLock,
     ILogger<SystemMetricCollector> logger,
-    IConfiguration configuration)
+    IConfiguration configuration,
+    AvelineMetrics? metrics = null)
     : StatisticsJobBase(scopeFactory, jobLock, logger)
 {
     /// <summary>Upper bound on the in-memory buffer that survives a database outage.</summary>
@@ -101,6 +133,7 @@ public class SystemMetricCollector(
         "aveline.api.telemetry.dropped",
         "aveline.eventbus.failed",
         "aveline.eventbus.backlog",
+        "aveline.eventbus.publish_latency_ms",
         "aveline.api.requests_per_second",
         "aveline.api.error_rate",
         "aveline.api.latency_p95",
@@ -108,9 +141,11 @@ public class SystemMetricCollector(
         "aveline.agent.success_rate",
         "aveline.agent.paused_count",
         "aveline.agent.steps_per_run",
+        "aveline.agent.runs_total",
         "aveline.blossom.balance",
         "aveline.blossom.reconciliation.drift",
         "aveline.blossom.consumed_rate",
+        "aveline.db.pool.saturation",
     ];
 
     private readonly List<SystemMetricSample> _buffer = [];
@@ -139,7 +174,12 @@ public class SystemMetricCollector(
     public override async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
-        var samples = BuildSamples(await CaptureAsync(scope.ServiceProvider, cancellationToken));
+        var snapshot = await CaptureAsync(scope.ServiceProvider, cancellationToken);
+        var samples = BuildSamples(snapshot);
+
+        // Publish the operator-facing gauges BEFORE the database write (plan §3.3, D1): a database
+        // outage must not blind the dashboard, and the persistence path is untouched by design.
+        PublishToMetrics(snapshot);
 
         // Anything still buffered from an earlier failure is written together with this pass.
         var pending = new List<SystemMetricSample>(_buffer);
@@ -173,6 +213,13 @@ public class SystemMetricCollector(
             return 0;
         }
     }
+
+    /// <summary>
+    /// Publishes the snapshot to the bridged Prometheus gauges. Split out so a test can drive one
+    /// pass without a database, and so the ordering against the persistence path is explicit.
+    /// </summary>
+    public void PublishToMetrics(MetricSnapshot snapshot)
+        => metrics?.Publish(MetricSnapshotReader.Flatten(snapshot));
 
     /// <summary>
     /// Pure sample construction so the mapping can be unit-tested without a host. A null
@@ -253,6 +300,7 @@ public class SystemMetricCollector(
         AddBigint("aveline.queue.telemetry_channel", snapshot.TelemetryChannelDepth, "count");
         AddBigint("aveline.api.telemetry.dropped", snapshot.TelemetryDropped, "count");
         AddBigint("aveline.eventbus.failed", snapshot.EventBusFailed, "count");
+        AddDecimal("aveline.eventbus.publish_latency_ms", snapshot.EventBusPublishLatencyMs, "ms");
         AddBigint(
             "aveline.eventbus.backlog",
             snapshot.EventBusPublished is { } published && snapshot.EventBusReceived is { } received
@@ -266,9 +314,11 @@ public class SystemMetricCollector(
         AddDecimal("aveline.agent.success_rate", snapshot.AgentSuccessRate, "ratio");
         AddBigint("aveline.agent.paused_count", snapshot.AgentPausedCount, "count");
         AddDecimal("aveline.agent.steps_per_run", snapshot.AgentStepsPerRun, "count");
+        AddBigint("aveline.agent.runs_total", snapshot.AgentRunsTotal, "count");
         AddDecimalExact("aveline.blossom.balance", snapshot.BlossomBalance, "count");
         AddDecimalExact("aveline.blossom.reconciliation.drift", snapshot.BlossomReconciliationDrift, "count");
         AddDecimal("aveline.blossom.consumed_rate", snapshot.BlossomConsumedRate, "count");
+        AddDecimal("aveline.db.pool.saturation", snapshot.DbPoolSaturation, "ratio");
 
         return samples;
     }
@@ -316,7 +366,16 @@ public class SystemMetricCollector(
                 EventBusPublished = counters.GetValueOrDefault("aveline.events.published"),
                 EventBusReceived = counters.GetValueOrDefault("aveline.events.received"),
                 EventBusFailed = counters.GetValueOrDefault("aveline.events.failed"),
+                EventBusPublishLatencyMs = eventBus.LatencyP95Ms,
             };
+        }
+
+        // Slice 5 (M-9): Npgsql is the source, the collector is the emitter. The listener reports
+        // nothing until a pool has been observed, so the metric is omitted rather than zeroed.
+        if (services.GetService<NpgsqlPoolMetricsListener>() is { } pool
+            && pool.TryGetSaturation(out var saturation))
+        {
+            snapshot = snapshot with { DbPoolSaturation = saturation };
         }
 
         if (services.GetService<AppDbContext>() is { } db)
@@ -372,6 +431,17 @@ public class SystemMetricCollector(
 
             snapshot = snapshot with
             {
+                // Cumulative, and deliberately a full count: the running and paused counts beside
+                // it already scan this table each pass, so this adds no new kind of cost. If the
+                // table ever grows enough to matter, the daily rollup is the bounded source.
+                AgentRunsTotal = await db.AgentWorkflowRuns
+                    .AsNoTracking()
+                    .LongCountAsync(
+                        run => run.Status == AgentRunStatus.Succeeded
+                               || run.Status == AgentRunStatus.Failed
+                               || run.Status == AgentRunStatus.Cancelled
+                               || run.Status == AgentRunStatus.TimedOut,
+                        cancellationToken),
                 AgentRunsRunning = await db.AgentWorkflowRuns
                     .AsNoTracking()
                     .LongCountAsync(run => run.Status == AgentRunStatus.Running, cancellationToken),

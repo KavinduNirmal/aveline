@@ -29,6 +29,14 @@ namespace Aveline.Api.Modules.Notifications.Hubs;
 /// <see cref="Aveline.Api.Modules.Shared.Models.User.Id"/> (a Guid), matching the
 /// <c>ResolvedRecipient.UserId</c> the realtime channel sends to.
 /// </para>
+///
+/// <para>
+/// <b>Reconnect:</b> SignalR does not preserve group membership when a connection is
+/// rebuilt, so a client that reconnects must re-join by invoking <c>SubscribeAsync</c>.
+/// The method is idempotent and performs exactly the same joins as
+/// <see cref="OnConnectedAsync"/>; it is the client-callable half of the reconnect
+/// contract, alongside the server→client <c>ReceiveNotification</c> event.
+/// </para>
 /// </summary>
 [Authorize]
 public class NotificationHub : Hub
@@ -43,6 +51,20 @@ public class NotificationHub : Hub
     }
 
     public override async Task OnConnectedAsync()
+    {
+        await JoinGroupsAsync();
+        await base.OnConnectedAsync();
+    }
+
+    /// <summary>
+    /// Re-joins this connection to <c>user:&#123;userId&#125;</c> and every active
+    /// <c>org:&#123;organizationId&#125;</c> group. Client-callable and idempotent:
+    /// <see cref="IGroupManager.AddToGroupAsync"/> is a set operation, so a client may
+    /// invoke it on every reconnection without side effects.
+    /// </summary>
+    public Task SubscribeAsync() => JoinGroupsAsync();
+
+    private async Task JoinGroupsAsync()
     {
         var clerkId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier)
                       ?? Context.User?.FindFirstValue("sub");
@@ -73,8 +95,6 @@ public class NotificationHub : Hub
                     Context.ConnectionAborted);
             }
         }
-
-        await base.OnConnectedAsync();
     }
 }
 

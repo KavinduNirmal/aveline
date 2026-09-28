@@ -1,8 +1,20 @@
+import 'dart:async';
+
 import 'package:aveline_mobile/core/auth/app_roles.dart';
+import 'package:aveline_mobile/core/providers/user_provider.dart';
 import 'package:aveline_mobile/core/router/route_guards.dart';
 import 'package:aveline_mobile/core/theme/app_theme.dart';
 import 'package:aveline_mobile/features/auth/domain/auth_repository.dart';
 import 'package:aveline_mobile/features/auth/domain/auth_user.dart';
+import 'package:aveline_mobile/features/auth/domain/aveline_user.dart';
+import 'package:aveline_mobile/features/home/data/demo_blossom_usage.dart';
+import 'package:aveline_mobile/features/home/data/demo_client_highlights.dart';
+import 'package:aveline_mobile/features/home/data/demo_focus_tasks.dart';
+import 'package:aveline_mobile/features/home/data/home_repository.dart';
+import 'package:aveline_mobile/features/home/domain/blossom_usage.dart';
+import 'package:aveline_mobile/features/home/domain/client_highlight.dart';
+import 'package:aveline_mobile/features/home/domain/focus_task.dart';
+import 'package:aveline_mobile/features/home/presentation/home_controller.dart';
 import 'package:aveline_mobile/features/home/presentation/screens/home_screen.dart';
 import 'package:aveline_mobile/features/home/presentation/widgets/blossom_usage_card.dart';
 import 'package:aveline_mobile/features/home/presentation/widgets/client_link_section.dart';
@@ -81,12 +93,176 @@ void _usePhoneSurface(WidgetTester tester) {
   addTearDown(tester.view.reset);
 }
 
+/// A source whose one read is the snapshot the test chose.
+class _StubHomeRepository implements HomeRepository {
+  _StubHomeRepository(this.snapshot);
+
+  final HomeSnapshot snapshot;
+  int completeCount = 0;
+  bool completeThrows = false;
+
+  @override
+  Future<HomeSnapshot> fetchHome({required bool ownerDeck}) async => snapshot;
+
+  @override
+  Future<void> completeTask(FocusTask task) async {
+    completeCount++;
+    if (completeThrows) {
+      throw StateError('the server refused');
+    }
+  }
+
+  @override
+  Future<ClientHighlight> createWalkIn(String fullName) async => ClientHighlight(
+        id: 'server-walkin-1',
+        name: fullName,
+        tier: null,
+        activity: 'Walk-in added at the counter.',
+      );
+
+  @override
+  Future<void> recordVisit(String customerId) async {}
+}
+
+/// A source whose read never lands, so the loading state can be observed.
+class _PendingHomeRepository implements HomeRepository {
+  @override
+  Future<HomeSnapshot> fetchHome({required bool ownerDeck}) =>
+      Completer<HomeSnapshot>().future;
+
+  @override
+  Future<void> completeTask(FocusTask task) async {}
+
+  @override
+  Future<ClientHighlight> createWalkIn(String fullName) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> recordVisit(String customerId) async {}
+}
+
+/// A source that refuses, so the error state can be observed.
+class _FailingHomeRepository implements HomeRepository {
+  @override
+  Future<HomeSnapshot> fetchHome({required bool ownerDeck}) async =>
+      throw StateError('offline');
+
+  @override
+  Future<void> completeTask(FocusTask task) async {}
+
+  @override
+  Future<ClientHighlight> createWalkIn(String fullName) async =>
+      throw UnimplementedError();
+
+  @override
+  Future<void> recordVisit(String customerId) async {}
+}
+
+const _wardrobeTask = FocusTask(
+  id: 'w1',
+  domain: FocusDomain.wardrobe,
+  title: 'Count in the raw silk',
+  detail: 'Four pieces below the reorder line.',
+  timeLabel: '3:00 PM',
+  actionLabel: 'Sign Off',
+  doneMessage: 'Signed off.',
+);
+
+const _patronTask = FocusTask(
+  id: 'p1',
+  domain: FocusDomain.patron,
+  title: "Prepare for Mrs. Silva's fitting",
+  detail: 'Tomorrow, 10:00 AM.',
+  timeLabel: '4:00 PM',
+  actionLabel: 'Mark ready',
+  doneMessage: 'Ready.',
+);
+
+const _testBalance = BlossomUsage(
+  used: 40,
+  allowance: 200,
+  renewsOn: '1 October',
+);
+
+const _testSnapshot = HomeSnapshot(
+  tasks: [_wardrobeTask, _patronTask],
+  clients: [
+    ClientHighlight(
+      id: 'c1',
+      name: 'Eleanor Vane',
+      tier: ClientTier.vip,
+      activity: 'Asked for the ivory silk to be held.',
+    ),
+  ],
+  balance: _testBalance,
+);
+
+/// Pumps a Home bed and lets the controller's first read land, so a test asserts
+/// against the loaded screen rather than against its loading state.
+Future<void> _pump(WidgetTester tester, Widget widget) async {
+  await tester.pumpWidget(widget);
+  await tester.pump();
+}
+
 /// Reduced motion is on, matching the rest of the suite: Home carries ambient
 /// animation (the veil, the client status card) that would never settle
 /// otherwise, and a rotating page is not what these tests are about.
-Widget _wrap({String? firstName, String? userRole, DateTime? now}) {
-  return Provider<AuthRepository>.value(
-    value: _FakeAuthRepository(firstName: firstName, userRole: userRole),
+///
+/// Three providers are mounted because the screen reads its identity from
+/// `AuthRepository`, its permissions from `UserProvider` and its data from
+/// `HomeController`; the fixtures below stand in for the API the controller will
+/// read from S3 onward.
+Widget _wrap({
+  String? firstName,
+  String? userRole,
+  String? orgRole = AppRoles.boutiqueStaff,
+  DateTime? now,
+  HomeSnapshot? snapshot,
+  HomeRepository? repository,
+}) {
+  final owner = AppRoles.isOwnerRole(userRole ?? '');
+  final source = repository ??
+      _StubHomeRepository(
+        snapshot ??
+            HomeSnapshot(
+              tasks: demoFocusTasks(isOwner: owner),
+              clients: demoClientHighlights(),
+              balance: demoBlossomUsage,
+            ),
+      );
+
+  final userProvider = UserProvider()
+    ..setUser(
+      AvelineUser(
+        id: 'u1',
+        clerkId: 'clk_u1',
+        email: 'nadia@example.com',
+        firstName: firstName ?? '',
+        lastName: 'Silva',
+        username: 'nadia',
+        userRole: userRole ?? '',
+        organizationRole: orgRole ?? '',
+        organizationId: 'org_1',
+        hasCompletedOnboarding: true,
+        accountState: AvelineAccountState.active,
+        contactPreference: 'email',
+        pushNotificationsEnabled: true,
+        isActive: true,
+        createdAt: DateTime(2025, 1, 1),
+        updatedAt: DateTime(2025, 1, 1),
+      ),
+    );
+
+  return MultiProvider(
+    providers: [
+      Provider<AuthRepository>.value(
+        value: _FakeAuthRepository(firstName: firstName, userRole: userRole),
+      ),
+      ChangeNotifierProvider<UserProvider>.value(value: userProvider),
+      ChangeNotifierProvider<HomeController>.value(
+        value: HomeController(source),
+      ),
+    ],
     child: MaterialApp(
       theme: AppTheme.light,
       home: Builder(
@@ -119,7 +295,7 @@ void main() {
   group('HomeScreen greeting', () {
     testWidgets('wishes the time of day and accents the name in italics',
         (tester) async {
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -139,7 +315,7 @@ void main() {
     });
 
     testWidgets('sets the greeting in the display scale', (tester) async {
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -162,12 +338,12 @@ void main() {
     });
 
     testWidgets('switches salutation as the day moves on', (tester) async {
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 14, 5)),
       );
       expect(_greetingText(tester), 'Good afternoon, Nadia.');
 
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 19, 5)),
       );
       expect(_greetingText(tester), 'Good evening, Nadia.');
@@ -175,7 +351,7 @@ void main() {
 
     testWidgets('falls back to a bare salutation without a first name',
         (tester) async {
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: null, now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -189,7 +365,7 @@ void main() {
 
     testWidgets('no longer shows the AVELINE overline above the greeting',
         (tester) async {
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -201,7 +377,7 @@ void main() {
     testWidgets('replaces the placeholder cards with the focus deck',
         (tester) async {
       _usePhoneSurface(tester);
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -219,7 +395,7 @@ void main() {
 
     testWidgets('opens with the floor at a glance', (tester) async {
       _usePhoneSurface(tester);
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -235,7 +411,7 @@ void main() {
 
     testWidgets('signing a docket off moves the count', (tester) async {
       _usePhoneSurface(tester);
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -255,7 +431,7 @@ void main() {
 
     testWidgets('closes with the direct client link', (tester) async {
       _usePhoneSurface(tester);
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -267,9 +443,50 @@ void main() {
       expect(find.text('See all'), findsOneWidget);
     });
 
+    testWidgets('hides the direct client link without customers:view', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await _pump(tester, 
+        _wrap(
+          firstName: 'Nadia',
+          userRole: AppRoles.staff,
+          orgRole: '',
+          now: DateTime(2026, 1, 1, 8),
+        ),
+      );
+
+      // The row needs customers:view, which a plain staff account does not hold:
+      // rendering it would only promise a call that can 403.
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -1600));
+      await tester.pumpAndSettle();
+
+      expect(find.text('DIRECT CLIENT LINK'), findsNothing);
+      expect(find.byType(ClientLinkSection), findsNothing);
+    });
+
+    testWidgets('shows the direct client link with customers:view', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await _pump(tester, 
+        _wrap(
+          firstName: 'Nadia',
+          userRole: AppRoles.staff,
+          orgRole: AppRoles.boutiqueStaff,
+          now: DateTime(2026, 1, 1, 8),
+        ),
+      );
+
+      await _scrollTo(tester, find.text('DIRECT CLIENT LINK'));
+
+      expect(find.text('DIRECT CLIENT LINK'), findsOneWidget);
+      expect(find.byType(ClientLinkSection), findsOneWidget);
+    });
+
     testWidgets('ends with the Blossom meter', (tester) async {
       _usePhoneSurface(tester);
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -284,7 +501,7 @@ void main() {
       (tester) async {
         _usePhoneSurface(tester);
 
-        await tester.pumpWidget(
+        await _pump(tester, 
           _wrap(firstName: 'Nadia', userRole: AppRoles.owner),
         );
         expect(
@@ -292,7 +509,7 @@ void main() {
           findsOneWidget,
         );
 
-        await tester.pumpWidget(
+        await _pump(tester, 
           _wrap(firstName: 'Nadia', userRole: AppRoles.staff),
         );
         expect(
@@ -310,7 +527,7 @@ void main() {
       tester,
     ) async {
       _usePhoneSurface(tester);
-      await tester.pumpWidget(
+      await _pump(tester, 
         _wrap(firstName: 'Nadia', now: DateTime(2026, 1, 1, 8)),
       );
 
@@ -340,7 +557,7 @@ void main() {
       );
       addTearDown(router.dispose);
 
-      await tester.pumpWidget(
+      await _pump(tester, 
         Provider<AuthRepository>.value(
           value: _FakeAuthRepository(firstName: 'Nadia'),
           child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
@@ -373,7 +590,7 @@ void main() {
       );
       addTearDown(router.dispose);
 
-      await tester.pumpWidget(
+      await _pump(tester, 
         Provider<AuthRepository>.value(
           value: _FakeAuthRepository(firstName: 'Nadia'),
           child: MaterialApp.router(theme: AppTheme.light, routerConfig: router),
@@ -384,6 +601,109 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Customers destination'), findsOneWidget);
+    });
+  });
+
+  group('HomeScreen states', () {
+    testWidgets('renders the controller snapshot rather than demo data', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await _pump(tester, _wrap(firstName: 'Nadia', snapshot: _testSnapshot));
+
+      expect(find.text('Count in the raw silk'), findsOneWidget);
+      expect(find.text('2 left'), findsOneWidget);
+      // The meter reads the snapshot's balance, not the demo constant.
+      await _scrollTo(tester, find.text('BLOSSOM USAGE'));
+      expect(find.text('160'), findsOneWidget);
+      // The demo deck is not the source any more.
+      expect(
+        find.text('Acknowledge the floor plan for today'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('shows the loading card before the first read lands', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await tester.pumpWidget(
+        _wrap(firstName: 'Nadia', repository: _PendingHomeRepository()),
+      );
+      // The load is started after the first frame; this pump lets it begin.
+      await tester.pump();
+
+      expect(find.byKey(const Key('home_loading')), findsOneWidget);
+      expect(
+        find.text('Acknowledge the floor plan for today'),
+        findsNothing,
+      );
+      expect(find.byType(FocusDeck), findsNothing);
+    });
+
+    testWidgets('shows an error state without falling back to demo data', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await _pump(
+        tester,
+        _wrap(firstName: 'Nadia', repository: _FailingHomeRepository()),
+      );
+
+      expect(find.byKey(const Key('home_error')), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(
+        find.text('Acknowledge the floor plan for today'),
+        findsNothing,
+      );
+      expect(find.byType(BlossomUsageCard), findsNothing);
+    });
+
+    testWidgets('retrying loads the screen again', (tester) async {
+      _usePhoneSurface(tester);
+      await _pump(
+        tester,
+        _wrap(firstName: 'Nadia', repository: _FailingHomeRepository()),
+      );
+      expect(find.byKey(const Key('home_error')), findsOneWidget);
+
+      await tester.tap(find.text('Try again'));
+      await tester.pump();
+      await tester.pump();
+
+      // The same failing source is asked again; the state is honest about it.
+      expect(find.byKey(const Key('home_error')), findsOneWidget);
+    });
+
+    testWidgets('hides the Blossom meter without the balance grant', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await _pump(
+        tester,
+        _wrap(
+          firstName: 'Nadia',
+          userRole: AppRoles.staff,
+          orgRole: '',
+          snapshot: _testSnapshot,
+        ),
+      );
+
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -2400));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(BlossomUsageCard), findsNothing);
+    });
+
+    testWidgets('shows the Blossom meter with the balance grant', (
+      tester,
+    ) async {
+      _usePhoneSurface(tester);
+      await _pump(tester, _wrap(firstName: 'Nadia', snapshot: _testSnapshot));
+
+      await _scrollTo(tester, find.text('BLOSSOM USAGE'));
+
+      expect(find.byType(BlossomUsageCard), findsOneWidget);
     });
   });
 }

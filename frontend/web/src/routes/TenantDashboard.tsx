@@ -4,7 +4,7 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { DashboardShell } from '@/components/dashboard/DashboardShell'
 import { PageLoader } from '@/components/PageLoader'
 import { Button } from '@/components/ui/button'
-import { isTenantAdmin } from '@/lib/permissions'
+import { canOpenTenantDashboard } from '@/lib/permissions'
 import {
   fetchOrganizationBySlug,
   fetchOrganizationUsage,
@@ -53,7 +53,7 @@ export function TenantDashboard() {
         if (
           !res.membership ||
           res.membership.status !== 'Active' ||
-          !isTenantAdmin(role)
+          !canOpenTenantDashboard(role)
         ) {
           setState({ kind: 'noAccess' })
           return
@@ -87,6 +87,22 @@ export function TenantDashboard() {
     }
   }, [slug])
 
+  /**
+   * Refetch the header's Blossom balance after the server reports a settled top-up. The usage read
+   * is best-effort everywhere else on this route, so a refused re-read leaves the last measured
+   * value in place rather than replacing it with a zero the API never sent.
+   */
+  function refreshUsage() {
+    if (state.kind !== 'ready') return
+    fetchOrganizationUsage(state.organization.id)
+      .then((usage) => {
+        setState((current) => (current.kind === 'ready' ? { ...current, usage } : current))
+      })
+      .catch(() => {
+        /* keep the last measured balance */
+      })
+  }
+
   switch (state.kind) {
     case 'loading':
       return <PageLoader />
@@ -118,6 +134,7 @@ export function TenantDashboard() {
           organization={state.organization}
           usage={state.usage}
           role={state.role}
+          onBalanceChanged={refreshUsage}
         />
       )
   }
@@ -131,7 +148,7 @@ function ShellFallback({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
       <h1 className="font-serif text-3xl font-medium tracking-tight">{title}</h1>
       <div className="max-w-md">{children}</div>
     </div>

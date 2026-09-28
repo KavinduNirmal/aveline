@@ -55,6 +55,9 @@ public sealed class EventReminderService(
                 ["eventType"] = customerEvent.EventType,
                 ["eventDate"] = customerEvent.EventDate.ToString("yyyy-MM-dd"),
             },
-            NotificationChannel.Realtime | NotificationChannel.Email);
+            // Push was missing by oversight (Q8). The router still gates it on the
+            // recipient's opt-in and a registered token, so an un-opted-in staff
+            // member gets no push.
+            NotificationChannel.Realtime | NotificationChannel.Push | NotificationChannel.Email);
     }
 }

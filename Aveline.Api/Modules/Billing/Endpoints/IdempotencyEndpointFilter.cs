@@ -58,14 +58,28 @@ public sealed class IdempotencyEndpointFilter(
         }
 
         // Buffer the request so the body can be hashed and still be bound by the endpoint.
+        //
+        // The seek matters. An endpoint filter runs *after* minimal-API parameter binding, so a
+        // JSON-bodied request has already been read to the end by the time this filter sees it; a
+        // read without rewinding hashes the empty string, which makes every request look like a
+        // replay of every other one under the same key. `UseAvelineIdempotencyBodyBuffering` wraps
+        // the body before binding so the bytes survive, and this rewinds to the start of them.
         http.Request.EnableBuffering();
+        if (http.Request.Body.CanSeek)
+        {
+            http.Request.Body.Position = 0;
+        }
+
         string requestBody;
         using (var reader = new StreamReader(http.Request.Body, Encoding.UTF8, leaveOpen: true))
         {
             requestBody = await reader.ReadToEndAsync();
         }
 
-        http.Request.Body.Position = 0;
+        if (http.Request.Body.CanSeek)
+        {
+            http.Request.Body.Position = 0;
+        }
 
         var requestHash = IdempotencyService.ComputeHash(requestBody);
         var endpoint = (http.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText

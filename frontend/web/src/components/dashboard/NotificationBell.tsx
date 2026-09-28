@@ -160,17 +160,19 @@ export function NotificationBell() {
                   <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{item.body}</p>
                   <p className="mt-1 text-[11px] text-muted-foreground/70">{timeAgo(item.createdAt)}</p>
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-xs"
                   aria-label="Dismiss notification"
                   onClick={(e) => {
                     e.stopPropagation()
                     void handleDismiss(item.id)
                   }}
-                  className="self-start rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted-foreground/10 group-hover:opacity-100"
+                  className="self-start text-muted-foreground opacity-0 group-hover:opacity-100"
                 >
                   <X className="size-3.5" aria-hidden />
-                </button>
+                </Button>
               </div>
             ))
           )}

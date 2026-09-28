@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Aveline.Api.Authorization;
 using Aveline.Api.Configurations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.DependencyInjection;
@@ -143,5 +144,113 @@ public class AuthorizationPolicyTests
     public void SettingsManage_Denies_Manager()
     {
         Assert.False(IsAuthorized(Principal("org:boutique_supervisor"), "settings:manage"));
+    }
+
+    [Theory]
+    [InlineData(AuthorizationConfiguration.BoutiqueCustomerAccessPolicy, Permissions.CustomersView)]
+    [InlineData(AuthorizationConfiguration.BoutiqueBillingSelfViewPolicy, Permissions.BillingViewSelf)]
+    public void NamedOrgScopedPolicies_CarryAnOrganizationScopeRequirement(
+        string policyName,
+        string permission)
+    {
+        // A bare per-permission policy (registered for every name in the catalog)
+        // has no organization scope: it would authorize on the JWT's possibly-stale
+        // role claims and never consult the `organizationId` route value. Tenant
+        // routes must therefore name a policy that carries the requirement.
+        var provider = Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        var policy = provider.GetPolicyAsync(policyName).GetAwaiter().GetResult();
+
+        Assert.NotNull(policy);
+        var requirement = Assert.Single(
+            policy!.Requirements.OfType<OrganizationScopeRequirement>());
+        Assert.Equal(permission, requirement.Permission);
+    }
+
+    [Theory]
+    [InlineData(AuthorizationConfiguration.StatsSystemPolicy, Permissions.StatsSystem)]
+    [InlineData(AuthorizationConfiguration.AuditViewPolicy, Permissions.AuditView)]
+    [InlineData(AuthorizationConfiguration.PricingAdminReadPolicy, Permissions.PricingView)]
+    public void TeamOnlyPolicies_CarryTheirPermissionRequirement(
+        string policyName,
+        string permission)
+    {
+        // A9 B2: `stats:system`, `audit:view` and `pricing:view` were registered as bare
+        // permission policies but no endpoint referenced them, while the routes that
+        // logically own them were role-only. The requirement is added alongside the role
+        // guard so the catalogue and the wire agree.
+        var provider = Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        var policy = provider.GetPolicyAsync(policyName).GetAwaiter().GetResult();
+
+        Assert.NotNull(policy);
+        var requirement = Assert.Single(policy!.Requirements.OfType<PermissionRequirement>());
+        Assert.Equal(permission, requirement.Permission);
+    }
+
+    [Theory]
+    [InlineData(AuthorizationConfiguration.StatsSystemPolicy)]
+    [InlineData(AuthorizationConfiguration.AuditViewPolicy)]
+    [InlineData(AuthorizationConfiguration.PricingAdminReadPolicy)]
+    public void TeamOnlyPolicies_AdmitOwnerAndAdmin(string policyName)
+    {
+        Assert.True(IsAuthorized(Principal("owner"), policyName));
+        Assert.True(IsAuthorized(Principal("admin"), policyName));
+    }
+
+    [Theory]
+    [InlineData(AuthorizationConfiguration.StatsSystemPolicy)]
+    [InlineData(AuthorizationConfiguration.AuditViewPolicy)]
+    [InlineData(AuthorizationConfiguration.PricingAdminReadPolicy)]
+    public void TeamOnlyPolicies_RefuseEveryOtherRole(string policyName)
+    {
+        Assert.False(IsAuthorized(Principal("moderator"), policyName));
+        Assert.False(IsAuthorized(Principal("staff"), policyName));
+        Assert.False(IsAuthorized(Principal("customer_relations"), policyName));
+        Assert.False(IsAuthorized(Principal("org:boutique_owner"), policyName));
+        Assert.False(IsAuthorized(Principal("org:boutique_manager"), policyName));
+        Assert.False(IsAuthorized(Principal("org:boutique_supervisor"), policyName));
+        Assert.False(IsAuthorized(Principal("org:boutique_staff"), policyName));
+        Assert.False(IsAuthorized(
+            new ClaimsPrincipal(new ClaimsIdentity("test")), policyName));
+    }
+
+    // ── analytics:business:read (Business KPIs phase 1, DR-4) ──────────────────────────────
+
+    [Theory]
+    [InlineData("moderator")]
+    [InlineData("admin")]
+    [InlineData("owner")]
+    public void AnalyticsBusinessRead_IsGrantedToTheTeamRoles(string role)
+    {
+        Assert.True(IsAuthorized(Principal(role), Permissions.AnalyticsBusinessRead));
+    }
+
+    [Theory]
+    [InlineData("staff")]
+    [InlineData("customer_relations")]
+    [InlineData("org:boutique_staff")]
+    [InlineData("org:boutique_manager")]
+    [InlineData("org:boutique_supervisor")]
+    [InlineData("org:boutique_owner")]
+    public void AnalyticsBusinessRead_IsDeniedToEveryOtherRole(string role)
+    {
+        Assert.False(IsAuthorized(Principal(role), Permissions.AnalyticsBusinessRead));
+    }
+
+    [Fact]
+    public void AnalyticsBusinessRead_IsDeniedToAnAnonymousPrincipal()
+    {
+        Assert.False(IsAuthorized(
+            new ClaimsPrincipal(new ClaimsIdentity("test")), Permissions.AnalyticsBusinessRead));
+    }
+
+    [Fact]
+    public void AnalyticsBusinessRead_HasAPolicyRegisteredFromTheCatalog()
+    {
+        var provider = Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        var policy = provider.GetPolicyAsync(Permissions.AnalyticsBusinessRead).GetAwaiter().GetResult();
+
+        Assert.NotNull(policy);
+        var requirement = Assert.Single(policy!.Requirements.OfType<PermissionRequirement>());
+        Assert.Equal(Permissions.AnalyticsBusinessRead, requirement.Permission);
     }
 }

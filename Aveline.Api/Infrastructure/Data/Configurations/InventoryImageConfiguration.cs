@@ -20,6 +20,17 @@ public class InventoryImageConfiguration : IEntityTypeConfiguration<InventoryIma
         builder.Property(x => x.ItemId)
             .IsRequired(false);
 
+        // Mirrors MessageAttachmentConfiguration: the provider is NOT NULL with a 'database'
+        // default so every pre-existing row is unambiguously database-backed, and the key is a
+        // nullable varchar(200). The migration is lane L7's.
+        builder.Property(x => x.StorageProvider)
+            .IsRequired()
+            .HasMaxLength(32)
+            .HasDefaultValue("database");
+
+        builder.Property(x => x.StorageKey)
+            .HasMaxLength(200);
+
         builder.Property(x => x.ImageData)
             .HasColumnType("bytea");
 

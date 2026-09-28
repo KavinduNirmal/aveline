@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { AgentActivity, ChatMessage } from '@/contexts/ConversationsContext'
 import { AgentActivityBubble } from './AgentActivityBubble'
+import type { BlockActionBridge } from './blockActions'
 import { MessageBubble } from './MessageBubble'
 
 interface MessageThreadProps {
@@ -12,7 +13,12 @@ interface MessageThreadProps {
   /** Aveline's in-progress reasoning, rendered as a live bubble while non-null. */
   agentActivity?: AgentActivity | null
   onSignOff?: (messageId: string, approved: boolean) => void
+  onRequestPayment?: (orderId: string) => void
   onSelectCustomer?: (customerId: string) => void
+  /** Called with the attachment id when a thread attachment is opened for viewing. */
+  onOpenAttachment?: (attachmentId: string) => void
+  /** The action rail's handlers and thread state, from `useBlockActions`. */
+  blockActions?: BlockActionBridge
 }
 
 /**
@@ -26,7 +32,10 @@ export function MessageThread({
   loading,
   agentActivity,
   onSignOff,
+  onRequestPayment,
   onSelectCustomer,
+  onOpenAttachment,
+  blockActions,
 }: MessageThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -75,8 +84,11 @@ export function MessageThread({
           <MessageBubble
             message={message}
             isOwn={message.authorKind === 'User'}
+            blockActions={blockActions}
             onStreamProgress={handleStreamProgress}
             onSelectCustomer={onSelectCustomer}
+            onOpenAttachment={onOpenAttachment}
+            onRequestPayment={onRequestPayment}
             onSignOff={
               message.kind === 'SignOff' && message.status === 'AwaitingSignOff'
                 ? (approved) => onSignOff?.(message.id, approved)

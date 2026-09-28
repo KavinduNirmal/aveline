@@ -12,6 +12,8 @@ public interface IAdminApprovalRepository
         AdminApprovalStatus status,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<AdminApprovalRequest>> ListAllAsync(CancellationToken cancellationToken = default);
+
     Task<AdminApprovalRequest> CreateAsync(AdminApprovalRequest request, CancellationToken cancellationToken = default);
 
     Task<AdminApprovalRequest> UpdateAsync(AdminApprovalRequest request, CancellationToken cancellationToken = default);

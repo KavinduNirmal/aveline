@@ -33,7 +33,7 @@ public class ConversationRepository : IConversationRepository
         => await _context.Conversations
             .FirstOrDefaultAsync(c => c.ThreadId == threadId, cancellationToken);
 
-    public async Task<(IReadOnlyList<Conversation> Items, int Total)> ListAsync(
+    public async Task<(IReadOnlyList<ConversationListRow> Items, int Total)> ListAsync(
         Guid orgId,
         Guid userId,
         int page,
@@ -44,17 +44,53 @@ public class ConversationRepository : IConversationRepository
         // Salon - never another user's (ADR-021).
         var query = _context.Conversations
             .Where(c => c.OrganizationId == orgId
-                        && (c.OwnerUserId == null || c.OwnerUserId == userId))
-            .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt);
+                        && (c.OwnerUserId == null || c.OwnerUserId == userId));
 
         var total = await query.CountAsync(cancellationToken);
-        var items = await query
+
+        // The id tiebreak makes the order total: without it, two conversations sharing an
+        // effective timestamp can be ordered differently per query and a page boundary then
+        // duplicates one row and skips another.
+        var ordered = query
+            .OrderByDescending(c => c.LastMessageAt ?? c.CreatedAt)
+            .ThenByDescending(c => c.Id)
             .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(cancellationToken);
+            .Take(pageSize);
+
+        var items = await ProjectRows(ordered).ToListAsync(cancellationToken);
 
         return (items, total);
     }
+
+    public Task<ConversationListRow?> GetRowAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken = default)
+        // The id is a globally unique key, so the realtime path can resolve the tile from the
+        // conversation id alone. This is internal read model access, never a client-facing route.
+        => ProjectRows(_context.Conversations.Where(c => c.Id == conversationId))
+            .FirstOrDefaultAsync(cancellationToken);
+
+    /// <summary>
+    /// The list row projection: the conversation plus the client's name, the newest message and
+    /// whether a SignOff is waiting. One expression so the list and the realtime tile cannot
+    /// disagree about what a row carries.
+    /// </summary>
+    private IQueryable<ConversationListRow> ProjectRows(IQueryable<Conversation> query) =>
+        query.Select(c => new ConversationListRow(
+            c,
+            _context.Customers
+                .Where(customer => customer.Id == c.CustomerId)
+                .Select(customer => customer.FullName)
+                .FirstOrDefault(),
+            _context.Messages
+                .Where(message => message.ConversationId == c.Id)
+                .OrderByDescending(message => message.CreatedAt)
+                .ThenByDescending(message => message.Id)
+                .FirstOrDefault(),
+            _context.Messages.Any(message =>
+                message.ConversationId == c.Id
+                && message.Kind == MessageKind.SignOff
+                && message.Status == MessageStatus.AwaitingSignOff)));
 
     public async Task<(Conversation Conversation, bool Created)> GetOrCreateSalonAsync(
         Guid orgId,
@@ -101,6 +137,7 @@ public class ConversationRepository : IConversationRepository
         Guid orgId,
         string externalRef,
         string threadId,
+        Guid? customerId,
         CancellationToken cancellationToken = default)
     {
         var existing = await _context.Conversations
@@ -112,6 +149,14 @@ public class ConversationRepository : IConversationRepository
 
         if (existing is not null)
         {
+            // A thread created before the phone was on file is upgraded in place the first time
+            // the customer can be resolved, rather than staying context-less forever.
+            if (customerId is not null && existing.CustomerId is null)
+            {
+                existing.CustomerId = customerId;
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+
             return existing;
         }
 
@@ -119,6 +164,7 @@ public class ConversationRepository : IConversationRepository
         {
             OrganizationId = orgId,
             Kind = ConversationKind.Salon,
+            CustomerId = customerId,
             ExternalRef = externalRef,
             ThreadId = threadId,
             Status = ConversationStatus.Active,

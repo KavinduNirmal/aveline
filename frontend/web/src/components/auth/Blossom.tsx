@@ -68,45 +68,20 @@ export function Blossom({
   const baseAngles = [0, 90, 180, 270]
   const topAngles = [45, 135, 225, 315]
 
+  // The keyframes and the `.aveline-petal-layer-*` rules live once in `src/index.css`. An instance
+  // only contributes its own duration, through a custom property — it does not inject a `<style>`.
+  const swayStyle = animateCounter
+    ? ({ ...style, '--aveline-sway-duration': `${counterDuration}s` } as CSSProperties)
+    : style
+
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden
       className={className}
-      style={style}
+      style={swayStyle}
     >
-      <defs>
-        {animateCounter && (
-          <style>{`
-            @keyframes aveline-sway-base {
-              0%   { transform: rotate(0deg); }
-              25%  { transform: rotate(12deg); }
-              50%  { transform: rotate(0deg); }
-              75%  { transform: rotate(-12deg); }
-              100% { transform: rotate(0deg); }
-            }
-            @keyframes aveline-sway-top {
-              0%   { transform: rotate(0deg); }
-              25%  { transform: rotate(-10deg); }
-              50%  { transform: rotate(0deg); }
-              75%  { transform: rotate(10deg); }
-              100% { transform: rotate(0deg); }
-            }
-            .aveline-petal-layer-base {
-              transform-origin: 12px 12px;
-              animation: aveline-sway-base ${counterDuration}s ease-in-out infinite;
-              animation-delay: -${(counterDuration * 0.25).toFixed(1)}s;
-            }
-            .aveline-petal-layer-top {
-              transform-origin: 12px 12px;
-              animation: aveline-sway-top ${counterDuration}s ease-in-out infinite;
-              animation-delay: 0s;
-            }
-          `}</style>
-        )}
-      </defs>
-
       {/* Ripple rings (searching): concentric expanding circles behind the petals. */}
       {ripple && (
         <g fill="none" stroke="currentColor" strokeWidth="0.6">

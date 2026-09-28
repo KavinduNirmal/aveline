@@ -7,23 +7,37 @@ import { DEFAULT_SLUG, getDocPageBySlug } from '@/docs/config'
 
 // Import all markdown documents statically via Vite's ?raw feature
 import gettingStartedMd from '@/docs/getting-started.md?raw'
+import joiningABoutiqueMd from '@/docs/joining-a-boutique.md?raw'
 import rolesPermissionsMd from '@/docs/roles-permissions.md?raw'
-import avaMd from '@/docs/ava.md?raw'
-import elleMd from '@/docs/elle.md?raw'
-import linaMd from '@/docs/lina.md?raw'
-import adminAccessMd from '@/docs/admin-access.md?raw'
-import privacySecurityMd from '@/docs/privacy-security.md?raw'
+import overviewMd from '@/docs/overview.md?raw'
+import customersMd from '@/docs/customers.md?raw'
+import catalogMd from '@/docs/catalog.md?raw'
+import salonMd from '@/docs/salon.md?raw'
+import incomeMd from '@/docs/income.md?raw'
+import approvalsMd from '@/docs/approvals.md?raw'
+import teamMd from '@/docs/team.md?raw'
+import usageMd from '@/docs/usage.md?raw'
+import billingMd from '@/docs/billing.md?raw'
 import integrationsMd from '@/docs/integrations.md?raw'
+import settingsMd from '@/docs/settings.md?raw'
+import privacySecurityMd from '@/docs/privacy-security.md?raw'
 
 const DOC_CONTENTS: Record<string, string> = {
   'getting-started': gettingStartedMd,
+  'joining-a-boutique': joiningABoutiqueMd,
   'roles-permissions': rolesPermissionsMd,
-  ava: avaMd,
-  elle: elleMd,
-  lina: linaMd,
-  'admin-access': adminAccessMd,
-  'privacy-security': privacySecurityMd,
+  overview: overviewMd,
+  customers: customersMd,
+  catalog: catalogMd,
+  salon: salonMd,
+  income: incomeMd,
+  approvals: approvalsMd,
+  team: teamMd,
+  usage: usageMd,
+  billing: billingMd,
   integrations: integrationsMd,
+  settings: settingsMd,
+  'privacy-security': privacySecurityMd,
 }
 
 function parseHeadings(markdown: string): TocItem[] {

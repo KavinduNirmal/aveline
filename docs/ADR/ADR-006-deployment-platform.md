@@ -13,7 +13,7 @@ Components that must be hosted:
 | Component | Runtime | Notes |
 |---|---|---|
 | `Aveline.Api` | ASP.NET Core 10 Web API | Modular monolith, exposed to Flutter/React/WhatsApp |
-| `agnet-service` | Python 3.12 / FastAPI + LangGraph | Multi-agent orchestration, PostgreSQL checkpointing, human-in-the-loop pauses |
+| `agent-service` | Python 3.12 / FastAPI + LangGraph | Multi-agent orchestration, PostgreSQL checkpointing, human-in-the-loop pauses |
 | Database | PostgreSQL 16 + `pgvector` | Business data + `Customer_Memory` embeddings + LangGraph checkpoints |
 | Web dashboard | React (Vite) | Owner/manager approvals (technology still TBD) |
 | Flutter mobile | N/A (client) | APK built and distributed from CI, not cloud-hosted |
@@ -70,7 +70,7 @@ Adopt **Microsoft Azure** as the single cloud platform for the demo phase:
 | Component | Azure service | Tier / sizing |
 |---|---|---|
 | `Aveline.Api` | **Azure Container Apps** | Consumption, scale-to-zero (min replicas = 0) |
-| `agnet-service` | **Azure Container Apps** (separate app) | Consumption, scale-to-zero |
+| `agent-service` | **Azure Container Apps** (separate app) | Consumption, scale-to-zero |
 | Database | **Azure Database for PostgreSQL Flexible Server** | Burstable **B1ms**, `pgvector` enabled |
 | React dashboard | **Azure Static Web Apps** | Free tier |
 | Container images | **Azure Container Registry** (Standard, 12-mo free) — GHCR as zero-cost fallback | Standard |
@@ -95,5 +95,6 @@ Adopt **Microsoft Azure** as the single cloud platform for the demo phase:
 - **Scale-to-zero cold starts**: endpoints must be warmed a few seconds before a live demo, or a single always-on replica enabled during the demo hour (at a small cost).
 - **PostgreSQL free hours are finite (750 h/mo)**: the server should be stopped when not actively demoing.
 - **Redis is omitted** from the demo footprint to save cost.
+- **Media moves to an external provider, so the deployment gains a Cloudinary dependency and the database loses its asset-store role.** The catalog's public imagery and the conversation's protected attachments are served from Cloudinary behind an `IMediaStorage` seam ([ADR-022](ADR-022-media-storage-and-access.md)). Two operational consequences: the deployment must inject the Cloudinary credentials (`CLOUDINARY_URL` or the discrete pair; the compose file already passes the four names), and the database's `bytea` columns are no longer the reason a smaller database tier cannot be chosen — the column drop itself is deferred (S8 / Wave 5) and not performed.
 - **Bicep templates and a deploy workflow must be authored and validated** before the demo (tracked in `docs/deployment.md`).
 - **LLM provider choice is deferred**: Azure OpenAI (preferred for the Azure narrative, subject to student quota) or plain OpenAI API (fallback) — key stored in Key Vault either way.

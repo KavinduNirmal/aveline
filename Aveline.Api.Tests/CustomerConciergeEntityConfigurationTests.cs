@@ -112,6 +112,46 @@ public class CustomerConciergeEntityConfigurationTests
     }
 
     [Fact]
+    public void CustomerMemory_HasOneLiveNotePerStatementPerCustomer()
+    {
+        // The statement key is what makes "the same note" a constraint rather than a convention.
+        // The unique index is partial on the soft-delete column, so a withdrawn note can be stated
+        // again without colliding with its own tombstone.
+        using var context = CreateContext();
+        var index = IndexesFor(context, typeof(CustomerMemory))
+            .Single(i => i.Properties.Select(p => p.Name)
+                .SequenceEqual(new[] { "OrganizationId", "CustomerId", "ContentKey" }));
+
+        Assert.True(index.IsUnique);
+        Assert.Equal("\"DeletedAt\" IS NULL", index.GetFilter());
+    }
+
+    [Fact]
+    public void CustomerMemory_HasExpiryIndex()
+    {
+        // The search filters on the expiry, so the column is indexed with the scope every read uses.
+        using var context = CreateContext();
+        var indexes = IndexesFor(context, typeof(CustomerMemory));
+        Assert.Contains(
+            indexes,
+            i => i.Properties.Select(p => p.Name)
+                .SequenceEqual(new[] { "OrganizationId", "CustomerId", "ExpiresAt" }));
+    }
+
+    [Fact]
+    public void Customer_HasDescriptionColumn()
+    {
+        // The staff-written prose the pre-contact brief leads with. Nullable with no default: a
+        // default would invent a description for every client created before the column existed.
+        using var context = CreateContext();
+        var property = context.Model.FindEntityType(typeof(Customer))!
+            .FindProperty(nameof(Customer.Description))!;
+
+        Assert.True(property.IsNullable);
+        Assert.Equal(1000, property.GetMaxLength());
+    }
+
+    [Fact]
     public void CustomerInteraction_HasChannelIndex()
     {
         using var context = CreateContext();

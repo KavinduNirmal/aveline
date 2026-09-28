@@ -67,3 +67,14 @@ export function planBlossomLabel(tier: PlanTier): string {
 export function planBlossoms(tier: PlanTier): number {
   return PLANS.find((p) => p.tier === tier)?.blossoms ?? 150
 }
+
+/**
+ * Formats the price the **server** resolved for a tier (plan §9.1 F1). Returns `null` when there is
+ * no server price to render, so the caller keeps the collection copy instead of inventing one.
+ */
+export function formatServerPrice(priceLkr: number | null | undefined, currency?: string): string | null {
+  if (priceLkr === null || priceLkr === undefined) return null
+  if (priceLkr === 0) return 'Free'
+  const amount = new Intl.NumberFormat('en-LK', { maximumFractionDigits: 2 }).format(priceLkr)
+  return `${currency || 'LKR'} ${amount}/mo`
+}

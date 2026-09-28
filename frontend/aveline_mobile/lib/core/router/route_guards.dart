@@ -41,6 +41,21 @@ abstract final class AppRoutes {
   static String customer(String customerId) => '/customers/$customerId';
   static const String conversations = '/conversations';
 
+  /// Route pattern for one client thread, opened from somewhere other than the inbox (a
+  /// notification today).
+  ///
+  /// The message to open on travels as a query parameter rather than `extra`, because the
+  /// router re-parses its location whenever the auth or profile listenable fires and `extra`
+  /// does not survive that.
+  static const String threadPattern =
+      '/conversations/thread/:conversationId';
+
+  /// One client thread, optionally anchored to the message the caller was sent to.
+  static String thread(String conversationId, {String? messageId}) =>
+      messageId == null || messageId.isEmpty
+      ? '/conversations/thread/$conversationId'
+      : '/conversations/thread/$conversationId?messageId=$messageId';
+
   /// The associate's own account and preferences.
   static const String settings = '/settings';
 
@@ -51,6 +66,18 @@ abstract final class AppRoutes {
   /// the router forwards it rather than answering with nothing.
   static const String profile = '/profile';
   static const String notifications = '/notifications';
+
+  /// Boutique commerce orders register.
+  static const String orders = '/orders';
+
+  /// Floor associate on-the-fly order creation.
+  static const String createOrder = '/orders/create';
+
+  /// Route pattern for a single order details screen.
+  static const String orderDetailPattern = '/orders/:orderId';
+
+  /// A single order, addressed by its own id.
+  static String orderDetail(String orderId) => '/orders/$orderId';
 }
 
 /// Pure auth/account-state redirect rules for the [GoRouter].

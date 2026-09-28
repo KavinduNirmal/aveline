@@ -27,24 +27,27 @@ Notes:
 ## 3. Start the API
 
 Development defaults are already wired in `appsettings.Development.json`
-(real Clerk authority, agent base URL, internal token `change-me-internal-token`).
+(real Clerk authority, agent base URL). Its committed internal token,
+`change-me-internal-token`, is rejected by the agent service, so §4 overrides it.
 
 ```bash
 cd Aveline.Api
-cp .env.example .env.local    # optional; dev defaults cover auth
-dotnet run
+dotnet run    # dev defaults cover auth; override with the env vars below
 # http://localhost:5091  (OpenAPI at /openapi/v1.json)
 ```
 
 Override with env vars if needed: `Clerk__Authority`, `AgentService__BaseUrl`,
-`AgentService__InternalToken`, `Cors__AllowedOrigins__0`.
+`AgentService__InternalToken`, `Cors__AllowedOrigins__0`. The API reads these as
+real environment variables — it does not load an `.env` file.
 
 ## 4. Start the agent service
 
 ```bash
-cd agnet-service
-cp .env.example .env.local
-# set INTERNAL_API_TOKEN=change-me-internal-token  (must match the API)
+cd agent-service
+cp .env.example .env          # read by app/core/config.py
+# set INTERNAL_API_TOKEN to a non-placeholder value ("change-me" and
+# "change-me-internal-token" make the service refuse to start) and send the same
+# one from the API:  export AgentService__InternalToken=aveline-local-development-secret-token-2026
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 # health: http://localhost:8000/health

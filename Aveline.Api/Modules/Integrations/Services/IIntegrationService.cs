@@ -53,8 +53,10 @@ public interface IIntegrationService
     /// <summary>
     /// Validates the stored credentials against the provider and transitions the integration
     /// to <see cref="IntegrationStatus.Connected"/> or <see cref="IntegrationStatus.Error"/>.
-    /// Only WhatsApp is validated today; other types are reported as connected without a live
-    /// provider check.
+    /// Only WhatsApp has a live provider check today. Instagram is reported as not implemented and
+    /// left <see cref="IntegrationStatus.Pending"/> rather than Connected, because no provider
+    /// client can validate it (privacy plan §6.3); other credential-only types (PaymentGateway) are
+    /// still reported as connected without a live check until their providers are wired.
     /// </summary>
     Task<IntegrationTestResultDto> TestConnectionAsync(
         Guid organizationId,

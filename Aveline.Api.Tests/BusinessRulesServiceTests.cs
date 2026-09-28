@@ -185,4 +185,58 @@ public class BusinessRulesServiceTests
         var fetched = await _service.GetRuleByIdAsync(created.Id, _orgId);
         Assert.Null(fetched);
     }
+
+    [Fact]
+    public async Task SetPieceDiscount_CreatesAndUpdatesPieceDiscountSuccessfully()
+    {
+        // Arrange
+        var itemId = Guid.NewGuid();
+        var setDto = new SetPieceDiscountDto(
+            ItemId: itemId,
+            ItemName: "Crimson Georgette Zari Saree",
+            DiscountPercentage: 0.10m,
+            Description: "Special promotion"
+        );
+
+        // Act - Create
+        var created = await _service.SetPieceDiscountAsync(_orgId, setDto);
+
+        // Assert
+        Assert.NotEqual(Guid.Empty, created.RuleId);
+        Assert.Equal(itemId, created.ItemId);
+        Assert.Equal("Crimson Georgette Zari Saree", created.ItemName);
+        Assert.Equal(0.10m, created.DiscountPercentage);
+        Assert.True(created.IsActive);
+
+        // Act - Update (e.g. increase discount to 15%)
+        var updateDto = new SetPieceDiscountDto(
+            ItemId: itemId,
+            ItemName: "Crimson Georgette Zari Saree",
+            DiscountPercentage: 0.15m,
+            Description: "Updated promo"
+        );
+        var updated = await _service.SetPieceDiscountAsync(_orgId, updateDto);
+
+        // Assert
+        Assert.Equal(created.RuleId, updated.RuleId);
+        Assert.Equal(0.15m, updated.DiscountPercentage);
+
+        // Act - Fetch by item ID
+        var fetched = await _service.GetPieceDiscountByItemIdAsync(_orgId, itemId);
+        Assert.NotNull(fetched);
+        Assert.Equal(0.15m, fetched.DiscountPercentage);
+
+        // Act - List
+        var allDiscounts = await _service.GetPieceDiscountsAsync(_orgId);
+        Assert.Single(allDiscounts);
+        Assert.Equal(itemId, allDiscounts[0].ItemId);
+
+        // Act - Delete
+        var deleted = await _service.DeletePieceDiscountAsync(_orgId, itemId);
+        Assert.True(deleted);
+
+        var afterDelete = await _service.GetPieceDiscountByItemIdAsync(_orgId, itemId);
+        Assert.Null(afterDelete);
+    }
 }
+

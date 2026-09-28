@@ -1,5 +1,4 @@
 import { useEffect, useId, useState } from 'react'
-import mermaid from 'mermaid'
 import { GitBranch, AlertCircle } from 'lucide-react'
 
 interface MermaidProps {
@@ -15,28 +14,35 @@ export function Mermaid({ chart }: MermaidProps) {
   useEffect(() => {
     let isMounted = true
 
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'loose',
-      theme: 'base',
-      themeVariables: {
-        primaryColor: '#ffffff',
-        primaryTextColor: '#1e1b1b',
-        primaryBorderColor: '#8b2e42',
-        lineColor: '#534244',
-        secondaryColor: '#fff8f7',
-        tertiaryColor: '#ffffff',
-        edgeLabelBackground: '#fff8f7',
-        clusterBkg: '#f5eceb',
-        clusterBorder: '#d9c1c3',
-        fontFamily: 'DM Sans, -apple-system, BlinkMacSystemFont, sans-serif',
-        fontSize: '14px',
-      },
-    })
-
     const renderChart = async () => {
       try {
         setError(null)
+        // Loaded on demand, not statically. Mermaid is ~600 KB of source plus a lazily-split
+        // per-diagram graph; a static import bills all of it to every documentation page —
+        // including the ones with no diagram — and puts its chunk graph in the HTML's
+        // `modulepreload` set for every visitor. The import is dynamic so only a page that
+        // actually renders a diagram pays for it.
+        const { default: mermaid } = await import('mermaid')
+
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'loose',
+          theme: 'base',
+          themeVariables: {
+            primaryColor: '#ffffff',
+            primaryTextColor: '#1e1b1b',
+            primaryBorderColor: '#8b2e42',
+            lineColor: '#534244',
+            secondaryColor: '#fff8f7',
+            tertiaryColor: '#ffffff',
+            edgeLabelBackground: '#fff8f7',
+            clusterBkg: '#f5eceb',
+            clusterBorder: '#d9c1c3',
+            fontFamily: 'DM Sans, -apple-system, BlinkMacSystemFont, sans-serif',
+            fontSize: '14px',
+          },
+        })
+
         const { svg: renderedSvg } = await mermaid.render(id, chart)
         if (isMounted) {
           setSvg(renderedSvg)

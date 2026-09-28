@@ -15,6 +15,10 @@ export interface NotificationPayload {
   title: string
   body: string
   data?: Record<string, string | null>
+  /** The per-user inbox row id, so a tap can mark that notification read. */
+  notificationId?: string
+  /** The recipient's unread count after the row was written, when sent. */
+  unreadCount?: number
 }
 
 export interface NotificationsHandlers {
@@ -50,7 +54,16 @@ export function startNotifications(
     onNotification(payload)
   })
   connection.onreconnecting(() => onStateChange(connection.state))
-  connection.onreconnected(() => onStateChange(connection.state))
+  connection.onreconnected(() => {
+    // SignalR does not preserve group membership across a reconnect, so the
+    // rebuilt socket must re-join or it receives nothing, silently and
+    // permanently. `SubscribeAsync` is idempotent.
+    void connection.invoke('SubscribeAsync').catch(() => {
+      // The automatic reconnect still owns the retry; the state change below is
+      // what the caller observes.
+    })
+    onStateChange(connection.state)
+  })
   connection.onclose(() => onStateChange(HubConnectionState.Disconnected))
 
   onStateChange(connection.state)

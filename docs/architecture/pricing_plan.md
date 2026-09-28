@@ -38,6 +38,7 @@ This document is a living draft and should be updated as real usage and cost dat
 15. Open Questions
 16. Viva Explanation
 17. Brand Positioning
+18. Accepted Decisions (Phase 0)
 
 ---
 
@@ -645,11 +646,55 @@ The exact annual discount should be finalized after pricing validation.
 
 When upgrading during a billing period:
 
-- The plan change should take effect immediately.
-- Remaining usage should be handled through a defined proration policy.
-- Additional Blossom allowance should become available immediately.
+- The plan change takes effect immediately.
+- Remaining usage is handled through a defined proration policy.
+- Additional Blossom allowance becomes available immediately.
 
-The exact financial calculation should be implemented by the billing provider rather than manually calculated wherever possible.
+**Implemented (payment slice, Phase 5).** `POST
+/api/v1/orgs/{organizationId}/subscription/change-plan` with `effective: "immediate"`
+resolves the new plan's list price from the price book and, when that price is
+greater than the price of the plan being left, raises a `SubscriptionProration`
+payment obligation for the remainder of the current period. The exact financial
+calculation is delegated to the billing provider wherever possible, as this section
+requires:
+
+1. **The provider computes it** when the active adapter's `SupportsProration`
+   capability is true (the mock advertises it). Aveline never guesses on the
+   provider's behalf when the provider says it can do the arithmetic.
+2. **Aveline computes it** with the documented fallback below when the active
+   adapter advertises `SupportsProration = false` (the `manual` adapter). Asking
+   such a provider for a figure is refused with
+   `501 payment-provider-capability-missing`, so the fallback is reached by
+   consulting the capability rather than by assuming the call would work.
+
+**Local fallback formula.** For an upgrade from `previous` to `next` LKR per month,
+struck at instant `at` in a period ending at `periodEnd`:
+
+```text
+remainingDays = clamp(periodEnd - at, 0, daysInMonth(at))
+amount        = round((next - previous) * remainingDays / daysInMonth(at), 2, AwayFromZero)
+```
+
+`daysInMonth` is the calendar month of the proration date, so a February proration
+bills over 28 days (29 in a leap year), and the period-end day itself is a zero-day
+remainder worth `0.00`. The result is LKR to two decimal places — the `numeric(18,2)`
+shape the ledger stores — and `AwayFromZero` is the same rounding the provider
+boundary uses (`Money.Lkr`), so a half-cent cannot round down here and up there. The
+formula lives in `Aveline.Api/Modules/Billing/Domain/PlanChangeProration.cs` and is
+unit-tested against a table that includes a leap month and a zero-day remainder.
+
+**When the money moves.** The higher Blossom allowance and the new tier are granted
+at once, because `FR-2.5` requires immediate consumability (decision Q2). The
+proration charge is therefore an invoice-like follow-up obligation rather than a
+precondition: it is created as a `SubscriptionProration` payment intent, its id and
+amount are returned as `prorationPaymentIntentId`/`prorationAmountLkr`, and a
+provider that cannot be reached leaves the charge outstanding instead of reverting a
+plan the tenant is already using.
+
+**When no money moves.** A change that does not raise the resolved price owes
+nothing — which covers an unpriced plan, a downgrade to a cheaper plan, and a change
+struck on the period's last day. Downgrades that take effect next period move no
+money at all.
 
 ---
 
@@ -663,7 +708,9 @@ If the customer currently exceeds the lower plan's:
 - active customer limit
 - Blossom allowance
 
-the downgrade should require resolution before taking effect.
+the downgrade should require resolution before taking effect. An immediate downgrade
+is still refused with `409 plan-limit-violation` for each limit it would break; a
+next-period downgrade records the target tier and moves no money.
 
 ---
 
@@ -973,6 +1020,12 @@ The UsageTracker then determines the corresponding Blossom consumption.
 
 # 15. Open Questions
 
+Rows marked **Accepted** are closed by the Phase 0 decisions recorded in [§18](#18-accepted-decisions-phase-0);
+the remaining rows are still open. The payment-gateway plan's own questions (Q1–Q7) are recorded in
+§18 too. One money policy it raised stays **open by design**: the refund window is
+`Payments:RefundWindowDays`, which defaults to absent ("the operator decides"), because the
+consumer-protection review this document calls for has not happened. No number is fixed here.
+
 | Question                                                         | Status                                                              |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
 | What is the exact monetary value of one Blossom?                 | To validate                                                         |
@@ -980,8 +1033,8 @@ The UsageTracker then determines the corresponding Blossom consumption.
 | What is the minimum Blossom billing increment?                   | To determine                                                        |
 | Should unused Blossoms roll over?                                | To validate                                                         |
 | Should Blossom add-ons expire?                                   | To determine                                                        |
-| Exact annual pricing?                                            | To determine                                                        |
-| Exact proration policy?                                          | To determine                                                        |
+| Exact annual pricing?                                            | **Accepted (Phase 0):** no annual billing in this plan (Q4, [§18](#18-accepted-decisions-phase-0)) |
+| Exact proration policy?                                          | **Accepted (Phase 0):** the higher allowance is consumable immediately; the proration charge follows as a separate obligation (Q2, [§18](#18-accepted-decisions-phase-0)) |
 | Exact active-customer definition?                                | To determine                                                        |
 | Additional staff seat pricing?                                   | Future                                                              |
 | Exact Seed WhatsApp allowance?                                   | To determine                                                        |
@@ -1048,6 +1101,76 @@ Designed for larger and multi-branch boutique businesses.
 > Aveline helps it bloom.
 >
 > Choose the level of intelligence that fits your boutique.
+
+---
+
+# 18. Accepted Decisions (Phase 0)
+
+This section is the **durable record** of the answers agreed for the payment-gateway
+abstraction effort (GitHub issue **#403**, Phase 0). The working plan that raised the
+questions is untracked (`.gitignore` matches `*.ignore.*`), so the decisions are
+recorded here to survive. Later phases read *this* section, not the plan.
+
+| # | Question | Accepted decision |
+| --- | --- | --- |
+| **Q1** | Does selecting a paid tier during onboarding require a settled payment before activation? | **Defer.** Onboarding does **not** block on payment. The existing demo banner stays and payment is collected later, so the funnel is never gated on a provider being reachable. **Shipped status (P10):** the defer answer is implemented as "onboarding does not touch money" — `SelectPlanAsync` persists `Organization.PlanTier` only. The `Status = Trialing` subscription with a resolved `PriceLkr` described here is **not yet created by onboarding** (no provisioning path for it has shipped); a subscription is priced by `ISubscriptionPriceResolver` when it is created or changed through the billing path. See `docs/architecture/onboarding-flow.md` §4.5. |
+| **Q2** | On an immediate upgrade, does the tenant get the higher Blossom allowance before the proration charge settles? | **Yes.** `FR-2.5` requires immediate consumability, so the higher allowance is granted at once. The proration difference follows as an invoice-like charge; a failure to collect leaves the charge `PastDue` and enters dunning (Q3) rather than revoking the allowance. |
+| **Q3** | Dunning: retry schedule, grace period, and what `Expired` means for data? | **Approved as recommended.** Three collection attempts on **days 1, 3 and 7**; the subscription stays `PastDue` throughout; at **day 14** it becomes `Expired` with **read-only access and no data deletion**. |
+| **Q4** | Are trials and annual billing in scope? | **No** to both, for this plan. `Trialing` is currently unreachable and `BillingCycle.Annual` has no behaviour; neither is implemented here. (Q1 still writes `Status = Trialing` for a paid selection, but no trial period or trial price is introduced.) |
+| **Q5** | Which external provider, and does it settle LKR and support recurring billing? | **Deferred to Phase 8.** The reference is **OnePay** (<https://docs.onepay.lk/api-documentation>). Assumptions **A2** (hosted checkout) and **A3** (LKR settlement) remain **unverified** until a sandbox account exists. The abstraction is provider-neutral, so no earlier phase depends on this choice. |
+| **Q6** | What are the prices for Bloom, Orchid and Rose and the three top-up packs? | **The documented prices stand** (see §18.1). They are **data**, not code: nothing may be hardcoded in production code. |
+| **Q7** | Is the Commerce order checkout in scope for this effort, or a separate plan? | **In scope but separate and last.** It changes shipped behaviour and requires a **tenant-scoped payment URL** before it can be consolidated onto the provider abstraction. |
+
+## 18.1 Prices are data, seeded through the admin API
+
+The prices are **not** constants, migrations, or hardcoded values. They are rows in
+the `BlossomPriceEntries` price book, created through the existing admin API
+(`POST /api/v1/admin/pricing/price-book`) so an operator can change them without a
+deploy. This is the Phase 0 exit requirement.
+
+The six documented rows are:
+
+| `skuKind` | `planTier` | `skuCode` | `blossomQuantity` | `priceLkr` |
+| --- | --- | --- | --- | ---: |
+| `PlanAllowance` | `Bloom` | `plan_bloom_monthly` | 750 | 3,500 |
+| `PlanAllowance` | `Orchid` | `plan_orchid_monthly` | 2,000 | 9,000 |
+| `PlanAllowance` | `Rose` | `plan_rose_monthly` | 5,000 | 20,000 |
+| `TopUpPack` | *(null)* | `blossom_pack_100` | 100 | 500 |
+| `TopUpPack` | *(null)* | `blossom_pack_500` | 500 | 2,000 |
+| `TopUpPack` | *(null)* | `blossom_pack_1000` | 1,000 | 3,500 |
+
+`Seed` is free and has no row; `Enterprise` is negotiated per contract. The pack SKU
+codes follow the documented example `blossom_pack_500`
+(`docs/backend/domain-model.md:172`, `docs/api/README.md:2050`).
+
+Run the idempotent seed from the repository root:
+
+```bash
+AVELINE_ADMIN_TOKEN="<team-admin bearer token>" scripts/seed-price-book.sh
+```
+
+It reads `AVELINE_API_BASE_URL` (default `http://localhost:5091`, the local API port)
+and `AVELINE_ADMIN_TOKEN` from the environment; no credential is stored in the
+repository. It sends an `Idempotency-Key` per row, tolerates an "already exists"
+`409`, and is safe to re-run. The script's full contract, and why the two admin
+writes are needed (`POST` creates a row as `Draft`; the effective price must be
+`Active`), are documented in
+[implementation-plan.md §10.7](../backend/implementation-plan.md#107-price-book-seed-phase-0).
+
+## 18.2 How to verify the Phase 0 exit criterion
+
+With a running stack and a team-admin token, the price book must list the three
+`PlanAllowance` rows as `Active`:
+
+```bash
+curl -sS -H "Authorization: Bearer $AVELINE_ADMIN_TOKEN" \
+  "$AVELINE_API_BASE_URL/api/v1/admin/pricing/price-book?skuKind=PlanAllowance"
+```
+
+The response is a bare JSON array (no page envelope, a deliberate deviation recorded
+in `docs/api/README.md:1837`); each of the three rows must carry
+`"status": "Active"` and the `priceLkr` from the table above. The same call with
+`skuKind=TopUpPack` must list the three pack rows as `Active`.
 
 ---
 

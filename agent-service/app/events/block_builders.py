@@ -44,6 +44,8 @@ _CATEGORY_LABELS = {
     "event": "Event",
     "complaint": "Complaint",
     "experience": "Experience",
+    "observation": "Observation",
+    "constraint": "Constraint",
     "note": "Note",
     "memory": "Memory",
 }

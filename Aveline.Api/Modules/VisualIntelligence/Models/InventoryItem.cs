@@ -44,4 +44,5 @@ public class InventoryItem
 
     public ICollection<InventoryImage> Images { get; set; } = new List<InventoryImage>();
     public ICollection<CustomerMatch> CustomerMatches { get; set; } = new List<CustomerMatch>();
+    public ICollection<InventoryItemTag> ItemTags { get; set; } = new List<InventoryItemTag>();
 }

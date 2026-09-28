@@ -29,7 +29,7 @@ public sealed class GlobalExceptionHandler(
             exception,
             "Unhandled exception. method={Method} path={Path} traceId={TraceId}",
             httpContext.Request.Method,
-            httpContext.Request.Path,
+            RequestPathRedaction.SafePath(httpContext),
             traceId);
 
         if (httpContext.Response.HasStarted)

@@ -6,8 +6,15 @@ import '../../../../shared/widgets/section_overline.dart';
 import '../../data/catalog_product_repository.dart';
 import '../../data/demo_catalog_product_repository.dart';
 import '../../domain/catalog_product.dart';
+import '../../domain/stock_adjustment_mode.dart';
 import '../catalog_colors.dart';
+import '../widgets/adjust_stock_sheet.dart';
 import '../widgets/catalog_product_image.dart';
+import '../widgets/customer_matches_sheet.dart';
+import '../widgets/delete_product_sheet.dart';
+import '../widgets/item_qr_sheet.dart';
+import '../widgets/record_sale_sheet.dart';
+import 'add_edit_product_screen.dart';
 
 /// A single piece, opened by tapping its card in the grid.
 ///
@@ -51,6 +58,12 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
 
   /// Set once Aveline has been asked to look at the piece.
   bool _mentionedToAveline = false;
+
+  /// True while a status change or a supply request is in flight.
+  ///
+  /// The actions are gated on it, so one tap cannot become two requests and the screen
+  /// cannot claim an outcome while the request that decides it is still open.
+  bool _isActing = false;
 
   @override
   void initState() {
@@ -107,33 +120,77 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
     });
   }
 
-  /// Applies a status change locally and says so.
+  /// Moves the piece on the server and adopts the row it answers with.
   ///
-  /// The inventory API has no mutation wired on mobile yet; this keeps the
-  /// screen honest about what it did and leaves one place to swap in the call.
-  void _applyStatus(CatalogItemStatus status, String message) {
+  /// The reply is the server's own row rather than the local copy with a field swapped: a
+  /// status the API refused must not draw as though it had stuck, and the API is the one
+  /// that derives `isAvailable` from the status.
+  Future<void> _applyStatus(CatalogItemStatus status, String message) async {
     final piece = _product;
-    if (piece == null) {
+    if (piece == null || _isActing) {
       return;
     }
 
-    setState(() {
-      _product = piece.copyWith(
-        status: status,
-        isAvailable: status == CatalogItemStatus.available,
+    setState(() => _isActing = true);
+    try {
+      final updated = await _repository.updateStatus(piece.id, status);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _product = updated);
+      AppToast.show(context, message);
+    } catch (error) {
+      debugPrint(
+        '[catalog] could not set ${piece.id} to ${status.wireValue}: $error',
       );
-    });
-    AppToast.show(context, message);
+      if (mounted) {
+        AppToast.show(
+          context,
+          'Could not update ${piece.name}. Nothing was changed.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isActing = false);
+      }
+    }
   }
 
-  void _requestSupply() {
+  /// Logs a sourcing ticket for a piece the shop does not carry.
+  ///
+  /// The action reads as done only once the ticket exists, so a refused request leaves the
+  /// button live for another try instead of claiming the atelier was asked.
+  Future<void> _requestSupply() async {
     final piece = _product;
-    if (piece == null) {
+    if (piece == null || _isActing) {
       return;
     }
 
-    setState(() => _supplyRequested = true);
-    AppToast.show(context, 'Supply request logged for ${piece.name}.');
+    setState(() => _isActing = true);
+    try {
+      await _repository.requestSupply(piece: piece);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _supplyRequested = true);
+      AppToast.show(context, 'Supply request logged for ${piece.name}.');
+    } catch (error) {
+      debugPrint(
+        '[catalog] could not log a supply request for ${piece.id}: $error',
+      );
+      if (mounted) {
+        AppToast.show(
+          context,
+          'Could not log a supply request for ${piece.name}.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isActing = false);
+      }
+    }
   }
 
   void _mentionToAveline() {
@@ -142,8 +199,102 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
       return;
     }
 
-    setState(() => _mentionedToAveline = true);
-    AppToast.show(context, 'Aveline will take a look at ${piece.name}.');
+    // Deliberately not a state flip. Mentioning means composing a Salon message, and the
+    // Salon's contract has no way to say "this message is about piece X" yet, so nothing
+    // reaches Aveline. Saying she was told would be the screen lying about what it did,
+    // which is the whole reason the other four actions are wired.
+    AppToast.show(
+      context,
+      'Mentioning a piece to Aveline is not available yet.',
+      error: true,
+    );
+  }
+
+  Future<void> _openEditPiece(CatalogProduct piece) async {
+    final updated = await Navigator.of(context).push<CatalogProduct>(
+      MaterialPageRoute(
+        builder: (_) => AddEditProductScreen(
+          product: piece,
+          repository: _repository,
+        ),
+      ),
+    );
+
+    if (updated != null && mounted) {
+      setState(() => _product = updated);
+      AppToast.show(context, 'Updated ${updated.name}.');
+    }
+  }
+
+  Future<void> _openRecordSale(CatalogProduct piece) async {
+    final receipt = await RecordSaleSheet.show(
+      context,
+      piece: piece,
+      repository: _repository,
+    );
+
+    if (receipt != null && mounted) {
+      setState(() {
+        _product = piece.copyWith(
+          quantity: receipt.remainingStock,
+          status: receipt.status,
+          isAvailable: receipt.remainingStock > 0 &&
+              receipt.status == CatalogItemStatus.available,
+        );
+      });
+      AppToast.show(context, 'Sale recorded: ${receipt.summary}');
+    }
+  }
+
+  Future<void> _openAdjustStock(
+    CatalogProduct piece,
+    StockAdjustmentMode mode,
+  ) async {
+    final updated = await AdjustStockSheet.show(
+      context,
+      piece: piece,
+      mode: mode,
+      repository: _repository,
+    );
+
+    if (updated != null && mounted) {
+      setState(() => _product = updated);
+      AppToast.show(
+        context,
+        mode == StockAdjustmentMode.outOfStock
+            ? 'Marked ${updated.name} out of stock.'
+            : 'Stock updated for ${updated.name} (${updated.quantity} in stock).',
+      );
+    }
+  }
+
+  Future<void> _openCustomerMatches(CatalogProduct piece) async {
+    await CustomerMatchesSheet.show(
+      context,
+      piece: piece,
+      repository: _repository,
+    );
+  }
+
+  Future<void> _openQrSheet(CatalogProduct piece) async {
+    await ItemQrSheet.show(
+      context,
+      piece: piece,
+      organizationId: piece.organizationId,
+    );
+  }
+
+  Future<void> _openDeletePiece(CatalogProduct piece) async {
+    final deleted = await DeleteProductSheet.show(
+      context,
+      piece: piece,
+      repository: _repository,
+    );
+
+    if (deleted == true && mounted) {
+      AppToast.show(context, 'Deleted ${piece.name} from catalog.');
+      Navigator.of(context).pop(true);
+    }
   }
 
   @override
@@ -158,6 +309,28 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
           tooltip: 'Back',
           onPressed: () => Navigator.of(context).maybePop(),
         ),
+        actions: [
+          if (piece != null) ...[
+            IconButton(
+              key: const Key('catalog_product_qr_button'),
+              icon: const Icon(Icons.qr_code_2_rounded),
+              tooltip: 'Floor tag QR',
+              onPressed: () => _openQrSheet(piece),
+            ),
+            IconButton(
+              key: const Key('catalog_product_edit_button'),
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit piece',
+              onPressed: () => _openEditPiece(piece),
+            ),
+            IconButton(
+              key: const Key('catalog_product_delete_button'),
+              icon: const Icon(Icons.delete_outline_rounded),
+              tooltip: 'Delete piece',
+              onPressed: () => _openDeletePiece(piece),
+            ),
+          ],
+        ],
       ),
       body: Stack(
         children: [
@@ -173,10 +346,16 @@ class _CatalogProductScreenState extends State<CatalogProductScreen> {
       return _Detail(
         piece: piece,
         onStatus: _applyStatus,
+        onRecordSale: () => _openRecordSale(piece),
+        onAdjustStock: (mode) => _openAdjustStock(piece, mode),
         onSupply: _requestSupply,
         supplyRequested: _supplyRequested,
         onMention: _mentionToAveline,
         mentionedToAveline: _mentionedToAveline,
+        onCustomerMatches: () => _openCustomerMatches(piece),
+        onQrCode: () => _openQrSheet(piece),
+        onDeletePiece: () => _openDeletePiece(piece),
+        busy: _isActing,
       );
     }
 
@@ -233,18 +412,33 @@ class _Detail extends StatelessWidget {
   const _Detail({
     required this.piece,
     required this.onStatus,
+    required this.onRecordSale,
+    required this.onAdjustStock,
     required this.onSupply,
     required this.supplyRequested,
     required this.onMention,
     required this.mentionedToAveline,
+    required this.onCustomerMatches,
+    required this.onQrCode,
+    required this.onDeletePiece,
+    required this.busy,
   });
 
   final CatalogProduct piece;
   final void Function(CatalogItemStatus status, String message) onStatus;
+  final VoidCallback onRecordSale;
+  final void Function(StockAdjustmentMode mode) onAdjustStock;
   final VoidCallback onSupply;
   final bool supplyRequested;
   final VoidCallback onMention;
   final bool mentionedToAveline;
+  final VoidCallback onCustomerMatches;
+  final VoidCallback onQrCode;
+  final VoidCallback onDeletePiece;
+
+  /// Whether a status change or a supply request is in flight, which holds every action
+  /// back rather than letting a second one race the first.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -289,15 +483,38 @@ class _Detail extends StatelessWidget {
         _SectionCard(
           title: 'Actions',
           children: [
-            // Stacked, one to a row: the actions used to sit two-up in a grid,
-            // which squeezed their labels and made different decisions look
-            // like one block.
+            _ActionButton(
+              key: const Key('catalog_action_sale'),
+              icon: Icons.receipt_long_outlined,
+              label: 'Record counter sale',
+              tone: _ActionTone.primary,
+              onPressed: !busy && piece.status.isSellable && piece.quantity > 0
+                  ? onRecordSale
+                  : null,
+            ),
+            const SizedBox(height: 10),
+            _ActionButton(
+              key: const Key('catalog_action_vip_matches'),
+              icon: Icons.auto_awesome_rounded,
+              label: 'VIP client matches',
+              tone: _ActionTone.accent,
+              onPressed: !busy ? onCustomerMatches : null,
+            ),
+            const SizedBox(height: 10),
+            _ActionButton(
+              key: const Key('catalog_action_qr_tag'),
+              icon: Icons.qr_code_2_rounded,
+              label: 'Floor tag QR code',
+              tone: _ActionTone.tonal,
+              onPressed: !busy ? onQrCode : null,
+            ),
+            const SizedBox(height: 10),
             _ActionButton(
               key: const Key('catalog_action_hold'),
               icon: Icons.bookmark_add_outlined,
               label: 'Create a hold',
-              tone: _ActionTone.primary,
-              onPressed: piece.status.isHoldable
+              tone: _ActionTone.tonal,
+              onPressed: !busy && piece.status.isHoldable
                   ? () => onStatus(
                       CatalogItemStatus.onHold,
                       'Hold created for ${piece.name}.',
@@ -306,11 +523,31 @@ class _Detail extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             _ActionButton(
+              key: const Key('catalog_action_reduce_stock'),
+              icon: Icons.tune_rounded,
+              label: 'Reduce stock',
+              tone: _ActionTone.neutral,
+              onPressed: !busy && piece.quantity > 0
+                  ? () => onAdjustStock(StockAdjustmentMode.reduce)
+                  : null,
+            ),
+            const SizedBox(height: 10),
+            _ActionButton(
+              key: const Key('catalog_action_out_of_stock'),
+              icon: Icons.inventory_2_outlined,
+              label: 'Mark out of stock',
+              tone: _ActionTone.danger,
+              onPressed: !busy && piece.quantity > 0
+                  ? () => onAdjustStock(StockAdjustmentMode.outOfStock)
+                  : null,
+            ),
+            const SizedBox(height: 10),
+            _ActionButton(
               key: const Key('catalog_action_unavailable'),
               icon: Icons.visibility_off_outlined,
               label: 'Mark unavailable',
               tone: _ActionTone.neutral,
-              onPressed: piece.status.isSellable
+              onPressed: !busy && piece.status.isSellable
                   ? () => onStatus(
                       CatalogItemStatus.unavailable,
                       '${piece.name} marked unavailable.',
@@ -323,7 +560,7 @@ class _Detail extends StatelessWidget {
               icon: Icons.sell_outlined,
               label: 'Mark sold out',
               tone: _ActionTone.danger,
-              onPressed: piece.status.isSellable
+              onPressed: !busy && piece.status.isSellable
                   ? () => onStatus(
                       CatalogItemStatus.soldOut,
                       '${piece.name} marked sold out.',
@@ -336,12 +573,9 @@ class _Detail extends StatelessWidget {
               icon: Icons.local_shipping_outlined,
               label: supplyRequested ? 'Supply requested' : 'Request a supply',
               tone: _ActionTone.tonal,
-              onPressed: supplyRequested ? null : onSupply,
+              onPressed: busy || supplyRequested ? null : onSupply,
             ),
             const SizedBox(height: 10),
-            // The one action that leaves the catalog: it asks the agent to take
-            // the piece on, so it wears the Aveline accent rather than one of
-            // the floor's own colours.
             _ActionButton(
               key: const Key('catalog_action_mention'),
               icon: Icons.auto_awesome_outlined,
@@ -349,7 +583,15 @@ class _Detail extends StatelessWidget {
                   ? 'Mentioned to Aveline'
                   : 'Mention to Aveline',
               tone: _ActionTone.accent,
-              onPressed: mentionedToAveline ? null : onMention,
+              onPressed: busy || mentionedToAveline ? null : onMention,
+            ),
+            const SizedBox(height: 10),
+            _ActionButton(
+              key: const Key('catalog_action_delete'),
+              icon: Icons.delete_outline_rounded,
+              label: 'Delete piece',
+              tone: _ActionTone.danger,
+              onPressed: !busy ? onDeletePiece : null,
             ),
           ],
         ),

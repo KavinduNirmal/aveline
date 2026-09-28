@@ -3,6 +3,18 @@ import 'package:aveline_mobile/core/theme/app_theme.dart';
 import 'package:aveline_mobile/features/catalog/data/catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/data/demo_catalog_product_repository.dart';
 import 'package:aveline_mobile/features/catalog/domain/catalog_product.dart';
+import 'package:aveline_mobile/features/catalog/domain/catalog_tag.dart';
+import 'package:aveline_mobile/features/catalog/domain/customer_match.dart';
+import 'package:aveline_mobile/features/catalog/domain/outfit_composition.dart';
+import 'package:aveline_mobile/features/catalog/domain/outfit_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/product_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/sale_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/sale_receipt.dart';
+import 'package:aveline_mobile/features/catalog/domain/sourcing_payloads.dart';
+import 'package:aveline_mobile/features/catalog/domain/sourcing_request.dart';
+import 'package:aveline_mobile/features/catalog/domain/sourcing_status.dart';
+import 'package:aveline_mobile/features/catalog/domain/supplier.dart';
+import 'package:aveline_mobile/features/catalog/domain/vision_analysis.dart';
 import 'package:aveline_mobile/features/catalog/presentation/screens/catalog_product_screen.dart';
 import 'package:aveline_mobile/shared/widgets/aurora_field.dart';
 import 'package:flutter/material.dart';
@@ -41,9 +53,22 @@ CatalogProduct _piece({
 
 /// Resolves pieces from a fixed pool, standing in for the inventory API.
 class _StubRepository implements CatalogProductRepository {
-  _StubRepository(this.pool);
+  _StubRepository(this.pool, {this.failStatus = false, this.failSupply = false});
 
   final List<CatalogProduct> pool;
+
+  /// Refuses a status change the way the API refuses one, so the screen's failure path is
+  /// assertable without a network.
+  final bool failStatus;
+
+  /// Refuses a supply ticket, for the same reason.
+  final bool failSupply;
+
+  /// The statuses the screen asked the API for, in the order it asked.
+  final List<CatalogItemStatus> requestedStatuses = [];
+
+  /// The pieces a supply ticket was requested for.
+  final List<String> requestedSupplies = [];
 
   @override
   Future<CatalogProduct?> fetchProduct(String id) async {
@@ -66,13 +91,180 @@ class _StubRepository implements CatalogProductRepository {
       hasMore: false,
     );
   }
+
+  @override
+  Future<CatalogProduct> updateStatus(
+    String id,
+    CatalogItemStatus status,
+  ) async {
+    if (failStatus) {
+      throw StateError('the catalog refused the change');
+    }
+
+    requestedStatuses.add(status);
+    final index = pool.indexWhere((piece) => piece.id == id);
+    if (index < 0) {
+      throw StateError('no piece $id');
+    }
+
+    // The server's row comes back, so the screen draws what the API now holds rather than
+    // what it hoped to hold.
+    final updated = pool[index].copyWith(
+      status: status,
+      isAvailable: status == CatalogItemStatus.available,
+    );
+    pool[index] = updated;
+    return updated;
+  }
+
+  @override
+  Future<String> requestSupply({
+    required CatalogProduct piece,
+    int quantityNeeded = 1,
+    String urgency = 'medium',
+  }) async {
+    if (failSupply) {
+      throw StateError('the sourcing route refused the ticket');
+    }
+
+    requestedSupplies.add(piece.id);
+    return 'src-1';
+  }
+
+  @override
+  Future<ImageUploadResult> uploadImage({
+    required List<int> bytes,
+    required String fileName,
+    String? contentType,
+  }) => throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<VisionAnalysis> analyzeImage({
+    String? imageRefId,
+    String? imageUrl,
+    String? fileNameHint,
+  }) => throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<CatalogProduct> createProduct(CreateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<CatalogProduct> updateProduct(String id, UpdateProductPayload payload) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<void> deleteProduct(String id) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<List<OutfitComposition>> getLookbooks({String? occasion, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<OutfitComposition> composeOutfit(ComposeOutfitPayload payload) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<OutfitComposition> updateLookbook(String id, UpdateLookbookPayload payload) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<void> deleteLookbook(String id) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<List<SourcingRequest>> getSourcingRequests({String? status, String? query}) =>
+      Future.value(const []);
+
+  @override
+  Future<SourcingRequest> createSourcingRequest(CreateSourcingRequestPayload payload) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<SourcingRequest> updateSourcingStatus(String id, SourcingStatus status, {String? notes}) =>
+      throw UnimplementedError('this fake only reads and updates status');
+
+  @override
+  Future<List<Supplier>> getSuppliers() =>
+      Future.value(const []);
+
+  @override
+  Future<List<SupplierCatalogItem>> getSupplierCatalog(String supplierId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> getCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<List<CustomerMatch>> generateCustomerMatches(String productId) =>
+      Future.value(const []);
+
+  @override
+  Future<void> markMatchActed(String matchId) =>
+      Future.value();
+
+  @override
+  Future<CatalogSaleReceipt> recordSale({
+    required String itemId,
+    required RecordSalePayload payload,
+  }) async {
+    final index = pool.indexWhere((piece) => piece.id == itemId);
+    if (index < 0) {
+      throw StateError('no piece $itemId');
+    }
+    final piece = pool[index];
+    if (payload.quantity > piece.quantity) {
+      throw StateError('insufficient-stock');
+    }
+    final newQty = piece.quantity - payload.quantity;
+    final updated = piece.copyWith(
+      quantity: newQty,
+      status: newQty <= 0 ? CatalogItemStatus.soldOut : piece.status,
+    );
+    pool[index] = updated;
+    return CatalogSaleReceipt(
+      itemId: itemId,
+      itemName: piece.name,
+      quantitySold: payload.quantity,
+      unitPrice: payload.unitPrice,
+      totalAmount: payload.unitPrice * payload.quantity,
+      remainingStock: newQty,
+      status: updated.status,
+      ledgerEntryId: 'ledger-mock-1',
+      recordedAtUtc: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<CatalogProduct> adjustStock({
+    required String itemId,
+    required int quantity,
+    CatalogItemStatus? status,
+  }) async {
+    final index = pool.indexWhere((piece) => piece.id == itemId);
+    if (index < 0) {
+      throw StateError('no piece $itemId');
+    }
+    final targetStatus = status ?? (quantity <= 0 ? CatalogItemStatus.soldOut : pool[index].status);
+    final updated = pool[index].copyWith(
+      quantity: quantity,
+      status: targetStatus,
+    );
+    pool[index] = updated;
+    return updated;
+  }
+
+  @override
+  Future<List<CatalogTag>> fetchTags() => Future.value(const []);
 }
 
 /// A tall phone viewport, so the whole stack of cards is laid out and every
 /// action can be tapped without scrolling. The layout is width-driven, so this
 /// only removes scroll bookkeeping from the assertions.
 void _useTallSurface(WidgetTester tester) {
-  tester.view.physicalSize = const Size(1170, 7200);
+  tester.view.physicalSize = const Size(1170, 9600);
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
 }
@@ -86,7 +278,11 @@ void _useReducedMotion(WidgetTester tester) {
 }
 
 /// Reduced motion is on, matching the rest of the suite.
-Widget _wrap({CatalogProduct? product, String productId = 'piece-001'}) {
+Widget _wrap({
+  CatalogProduct? product,
+  String productId = 'piece-001',
+  CatalogProductRepository? repository,
+}) {
   return MaterialApp(
     theme: AppTheme.light,
     home: Builder(
@@ -95,7 +291,7 @@ Widget _wrap({CatalogProduct? product, String productId = 'piece-001'}) {
         child: CatalogProductScreen(
           product: product,
           productId: productId,
-          repository: _StubRepository([_piece()]),
+          repository: repository ?? _StubRepository([_piece()]),
         ),
       ),
     ),
@@ -215,6 +411,67 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
     });
 
+    testWidgets('sends the status change to the API and draws the row it answers with', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final repository = _StubRepository([_piece()]);
+      await tester.pumpWidget(_wrap(product: _piece(), repository: repository));
+
+      await tester.tap(find.byKey(const Key('catalog_action_hold')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 750));
+
+      // The button is not the record: the API was asked, and the screen drew what came
+      // back rather than the status it hoped for.
+      expect(repository.requestedStatuses, [CatalogItemStatus.onHold]);
+      expect(find.text('On hold'), findsWidgets);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('says the piece is unchanged when the API refuses the status', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final repository = _StubRepository([_piece()], failStatus: true);
+      await tester.pumpWidget(_wrap(product: _piece(), repository: repository));
+
+      await tester.tap(find.byKey(const Key('catalog_action_sold_out')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 750));
+
+      expect(
+        find.text('Could not update Handloom Silk Saree. Nothing was changed.'),
+        findsOneWidget,
+      );
+      // The status is the server's, so a refusal leaves the piece available and its
+      // actions live rather than drawing a change that never happened.
+      expect(find.text('Sold out'), findsNothing);
+      expect(_actionEnabled(tester, const Key('catalog_action_hold')), isTrue);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('does not claim a supply ticket the API refused', (tester) async {
+      _useTallSurface(tester);
+      final repository = _StubRepository([_piece()], failSupply: true);
+      await tester.pumpWidget(_wrap(product: _piece(), repository: repository));
+
+      await tester.tap(find.byKey(const Key('catalog_action_supply')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 750));
+
+      expect(
+        find.text('Could not log a supply request for Handloom Silk Saree.'),
+        findsOneWidget,
+      );
+      // The action stays live for another try rather than reading as done.
+      expect(_actionEnabled(tester, const Key('catalog_action_supply')), isTrue);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
     testWidgets('marks the piece sold out and closes the other actions', (
       tester,
     ) async {
@@ -265,7 +522,85 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
     });
 
-    testWidgets('mentions the piece to Aveline and marks it done', (
+    testWidgets('opens RecordSaleSheet and updates piece when a counter sale is recorded', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final piece = _piece(quantity: 5);
+      final repository = _StubRepository([piece]);
+      await tester.pumpWidget(_wrap(product: piece, repository: repository));
+
+      expect(
+        _actionEnabled(tester, const Key('catalog_action_sale')),
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('catalog_action_sale')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Record Counter Sale'), findsOneWidget);
+      expect(find.text('Handloom Silk Saree'), findsWidgets);
+
+      // Confirm sale
+      await tester.tap(find.byKey(const Key('record_sale_confirm_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sale recorded: 1 × Handloom Silk Saree · Rs 24,500 · 4 left'), findsOneWidget);
+    });
+
+    testWidgets('opens AdjustStockSheet in reduce mode and updates piece when stock is reduced', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final piece = _piece(quantity: 6);
+      final repository = _StubRepository([piece]);
+      await tester.pumpWidget(_wrap(product: piece, repository: repository));
+
+      expect(
+        _actionEnabled(tester, const Key('catalog_action_reduce_stock')),
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('catalog_action_reduce_stock')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reduce Stock'), findsWidgets);
+      expect(find.text('BEFORE: '), findsOneWidget);
+
+      // Confirm reduce stock
+      await tester.tap(find.byKey(const Key('adjust_stock_confirm_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Stock updated for Handloom Silk Saree (5 in stock).'), findsOneWidget);
+    });
+
+    testWidgets('opens AdjustStockSheet in outOfStock mode and updates piece to sold out', (
+      tester,
+    ) async {
+      _useTallSurface(tester);
+      final piece = _piece(quantity: 4);
+      final repository = _StubRepository([piece]);
+      await tester.pumpWidget(_wrap(product: piece, repository: repository));
+
+      expect(
+        _actionEnabled(tester, const Key('catalog_action_out_of_stock')),
+        isTrue,
+      );
+
+      await tester.tap(find.byKey(const Key('catalog_action_out_of_stock')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Mark Out of Stock'), findsWidgets);
+      expect(find.text('AFTER: '), findsOneWidget);
+
+      // Confirm mark out of stock
+      await tester.tap(find.byKey(const Key('adjust_stock_confirm_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Marked Handloom Silk Saree out of stock.'), findsOneWidget);
+    });
+
+    testWidgets('does not claim Aveline was told when nothing was sent', (
       tester,
     ) async {
       _useTallSurface(tester);
@@ -280,14 +615,16 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 750));
 
+      // Nothing reaches the Salon yet, so the screen says so rather than reporting a
+      // hand-off that never happened, and the action stays live for when it ships.
       expect(
-        find.text('Aveline will take a look at Handloom Silk Saree.'),
+        find.text('Mentioning a piece to Aveline is not available yet.'),
         findsOneWidget,
       );
-      expect(find.text('Mentioned to Aveline'), findsOneWidget);
+      expect(find.text('Mentioned to Aveline'), findsNothing);
       expect(
         _actionEnabled(tester, const Key('catalog_action_mention')),
-        isFalse,
+        isTrue,
       );
 
       await tester.pump(const Duration(seconds: 4));
@@ -306,13 +643,13 @@ void main() {
 
       expect(washInTile(), findsOneWidget);
 
-      // Once asked, the action is spent, so it drops back to a quiet inert
-      // pill rather than keeping the atmosphere on a dead control.
+      // The action is not spent by asking: nothing was sent, so it keeps its atmosphere
+      // and stays live rather than going inert on a hand-off that did not happen.
       await tester.tap(find.byKey(const Key('catalog_action_mention')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 750));
 
-      expect(washInTile(), findsNothing);
+      expect(washInTile(), findsOneWidget);
 
       await tester.pump(const Duration(seconds: 4));
     });

@@ -1,4 +1,6 @@
 using Aveline.Api.Common.Jobs;
+using Aveline.Api.Configurations;
+using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.Statistics.Jobs;
 using Aveline.Api.Modules.Statistics.Models;
@@ -29,9 +31,11 @@ public class SystemMetricCollectorTests
         EventBusPublished = 10,
         EventBusReceived = 9,
         EventBusFailed = 1,
+        EventBusPublishLatencyMs = 12.5,
         ApiRequestsPerSecond = 2.5,
         ApiErrorRate = 0.02,
         AgentRunsRunning = 3,
+        AgentRunsTotal = 42,
     };
 
     /// <summary>A snapshot with a value for every field the collector can map.</summary>
@@ -44,6 +48,7 @@ public class SystemMetricCollectorTests
         AgentPausedCount = 2,
         AgentStepsPerRun = 7.5,
         ApiLatencyP95Ms = 420,
+        DbPoolSaturation = 0.42,
     };
 
     [Fact]
@@ -108,12 +113,31 @@ public class SystemMetricCollectorTests
     }
 
     [Fact]
+    public void EventBusPublishLatencyP95_IsOmittedBelowTheSampleFloor()
+    {
+        // M-8: below the floor the percentile is omitted, never computed from one observation.
+        var metrics = new EventBusMetrics();
+        metrics.RecordPublishLatency(50, "order.created");
+
+        Assert.Null(metrics.LatencyP95Ms);
+
+        for (var i = 1; i <= EventBusMetrics.MinLatencySamplesForPercentile; i++)
+        {
+            metrics.RecordPublishLatency(i * 10, "order.created");
+        }
+
+        Assert.NotNull(metrics.LatencyP95Ms);
+        Assert.InRange(metrics.LatencyP95Ms!.Value, 10, 60);
+    }
+
+    [Fact]
     public void BuildSamples_HasExactValueColumnAndStableSixtyFourCharHash()
     {
         var first = SystemMetricCollector.BuildSamples(FullSnapshot());
         var second = SystemMetricCollector.BuildSamples(FullSnapshot());
 
-        Assert.Equal(12, first.Count);
+        // Fourteen since ADR-027 added `aveline.agent.runs_total` to the fully-populated fixture.
+        Assert.Equal(14, first.Count);
         Assert.All(first, sample =>
         {
             Assert.Equal(64, sample.DimensionHash.Length);
@@ -164,6 +188,27 @@ public class SystemMetricCollectorTests
         Assert.Equal(0, collector.BufferedSampleCount);
     }
 
+    [Fact]
+    public async Task RunAsync_PublishesTheGaugesBeforeAttemptingTheDatabaseWrite()
+    {
+        // Plan §3.3/§9 Slice 2: a database outage must not blind the operator dashboard, so the
+        // gauges are published first and the failing write must not suppress them.
+        var repository = new StubSystemMetricRepository { Fail = true };
+        await using var provider = BuildProvider(repository);
+        using var metrics = new AvelineMetrics();
+
+        var collector = new FixedSnapshotCollector(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IDistributedJobLock>(),
+            new MetricSnapshot { ThreadCount = 1, EventBusPublished = 10, EventBusReceived = 4 },
+            metrics);
+
+        Assert.Equal(0, await collector.RunAsync(CancellationToken.None));
+
+        metrics.PublishedNames.Should().Contain("aveline.process.thread_count");
+        metrics.PublishedNames.Should().Contain("aveline.eventbus.backlog");
+    }
+
     private static ServiceProvider BuildProvider(ISystemMetricRepository repository)
     {
         var services = new ServiceCollection();
@@ -178,12 +223,14 @@ public class SystemMetricCollectorTests
     private sealed class FixedSnapshotCollector(
         IServiceScopeFactory scopeFactory,
         IDistributedJobLock jobLock,
-        MetricSnapshot snapshot)
+        MetricSnapshot snapshot,
+        AvelineMetrics? metrics = null)
         : SystemMetricCollector(
             scopeFactory,
             jobLock,
             NullLogger<SystemMetricCollector>.Instance,
-            new ConfigurationBuilder().Build())
+            new ConfigurationBuilder().Build(),
+            metrics)
     {
         protected override Task<MetricSnapshot> CaptureAsync(IServiceProvider services, CancellationToken cancellationToken)
             => Task.FromResult(snapshot);

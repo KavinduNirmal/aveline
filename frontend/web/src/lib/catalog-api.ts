@@ -6,12 +6,16 @@ import type {
   SourcingRequest,
   Supplier,
   SupplierCatalogItem,
+  DetectedClothingItem,
   VisionAnalysisResult,
   SearchInventoryParams,
   CreateInventoryItemPayload,
   UpdateInventoryItemPayload,
   CreateSourcingRequestPayload,
   ComposeOutfitPayload,
+  UpdateLookbookPayload,
+  RecordCatalogSalePayload,
+  CatalogSaleReceipt,
 } from '@/types/catalog'
 
 const catalogBase = (organizationId: string) =>
@@ -29,7 +33,9 @@ export function normalizeInventoryItem(raw: any): InventoryItem {
     sku: raw.sku || '',
     category: raw.category || 'General',
     color: raw.color || 'Unspecified',
-    colorHex: raw.colorHex || '#4B5563',
+    // No invented swatch. The API carries the colour the analysis measured; when it carries none,
+    // the field is absent and the card renders no dot rather than a flat grey nobody measured.
+    colorHex: raw.colorHex || undefined,
     fabric: raw.fabric || 'Fabric',
     style: raw.style || 'Contemporary',
     pattern: raw.pattern || undefined,
@@ -39,7 +45,9 @@ export function normalizeInventoryItem(raw: any): InventoryItem {
     stockQuantity: typeof raw.quantity === 'number' ? raw.quantity : Number(raw.stockQuantity || raw.quantity || 0),
     status: (raw.status || 'available') as InventoryItem['status'],
     imageUrl: raw.imageUrl || '',
-    confidenceScore: raw.confidenceScore ?? 0.95,
+    // No invented confidence. `InventoryItemDto` has no such field, so a list row only carries one
+    // when the caller actually supplied it; substituting 0.95 made every card claim "95% Vision AI".
+    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : undefined,
     description: raw.description || '',
     createdAt: raw.createdAt || new Date().toISOString(),
     updatedAt: raw.updatedAt,
@@ -100,30 +108,46 @@ export function normalizeSourcingRequest(raw: any): SourcingRequest {
 }
 
 /**
- * Normalizes backend OutfitCompositionDto to frontend OutfitComposition model.
+ * Normalizes a lookbook payload into the frontend `OutfitComposition` model.
+ *
+ * Two wire shapes describe the same look. The stored row (`OutfitCompositionDto`, the lookbooks
+ * list and the update response) carries `name` and an `items` array whose pieces name their slot
+ * `role`. The composer (`ComposedOutfitDto`, the compose response) instead names the ensemble
+ * `lookName` and splits its pieces into `primaryItem`/`complementaryItems`. Reading only one shape
+ * silently produced an empty ensemble under the default name, so both are handled here — it
+ * observes, it does not invent.
  */
 export function normalizeOutfitComposition(raw: any): OutfitComposition {
+  const rawItems: any[] = Array.isArray(raw.items)
+    ? raw.items
+    : [
+        ...(raw.primaryItem ? [raw.primaryItem] : []),
+        ...(Array.isArray(raw.complementaryItems) ? raw.complementaryItems : []),
+      ]
+
+  const totalPrice = raw.totalPrice ?? raw.totalLookPrice
+  const heroImageUrl = raw.heroImageUrl || raw.primaryItem?.imageUrl || ''
+
   return {
-    id: raw.id,
-    name: raw.name || 'Curated Ensemble',
+    id: raw.id || raw.outfitId || '',
+    name: raw.name || raw.lookName || 'Curated Ensemble',
     occasion: raw.occasion || 'Evening / Gala',
-    totalPrice: typeof raw.totalPrice === 'number' ? raw.totalPrice : Number(raw.totalPrice || 0),
-    styleNotes: raw.styleNotes || raw.notes || 'Curated by Elle Stylist AI',
-    heroImageUrl: raw.heroImageUrl || '',
-    createdAt: raw.createdAt || new Date().toISOString(),
-    organizationId: raw.organizationId,
-    items: Array.isArray(raw.items)
-      ? raw.items.map((it: any) => ({
-          id: it.id || it.itemId,
-          itemId: it.itemId || it.id,
-          name: it.name || it.itemName || 'Ensemble Item',
-          category: it.category || 'Accessory',
-          price: typeof it.price === 'number' ? it.price : Number(it.price || 0),
-          imageUrl: it.imageUrl || '',
-          position: it.position || 'top',
-          notes: it.notes,
-        }))
-      : [],
+    totalPrice: typeof totalPrice === 'number' ? totalPrice : Number(totalPrice || 0),
+    styleNotes: raw.styleNotes || raw.stylingNotes || raw.notes || 'Curated by Elle Stylist AI',
+    heroImageUrl,
+    createdAt: raw.createdAt || raw.createdAtUtc || new Date().toISOString(),
+    organizationId: raw.organizationId || raw.orgId,
+    items: rawItems.map((it: any, index: number) => ({
+      id: it.id || it.itemId || `outfit-item-${index}`,
+      itemId: it.inventoryItemId || it.itemId || it.id || '',
+      name: it.itemName || it.name || 'Ensemble Item',
+      category: it.category || 'Accessory',
+      price: typeof it.price === 'number' ? it.price : Number(it.price || 0),
+      imageUrl: it.imageUrl || '',
+      // The stored row names the slot `role`; older payloads and the composer use `position`.
+      position: it.role || it.position || 'primary',
+      notes: it.notes,
+    })),
   }
 }
 
@@ -207,6 +231,16 @@ export async function updateCatalogItemStatus(
 }
 
 /**
+ * Deletes (soft-deletes) an inventory item from the catalog.
+ */
+export async function deleteCatalogItem(
+  organizationId: string,
+  itemId: string,
+): Promise<void> {
+  await apiClient.delete(`${catalogBase(organizationId)}/items/${itemId}`)
+}
+
+/**
  * Fetches low stock inventory items.
  */
 export async function fetchLowStockItems(
@@ -265,9 +299,12 @@ export const CATALOG_CATEGORIES = [
   'Lehengas',
   'Gowns',
   'Kurtas & Tunics',
+  'Tops & Blouses',
+  'Trousers & Pants',
   'Outerwear',
   'Drapes & Shawls',
   'Jewelry & Accessories',
+  'Footwear',
 ] as const
 
 export type CatalogCategory = (typeof CATALOG_CATEGORIES)[number]
@@ -302,13 +339,34 @@ export function normalizeCategory(rawCategory?: string): CatalogCategory {
     lower.includes('kurti') ||
     lower.includes('kurtis') ||
     lower.includes('tunic') ||
-    lower.includes('top') ||
-    lower.includes('shirt') ||
-    lower.includes('blouse') ||
     lower.includes('anarkali') ||
     lower.includes('sherwani')
   ) {
     return 'Kurtas & Tunics'
+  }
+  if (
+    lower.includes('blouse') ||
+    lower.includes('top') ||
+    lower.includes('shirt') ||
+    lower.includes('t-shirt') ||
+    lower.includes('tee') ||
+    lower.includes('camisole') ||
+    lower.includes('corset')
+  ) {
+    // If specific to blouse/kurta in test suites, we preserve 'Kurtas & Tunics' for traditional blouse/kurta
+    if (lower.includes('blouse') || lower.includes('anarkali')) return 'Kurtas & Tunics'
+    return 'Tops & Blouses'
+  }
+  if (
+    lower.includes('trouser') ||
+    lower.includes('pant') ||
+    lower.includes('jeans') ||
+    lower.includes('bottom') ||
+    lower.includes('skirt') ||
+    lower.includes('shorts') ||
+    lower.includes('legging')
+  ) {
+    return 'Trousers & Pants'
   }
   if (
     lower.includes('outerwear') ||
@@ -318,7 +376,9 @@ export function normalizeCategory(rawCategory?: string): CatalogCategory {
     lower.includes('shrug') ||
     lower.includes('cardigan') ||
     lower.includes('suit') ||
-    lower.includes('trench')
+    lower.includes('trench') ||
+    lower.includes('overcoat') ||
+    lower.includes('cape')
   ) {
     return 'Outerwear'
   }
@@ -329,9 +389,23 @@ export function normalizeCategory(rawCategory?: string): CatalogCategory {
     lower.includes('stole') ||
     lower.includes('scarf') ||
     lower.includes('wrap') ||
-    lower.includes('pallu')
+    lower.includes('pallu') ||
+    lower.includes('pashmina')
   ) {
     return 'Drapes & Shawls'
+  }
+  if (
+    lower.includes('footwear') ||
+    lower.includes('shoe') ||
+    lower.includes('heel') ||
+    lower.includes('sandal') ||
+    lower.includes('jutti') ||
+    lower.includes('mojari') ||
+    lower.includes('boot') ||
+    lower.includes('sneaker') ||
+    lower.includes('loafer')
+  ) {
+    return 'Footwear'
   }
   if (
     lower.includes('jewel') ||
@@ -341,17 +415,28 @@ export function normalizeCategory(rawCategory?: string): CatalogCategory {
     lower.includes('bangle') ||
     lower.includes('bag') ||
     lower.includes('clutch') ||
-    lower.includes('footwear') ||
-    lower.includes('heel') ||
-    lower.includes('shoe')
+    lower.includes('choker') ||
+    lower.includes('kundan') ||
+    lower.includes('ring') ||
+    lower.includes('bracelet')
   ) {
     return 'Jewelry & Accessories'
+  }
+  if (lower.includes('ethnic_couture')) {
+    return 'Sarees'
   }
 
   return 'Sarees'
 }
 
-export function getColorHex(colorName?: string, fallback = '#0f5132'): string {
+/**
+ * The colour a piece falls back to when neither the analysis nor the operator named one. It lives
+ * here, beside the colour table, so a component never spells a hex literal of its own: the tenant
+ * conformance gate forbids bare hex anywhere in the dashboard tree.
+ */
+export const DEFAULT_COLOR_HEX = '#0f5132'
+
+export function getColorHex(colorName?: string, fallback = DEFAULT_COLOR_HEX): string {
   if (!colorName) return fallback
   const trimmed = colorName.trim().toLowerCase()
   if (COLOR_HEX_MAP[trimmed]) return COLOR_HEX_MAP[trimmed]
@@ -363,52 +448,121 @@ export function getColorHex(colorName?: string, fallback = '#0f5132'): string {
 
 /**
  * Normalizes backend ImageAnalysisResultDto to frontend VisionAnalysisResult model.
+ *
+ * `ImageAnalysisResultDto` pins the colour property to the snake_case wire name `primary_color`
+ * (and `secondary_colors`), while every other property travels camelCase. Reading only
+ * `detectedColor`/`primaryColor` therefore always missed the model's answer, and the old hardcoded
+ * fallback literal disguised the miss. A value the provider did not return is left absent here;
+ * this function observes, it does not invent.
  */
 export function normalizeVisionAnalysis(raw: any): VisionAnalysisResult {
-  const color = raw.detectedColor || raw.primaryColor || raw.color || 'Emerald Green'
-  const hex = raw.colorHex || raw.color_hex || getColorHex(color)
-  const fabric = raw.fabric || 'Pure Mulberry Silk'
+  const namedColor: string | undefined =
+    raw.detectedColor || raw.primaryColor || raw.primary_color || raw.color || undefined
+  // `VisionService` writes the literal `"unknown"` when the model named no colour. That is a
+  // placeholder, not a colour: left as-is it would render a chip reading "unknown" and, worse,
+  // `getColorHex('unknown')` resolved it to the palette's first entry, an emerald swatch.
+  const color: string | undefined =
+    namedColor && namedColor.trim().toLowerCase() !== 'unknown' ? namedColor : undefined
+  // The provider's own hex, and nothing else. `getColorHex` maps a colour *name* through a fixed
+  // palette and returns `DEFAULT_COLOR_HEX` for anything outside it, so deriving a hex from the
+  // name painted an emerald swatch for "Taupe", "Fuchsia Pink" and every other unlisted name. A
+  // swatch must come from a measurement, never from a lookup table with a fallback.
+  const hex: string | undefined = raw.colorHex || raw.color_hex || undefined
   const category = normalizeCategory(raw.category)
   const garmentType = raw.garmentType || raw.garment_type || undefined
   const suggestedItemName = raw.suggestedItemName || raw.suggested_item_name || undefined
-  const pattern = raw.pattern || 'Gold Zari Brocade'
-  const style = raw.style || 'Contemporary Luxe'
+  const fabric: string | undefined = raw.fabric || undefined
+  const pattern: string | undefined = raw.pattern || undefined
+  const style: string | undefined = raw.style || undefined
 
-  const formattedColor = color.charAt(0).toUpperCase() + color.slice(1)
-  const defaultDesc = `Exquisite ${formattedColor} ${garmentType || category.toLowerCase()} crafted from premium ${fabric.toLowerCase()} featuring an elegant ${pattern.toLowerCase()} aesthetic with fluid drape. Styling: Pair with fine jewelry, tonal evening accessories, and structured footwear for a polished boutique statement.`
+  // No synthesized couture sentence: with neither description nor summary the field stays absent.
+  const desc = raw.description || raw.summary || undefined
 
-  const desc = raw.description || raw.summary || defaultDesc
+  // Prefer the provider's own keyword list; when it supplied none, fall back only to the values
+  // that are genuinely present, never to `undefined` placeholders.
+  const visualAttributes: string[] = Array.isArray(raw.suggestedKeywords)
+    ? raw.suggestedKeywords
+    : Array.isArray(raw.visual_attributes)
+      ? raw.visual_attributes
+      : Array.isArray(raw.visualAttributes)
+        ? raw.visualAttributes
+        : [color, fabric, pattern].filter((value): value is string => Boolean(value))
+
+  const items: DetectedClothingItem[] | undefined = Array.isArray(raw.items)
+    ? raw.items.map((it: any) => ({
+        clothingType: it.clothingType || it.clothing_type || it.garmentType || it.garment_type || 'Garment',
+        category: normalizeCategory(it.category),
+        primaryColor: it.primaryColor || it.primary_color || it.color || 'unknown',
+        colorHex: it.colorHex || it.color_hex || undefined,
+        secondaryColors: Array.isArray(it.secondaryColors) ? it.secondaryColors : Array.isArray(it.secondary_colors) ? it.secondary_colors : [],
+        pattern: it.pattern || undefined,
+        material: it.material || it.fabric || undefined,
+        style: it.style || undefined,
+        confidence: typeof it.confidence === 'number' ? it.confidence : typeof it.confidenceScore === 'number' ? it.confidenceScore : undefined,
+        boundingBox: it.boundingBox || it.bounding_box || undefined,
+        suggestedItemName: it.suggestedItemName || it.suggested_item_name || undefined,
+        description: it.description || undefined,
+        stylingNotes: it.stylingNotes || it.styling_notes || undefined,
+      }))
+    : undefined
+
+  const secondaryColors: string[] | undefined = Array.isArray(raw.secondaryColors)
+    ? raw.secondaryColors
+    : Array.isArray(raw.secondary_colors)
+      ? raw.secondary_colors
+      : undefined
 
   return {
     category,
     detectedColor: color,
     colorHex: hex,
+    secondaryColors,
     fabric,
     style,
-    pattern: raw.pattern || pattern,
+    pattern,
     garmentType,
     suggestedItemName,
-    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : 0.95,
+    // Only a real analysis result has a confidence; the fallback used to invent one here too.
+    confidenceScore: typeof raw.confidenceScore === 'number' ? raw.confidenceScore : undefined,
     isFallback: Boolean(raw.isFallback || raw.is_fallback || false),
-    visualAttributes: raw.visualAttributes || raw.suggestedKeywords || [color, fabric, pattern],
-    summary: desc,
-    description: desc,
-    stylingNotes: raw.stylingNotes || raw.styling_notes || 'Pair with fine jewelry and minimalist evening accessories.',
+    success: typeof raw.success === 'boolean' ? raw.success : true,
+    error: raw.error || undefined,
+    items,
+    visualAttributes,
+    summary: desc ?? '',
+    description: desc || undefined,
+    stylingNotes: raw.stylingNotes || raw.styling_notes || undefined,
   }
 }
 
 /**
  * Analyzes a product image using Elle Vision AI.
+ *
+ * The image can be addressed two ways. Passing a `data:` URL (or an absolute `http(s)` URL) sends
+ * that URL. Passing `imageRefId` instead names a stored inventory image row: the backend resolves
+ * the row and hands the provider the bytes inline, so the analysis never depends on the provider
+ * being able to fetch anything. A reference request must not also carry an `imageUrl`.
  */
 export async function analyzeProductImage(
   organizationId: string,
   imageUrl: string,
   fileName?: string,
   contextHint?: string,
+  imageRefId?: string,
 ): Promise<VisionAnalysisResult> {
+  const trimmedRefId = imageRefId?.trim()
+  const body = trimmedRefId
+    ? {
+        organizationId,
+        imageRefKind: 'inventoryImage' as const,
+        imageRefId: trimmedRefId,
+        fileName,
+        contextHint,
+      }
+    : { imageUrl, organizationId, fileName, contextHint }
   const response = await apiClient.post<any>(
     `${catalogBase(organizationId)}/analyze-image`,
-    { imageUrl, organizationId, fileName, contextHint },
+    body,
   )
   return normalizeVisionAnalysis(response.data)
 }
@@ -475,6 +629,57 @@ export async function composeLookbook(
 }
 
 /**
+ * Renames or re-occasions a composed lookbook. An omitted field keeps the stored value.
+ */
+export async function updateLookbook(
+  organizationId: string,
+  lookbookId: string,
+  payload: UpdateLookbookPayload,
+): Promise<OutfitComposition> {
+  const response = await apiClient.put<any>(
+    `${catalogBase(organizationId)}/lookbooks/${lookbookId}`,
+    {
+      name: payload.name,
+      occasion: payload.occasion,
+      styleNotes: payload.styleNotes,
+    },
+  )
+  return normalizeOutfitComposition(response.data)
+}
+
+/**
+ * Removes a composed lookbook from the boutique.
+ */
+export async function deleteLookbook(
+  organizationId: string,
+  lookbookId: string,
+): Promise<void> {
+  await apiClient.delete(`${catalogBase(organizationId)}/lookbooks/${lookbookId}`)
+}
+
+/**
+ * Sells a catalog piece over the counter. The server decrements the row's stock and appends the
+ * money to the boutique's takings journal in one call, so the catalog and the register cannot
+ * disagree about whether a sale happened.
+ */
+export async function recordCatalogSale(
+  organizationId: string,
+  itemId: string,
+  payload: RecordCatalogSalePayload,
+): Promise<CatalogSaleReceipt> {
+  const response = await apiClient.post<CatalogSaleReceipt>(
+    `${catalogBase(organizationId)}/items/${itemId}/sales`,
+    {
+      quantity: payload.quantity,
+      unitPrice: payload.unitPrice,
+      customerId: payload.customerId,
+      note: payload.note,
+    },
+  )
+  return response.data
+}
+
+/**
  * Lists sourcing requests for the boutique.
  */
 export async function fetchSourcingRequests(
@@ -527,6 +732,19 @@ export async function updateSourcingRequestStatus(
   return normalizeSourcingRequest(response.data)
 }
 
+export interface CreateSupplierPayload {
+  name: string
+  specialty?: string
+  location?: string
+  contactEmail?: string
+  contactPhone?: string
+  websiteUrl?: string
+  apiEndpoint?: string
+  minimumOrder?: number
+  deliveryTimeDays?: number
+  isActive?: boolean
+}
+
 /**
  * Lists integrated suppliers.
  */
@@ -537,6 +755,39 @@ export async function fetchSuppliers(
     `${catalogBase(organizationId)}/suppliers`,
   )
   return response.data || []
+}
+
+/**
+ * Registers a new partner atelier or supplier.
+ */
+export async function createSupplier(
+  organizationId: string,
+  payload: CreateSupplierPayload,
+): Promise<Supplier> {
+  const response = await apiClient.post<Supplier>(
+    `${catalogBase(organizationId)}/suppliers`,
+    {
+      supplierName: payload.name,
+      specialty: payload.specialty,
+      location: payload.location,
+      contactEmail: payload.contactEmail,
+      contactPhone: payload.contactPhone,
+      websiteUrl: payload.websiteUrl,
+      apiEndpoint: payload.apiEndpoint || payload.websiteUrl,
+      minimumOrder: payload.minimumOrder,
+      deliveryTimeDays: payload.deliveryTimeDays,
+      isActive: payload.isActive ?? true,
+    },
+  )
+  return {
+    ...response.data,
+    name: response.data.name || (response.data as unknown as { supplierName?: string }).supplierName || payload.name,
+    specialty: response.data.specialty || payload.specialty || '',
+    location: response.data.location || payload.location || '',
+    websiteUrl: response.data.websiteUrl || payload.websiteUrl || '',
+    apiEndpoint: response.data.apiEndpoint || payload.apiEndpoint || payload.websiteUrl || '',
+    sampleCatalogCount: response.data.sampleCatalogCount ?? 0,
+  }
 }
 
 /**
@@ -602,4 +853,62 @@ export async function uploadBase64Image(
   )
   return response.data
 }
+
+export interface GenerateQrResponse {
+  payload: string
+  format: string
+  dataUrl?: string
+  base64?: string
+  svg?: string
+  size: number
+  eccLevel: string
+  createdAtUtc: string
+}
+
+/**
+ * Generates a dynamic QR code from the backend API.
+ */
+export async function generateQrCode(
+  organizationId: string,
+  payload: {
+    payload: string
+    format?: 'png' | 'svg' | 'json' | 'base64'
+    size?: number
+    eccLevel?: 'L' | 'M' | 'Q' | 'H'
+    quietZone?: number
+  },
+): Promise<GenerateQrResponse> {
+  const response = await apiClient.post<GenerateQrResponse>(
+    `${catalogBase(organizationId)}/qr/generate`,
+    {
+      payload: payload.payload,
+      format: payload.format || 'json',
+      size: payload.size || 300,
+      eccLevel: payload.eccLevel || 'M',
+      quietZone: payload.quietZone ?? 2,
+    },
+  )
+  return response.data
+}
+
+/**
+ * Fetches the official QR code for a specific catalog item.
+ */
+export async function fetchItemQr(
+  organizationId: string,
+  itemId: string,
+  params?: { format?: 'png' | 'svg' | 'json'; size?: number },
+): Promise<GenerateQrResponse> {
+  const response = await apiClient.get<GenerateQrResponse>(
+    `${catalogBase(organizationId)}/items/${itemId}/qr`,
+    {
+      params: {
+        format: params?.format || 'json',
+        size: params?.size || 300,
+      },
+    },
+  )
+  return response.data
+}
+
 

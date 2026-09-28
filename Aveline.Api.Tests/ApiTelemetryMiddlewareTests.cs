@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Security.Claims;
 using Aveline.Api.Modules.ApiAccess.Authentication;
 using Aveline.Api.Modules.Statistics.Telemetry;
@@ -48,7 +49,10 @@ public class ApiTelemetryMiddlewareTests
     }
 
     private static ApiTelemetryMiddleware Middleware(
-        TelemetryChannel channel, TelemetryOptions options, Action<HttpContext>? onRequest = null)
+        TelemetryChannel channel,
+        TelemetryOptions options,
+        Action<HttpContext>? onRequest = null,
+        IClaimIdentityMap? identities = null)
         => new(
             context =>
             {
@@ -57,6 +61,7 @@ public class ApiTelemetryMiddlewareTests
             },
             channel,
             Microsoft.Extensions.Options.Options.Create(options),
+            identities ?? new ClaimIdentityMap(),
             NullLogger<ApiTelemetryMiddleware>.Instance);
 
     [Fact]
@@ -159,6 +164,28 @@ public class ApiTelemetryMiddlewareTests
     }
 
     [Fact]
+    public async Task ResolvesAClerkShapedUserIdThroughTheClaimMap()
+    {
+        // B1 regression guard: a Clerk token's `user_id` is `user_…`, not a GUID, so the
+        // middleware must find the Aveline GUID through the in-memory claim map.
+        var channel = new TelemetryChannel(100);
+        var context = Context();
+        var userId = Guid.CreateVersion7();
+        var map = new ClaimIdentityMap();
+        map.Replace(
+            new Dictionary<string, Guid> { ["user_clerk_1"] = userId }.ToFrozenDictionary(),
+            FrozenDictionary<string, Guid>.Empty);
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("user_id", "user_clerk_1"), new Claim("sub", "user_clerk_1")],
+            authenticationType: "Bearer"));
+
+        await Middleware(channel, Options(), identities: map).InvokeAsync(context);
+
+        Assert.True(channel.TryRead(out var sample));
+        Assert.Equal(userId, sample.UserId);
+    }
+
+    [Fact]
     public async Task AFailingDownstreamRequestStillProducesASample()
     {
         var channel = new TelemetryChannel(100);
@@ -166,6 +193,7 @@ public class ApiTelemetryMiddlewareTests
             _ => throw new InvalidOperationException("boom"),
             channel,
             Microsoft.Extensions.Options.Options.Create(Options()),
+            new ClaimIdentityMap(),
             NullLogger<ApiTelemetryMiddleware>.Instance);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(Context()));

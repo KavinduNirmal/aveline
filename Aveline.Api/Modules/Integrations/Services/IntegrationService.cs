@@ -107,6 +107,23 @@ public sealed class IntegrationService : IIntegrationService
         return await GetStatusAsync(organizationId, type, cancellationToken);
     }
 
+    /// <summary>
+    /// Leaves an integration <see cref="IntegrationStatus.Pending"/> with a recorded error, for a
+    /// credential set that was saved but that no provider can validate yet. It is deliberately not
+    /// <see cref="IntegrationStatus.Error"/>: nothing has failed, the capability simply does not
+    /// exist. <c>Connected</c> would be the lie this method exists to prevent (plan §6.4).
+    /// </summary>
+    private async Task<IntegrationStatusDto> MarkUnverifiedAsync(
+        Guid organizationId,
+        IntegrationType type,
+        string error,
+        CancellationToken cancellationToken)
+    {
+        await _repository.UpdateStatusAsync(
+            organizationId, type, IntegrationStatus.Pending, error, cancellationToken);
+        return await GetStatusAsync(organizationId, type, cancellationToken);
+    }
+
     private async Task<IntegrationStatusDto> GetStatusAsync(
         Guid organizationId,
         IntegrationType type,
@@ -129,8 +146,21 @@ public sealed class IntegrationService : IIntegrationService
     {
         var credentials = await GetCredentialsAsync(organizationId, type, cancellationToken);
 
-        // Only WhatsApp has a live provider check today; other types are treated as connected
-        // once credentials are stored (their providers are wired in later slices).
+        // Instagram has credentials in this platform but no provider client, no webhook, no OAuth
+        // flow and no send method (privacy plan §6.3). Reporting it Connected would paint a green
+        // badge for an integration Aveline cannot use, so it is reported as not implemented and
+        // left Pending rather than Connected.
+        if (type == IntegrationType.Instagram)
+        {
+            const string notImplemented =
+                "Instagram messaging is not implemented yet; credentials are stored but cannot be used.";
+            var pending = await MarkUnverifiedAsync(organizationId, type, notImplemented, cancellationToken);
+            return new IntegrationTestResultDto(IsValid: false, Error: notImplemented, Status: pending);
+        }
+
+        // Types whose provider check is not wired yet are treated as connected once credentials are
+        // stored (their providers arrive in later slices). PaymentGateway is the only such type
+        // today; Instagram was removed from this branch above.
         if (type != IntegrationType.WhatsApp)
         {
             var connected = await MarkConnectedAsync(organizationId, type, cancellationToken);

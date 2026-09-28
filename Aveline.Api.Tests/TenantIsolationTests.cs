@@ -23,7 +23,6 @@ namespace Aveline.Api.Tests;
 /// </summary>
 public class TenantIsolationTests : IAsyncLifetime
 {
-    private const string DatabaseName = "AvelineInMemoryDb";
 
     private RsaSecurityKey _signingKey = null!;
     private StubAuthServer _authServer = null!;
@@ -40,6 +39,7 @@ public class TenantIsolationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -55,7 +55,7 @@ public class TenantIsolationTests : IAsyncLifetime
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: DatabaseName)
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static async Task<(Guid OrgId, Guid UserId, string ClerkId)> SeedAsync(string suffix)
@@ -174,5 +174,59 @@ public class TenantIsolationTests : IAsyncLifetime
         Assert.DoesNotContain(
             response.StatusCode,
             new[] { HttpStatusCode.Forbidden, HttpStatusCode.NotFound });
+    }
+
+    /// <summary>
+    /// The privacy data-subject routes are a different isolation shape: they are <b>anonymous by
+    /// design</b> (the OTP is the authentication, plan §7.1), so the authenticated-token matrix above
+    /// cannot cover them. What it can cover, and what the matrix is extended to assert, is that the
+    /// <c>organizationId</c> in the body is not a way to reach another tenant's data: no caller,
+    /// token or not, gets a 2xx without a verified code. The positive cross-org proof (a valid OTP
+    /// for org A returns zero org B rows and deletes nothing in org B) lives in
+    /// <c>PrivacyDataSubjectRightsTests</c> and <c>PrivacyErasurePostgresTests</c> (R-17).
+    /// </summary>
+    public static IEnumerable<object[]> AnonymousDataSubjectRoutes()
+    {
+        yield return ["/api/v1/privacy/data/export"];
+        yield return ["/api/v1/privacy/data/delete"];
+    }
+
+    [Theory]
+    [MemberData(nameof(AnonymousDataSubjectRoutes))]
+    public async Task AnUnverifiedDataSubjectCallNeverReachesATenant(string route)
+    {
+        var (orgB, _, clerkB) = await SeedAsync($"privacy-b-{Guid.NewGuid():N}");
+        var token = CreateToken(clerkB);
+
+        // No token at all: the route is anonymous, so the answer is a validation failure, not 401.
+        var anonymous = await _client.PostAsJsonAsync(route, new
+        {
+            organizationId = orgB,
+            phoneNumber = "+94771234567",
+            handle = "bm90LWEtaGFuZGxl",
+            otp = "000000",
+            confirm = "DELETE",
+            scope = "org",
+            idempotencyKey = "matrix-key",
+        });
+
+        Assert.NotEqual(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, anonymous.StatusCode);
+
+        // The same body with a token must not be treated as an authenticated tenant call either:
+        // a token does not prove the phone, so the OTP gate still refuses.
+        var authenticated = await _client.SendAsync(
+            Request(HttpMethod.Post, route, token, new
+            {
+                organizationId = orgB,
+                phoneNumber = "+94771234567",
+                handle = "bm90LWEtaGFuZGxl",
+                otp = "000000",
+                confirm = "DELETE",
+                scope = "org",
+                idempotencyKey = "matrix-key",
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, authenticated.StatusCode);
     }
 }

@@ -20,6 +20,18 @@ export interface ListMessagesParams {
   around?: string
 }
 
+/** An uploaded attachment, mirroring the API's `AttachmentDto`. */
+export interface ConversationAttachmentDto {
+  attachmentId: string
+  url: string
+  contentType: string
+  fileName: string
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  messageId: string | null
+}
+
 /**
  * Lists an organization's conversations (Salons). See GET /api/v1/orgs/{orgId}/conversations.
  */
@@ -84,16 +96,60 @@ export async function fetchMessages(
 }
 
 /**
+ * Uploads one file as an unbound attachment for a conversation, returning the stored row.
+ * See POST /api/v1/orgs/{orgId}/conversations/{id}/attachments. The server reads a single
+ * multipart field named `file`; the row stays unbound until a send names its `attachmentId`.
+ */
+export async function uploadConversationAttachment(
+  organizationId: string,
+  conversationId: string,
+  file: File | Blob,
+  fileName?: string,
+): Promise<ConversationAttachmentDto> {
+  const formData = new FormData()
+  formData.append('file', file, fileName || (file instanceof File ? file.name : 'attachment'))
+
+  // The shared client defaults to `application/json`, so the multipart header is set per request.
+  const response = await apiClient.post<ConversationAttachmentDto>(
+    `${conversationsBase(organizationId)}/${conversationId}/attachments`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  )
+  return response.data
+}
+
+/**
  * Sends a staff note and triggers the agent. See POST /api/v1/orgs/{orgId}/conversations/{id}/messages.
+ * `attachmentIds` binds already-uploaded unbound attachments to this message, and
+ * `clientMessageId` is the stable idempotency key for a composed message across send retries;
+ * both keys are omitted from the body when not supplied.
  */
 export async function sendMessage(
   organizationId: string,
   conversationId: string,
   text: string,
+  attachmentIds?: string[],
+  clientMessageId?: string,
 ): Promise<MessageDto> {
+  const body: {
+    text: string
+    attachmentIds?: string[]
+    clientMessageId?: string
+  } = { text }
+  if (attachmentIds && attachmentIds.length > 0) {
+    body.attachmentIds = attachmentIds
+  }
+  if (clientMessageId) {
+    body.clientMessageId = clientMessageId
+  }
+
   const response = await apiClient.post<MessageDto>(
     `${conversationsBase(organizationId)}/${conversationId}/messages`,
-    { text },
+    body,
   )
   return response.data
 }
@@ -133,4 +189,80 @@ export async function selectConversationCustomer(
     { customerId, query },
   )
   return response.data
+}
+
+/**
+ * Asks the agent to produce a fresh answer for the turn that produced `messageId`.
+ *
+ * Regeneration re-runs the *question*, not the answer: the server resolves the staff message the
+ * block replied to (falling back to the block's own words), triggers the agent with that query and
+ * the thread's customer context, and answers `202` because the new content arrives the same way
+ * every other agent reply does — as `message.created` events applied by the event subscriber and
+ * broadcast over the Salon hub. There is deliberately no message body in the reply: the fresh
+ * blocks are not known when this call returns.
+ *
+ * See POST /api/v1/orgs/{orgId}/conversations/{id}/messages/{messageId}/regenerate.
+ */
+export async function regenerateMessage(
+  organizationId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  await apiClient.post(
+    `${conversationsBase(organizationId)}/${conversationId}/messages/${messageId}/regenerate`,
+  )
+}
+
+/** The channel a delivery left on, and the row it was recorded as. */
+export interface DeliveryReceipt {
+  delivered: boolean
+  channel: string | null
+  providerMessageId: string | null
+  message: MessageDto | null
+}
+
+/** A delivery the server refused, with the sentence to show the associate. */
+export class DeliveryRefusedError extends Error {
+  readonly refusal: string | null
+
+  constructor(refusal: string | null, detail: string | null) {
+    super(detail ?? 'That could not be delivered.')
+    this.name = 'DeliveryRefusedError'
+    this.refusal = refusal
+  }
+}
+
+/**
+ * Sends a block's words to the thread's customer on their own channel and records it in the
+ * thread. See POST /api/v1/orgs/{orgId}/conversations/{id}/deliver.
+ *
+ * Deliberately **not** the messages route. Sending a note writes into the Salon, where it is
+ * Aveline's context: it reaches no customer, and on a client-bound thread it wakes the agent.
+ * This is the opposite promise — the words leave over WhatsApp and the thread records what went
+ * out — so the two are separate calls and a caller cannot reach one by asking for the other.
+ *
+ * A refusal is thrown as {@link DeliveryRefusedError} carrying the server's own sentence, so the
+ * client shows the state the server understands (no client on the thread, no channel connected,
+ * the provider said no) rather than one generic failure for all of them.
+ */
+export async function deliverBlockToCustomer(
+  organizationId: string,
+  conversationId: string,
+  text: string,
+  clientMessageId?: string,
+): Promise<DeliveryReceipt> {
+  const body: { text: string; clientMessageId?: string } = { text }
+  if (clientMessageId) body.clientMessageId = clientMessageId
+
+  try {
+    const response = await apiClient.post<DeliveryReceipt>(
+      `${conversationsBase(organizationId)}/${conversationId}/deliver`,
+      body,
+    )
+    return response.data
+  } catch (error) {
+    const payload = (error as { response?: { data?: { refusal?: string; detail?: string } } })
+      ?.response?.data
+    throw new DeliveryRefusedError(payload?.refusal ?? null, payload?.detail ?? null)
+  }
 }

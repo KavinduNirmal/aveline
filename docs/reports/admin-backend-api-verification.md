@@ -41,7 +41,7 @@ Concretely, and with confidence:
 - A route-table diff of `docs/api/openapi.yaml` (104 paths) against every `MapGroup`/`Map*` in `Aveline.Api` (script in §8.1).
 - Two standalone `dotnet run` repros outside the repository for the C-3 arithmetic claim (§8.2).
 
-**Not covered.** `agnet-service/` (Python) and `frontend/` beyond noting they are out of the stated scope; the Clerk dashboard template `jwt-aveline-v1` (not in the repo, so the exact claim set could not be verified); runtime behaviour of `/metrics` exposition and the `HealthCheckOptions.ResultStatusCodes` default; the Postgres-only claims that the executed tests did **not** cover.
+**Not covered.** `agent-service/` (Python) and `frontend/` beyond noting they are out of the stated scope; the Clerk dashboard template `jwt-aveline-v1` (not in the repo, so the exact claim set could not be verified); runtime behaviour of `/metrics` exposition and the `HealthCheckOptions.ResultStatusCodes` default; the Postgres-only claims that the executed tests did **not** cover.
 
 **What would change the answer.** (a) An actual deployment config that sets `Pricing:UseLegacyFormula=false` and a non-empty `Telemetry:IpHashSalt` — findings C-4 and M-1 would downgrade to "configuration risk". (b) A Clerk configuration proof that a Moderator cannot submit an admin request — that would not remove C-2, but a self-approval guard would. (c) Evidence that the four missing endpoints are deliberately deferred — but `docs/backend/README.md:64-65` explicitly claims them shipped.
 
@@ -454,4 +454,4 @@ Ordered by risk reduction per unit of effort. This is advice; the findings above
 
 ---
 
-*Report authored under the read-only constraint: no file under `Aveline.Api/`, `Aveline.Api.Tests/`, `agnet-service/` or `frontend/` was modified. The only file created is this report.*
+*Report authored under the read-only constraint: no file under `Aveline.Api/`, `Aveline.Api.Tests/`, `agent-service/` or `frontend/` was modified. The only file created is this report.*

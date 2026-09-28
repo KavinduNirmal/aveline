@@ -28,8 +28,8 @@ public class SignOffDecision : ITenantEntity
     /// <summary>Canonical hash of the content blocks that were approved/rejected.</summary>
     public string ContentHash { get; set; } = string.Empty;
 
-    /// <summary>True when approved; false when rejected.</summary>
-    public bool Approved { get; set; }
+    /// <summary>approved | rejected | revoked. The newest row is the authoritative state.</summary>
+    public SignOffDecisionKind Kind { get; set; } = SignOffDecisionKind.Approved;
 
     /// <summary>Staff user id who made the decision.</summary>
     public Guid? DecidedBy { get; set; }

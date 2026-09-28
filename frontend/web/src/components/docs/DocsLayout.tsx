@@ -16,7 +16,7 @@ export function DocsLayout({ currentSlug, toc, children }: DocsLayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
-    <div className="min-h-screen bg-background text-foreground antialiased flex flex-col">
+    <div className="min-h-dvh bg-background text-foreground antialiased flex flex-col">
       <SiteNav />
 
       {/* Mobile docs navigation trigger bar */}

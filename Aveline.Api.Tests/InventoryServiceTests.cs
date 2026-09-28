@@ -29,19 +29,21 @@ public class InventoryServiceTests
                 It.IsAny<bool>(),
                 It.IsAny<int>(),
                 It.IsAny<int>(),
+                It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Guid orgId, string? cat, string? col, string? size, decimal? minP, decimal? maxP, bool inStock, int page, int pageSize, CancellationToken ct) =>
+            .ReturnsAsync((Guid orgId, string? cat, string? col, string? size, decimal? minP, decimal? maxP, bool inStock, int page, int pageSize, string? q, CancellationToken ct) =>
             {
                 var query = _inMemoryItems.Where(x =>
                     x.OrgId == orgId &&
                     x.DeletedAt == null &&
                     x.Status == "available" &&
-                    (col == null || x.Color.Equals(col, StringComparison.OrdinalIgnoreCase)) &&
-                    (cat == null || x.Category.Equals(cat, StringComparison.OrdinalIgnoreCase)) &&
+                    (col == null || x.Color.Equals(col, StringComparison.OrdinalIgnoreCase) || (x.ItemName != null && x.ItemName.Contains(col, StringComparison.OrdinalIgnoreCase))) &&
+                    (cat == null || x.Category.Equals(cat, StringComparison.OrdinalIgnoreCase) || (x.ItemName != null && x.ItemName.Contains(cat, StringComparison.OrdinalIgnoreCase))) &&
                     (size == null || x.Sizes.Any(s => s.Equals(size, StringComparison.OrdinalIgnoreCase))) &&
                     (!minP.HasValue || x.Price >= minP.Value) &&
                     (!maxP.HasValue || x.Price <= maxP.Value) &&
-                    (!inStock || x.Quantity > 0)
+                    (!inStock || x.Quantity > 0) &&
+                    (q == null || (x.ItemName != null && x.ItemName.Contains(q, StringComparison.OrdinalIgnoreCase)))
                 );
 
                 return query
@@ -294,5 +296,193 @@ public class InventoryServiceTests
 
         page2Result.Should().HaveCount(2);
         page2Result.Select(x => x.ItemName).Should().ContainInOrder("Item 03", "Item 04");
+    }
+
+    // 9. The analysed colour survives create → `InventoryItemDto.FromDomain`. Before `ColorHex`
+    // existed the hex the vision model measured was silently dropped on the way to the database.
+    [Fact]
+    public async Task CreateItem_WithMeasuredColorHex_SurvivesCreateAndDtoMapping()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        InventoryItem? persisted = null;
+        _repositoryMock
+            .Setup(r => r.AddAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Callback<InventoryItem, CancellationToken>((item, _) => persisted = item)
+            .Returns(Task.CompletedTask);
+
+        var dto = new CreateInventoryItemDto
+        {
+            OrgId = orgId,
+            ItemName = "Fuchsia Bodycon Dress",
+            Category = "Gowns",
+            Color = "Fuchsia Pink",
+            ColorHex = "#D5006D",
+            Price = 18000,
+            Cost = 8000,
+            Quantity = 2
+        };
+
+        // Act
+        var result = await _service.CreateItemAsync(dto);
+
+        // Assert
+        persisted.Should().NotBeNull();
+        persisted!.ColorHex.Should().Be("#D5006D");
+        result.ColorHex.Should().Be("#D5006D");
+    }
+
+    // 10. A supplied update replaces the stored measured colour.
+    [Fact]
+    public async Task UpdateItem_WithColorHex_SetsIt()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var existing = new InventoryItem
+        {
+            Id = id,
+            OrgId = orgId,
+            ItemName = "Dress",
+            Color = "Pink",
+            ColorHex = "#111111",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _repositoryMock
+            .Setup(r => r.GetByIdAsync(id, orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        _repositoryMock
+            .Setup(r => r.UpdateAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _service.UpdateItemAsync(
+            id,
+            new UpdateInventoryItemDto { OrgId = orgId, ColorHex = "#FF00FF" });
+
+        // Assert
+        existing.ColorHex.Should().Be("#FF00FF");
+        result.Should().NotBeNull();
+        result!.ColorHex.Should().Be("#FF00FF");
+    }
+
+    // 11. An update that says nothing about the colour must not erase what is stored. The field is
+    // nullable, so "absent" and "explicitly null" are indistinguishable on the wire; the service
+    // treats both as "leave it alone", exactly like `Description`.
+    [Fact]
+    public async Task UpdateItem_WithoutColorHex_LeavesTheStoredValueAlone()
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var existing = new InventoryItem
+        {
+            Id = id,
+            OrgId = orgId,
+            ItemName = "Dress",
+            Color = "Pink",
+            ColorHex = "#D5006D",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _repositoryMock
+            .Setup(r => r.GetByIdAsync(id, orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        _repositoryMock
+            .Setup(r => r.UpdateAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act — a rename that carries no colour.
+        var result = await _service.UpdateItemAsync(
+            id,
+            new UpdateInventoryItemDto { OrgId = orgId, ItemName = "Renamed Dress" });
+
+        // Assert
+        existing.ItemName.Should().Be("Renamed Dress");
+        existing.ColorHex.Should().Be("#D5006D");
+        result.Should().NotBeNull();
+        result!.ColorHex.Should().Be("#D5006D");
+    }
+
+    // 12. Anything that is not a CSS hex literal is stored as "not measured", never verbatim. A
+    // stored malformed value would be painted by the card as a real colour nobody measured.
+    [Theory]
+    [InlineData("red")]
+    [InlineData("#12345")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("#gggggg")]
+    public async Task UpdateItem_WithMalformedColorHex_StoresNull(string malformed)
+    {
+        // Arrange
+        var id = Guid.NewGuid();
+        var orgId = Guid.NewGuid();
+        var existing = new InventoryItem
+        {
+            Id = id,
+            OrgId = orgId,
+            ItemName = "Dress",
+            Color = "Pink",
+            ColorHex = "#D5006D",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _repositoryMock
+            .Setup(r => r.GetByIdAsync(id, orgId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+        _repositoryMock
+            .Setup(r => r.UpdateAsync(It.IsAny<InventoryItem>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _service.UpdateItemAsync(
+            id,
+            new UpdateInventoryItemDto { OrgId = orgId, ColorHex = malformed });
+
+        // Assert
+        existing.ColorHex.Should().BeNull();
+        result.Should().NotBeNull();
+        result!.ColorHex.Should().BeNull();
+    }
+
+    // 13. The normaliser itself: trim, accept only `#` + exactly 3 or 6 hex digits, otherwise null.
+    [Theory]
+    [InlineData("#fff", "#fff")]
+    [InlineData("#FFF", "#FFF")]
+    [InlineData("#123456", "#123456")]
+    [InlineData("#D5006D", "#D5006D")]
+    [InlineData("  #abc  ", "#abc")]
+    [InlineData("#12345", null)]
+    [InlineData("#1234567", null)]
+    [InlineData("red", null)]
+    [InlineData("123456", null)]
+    [InlineData("javascript:alert(1)", null)]
+    [InlineData("#gggggg", null)]
+    [InlineData("", null)]
+    [InlineData("   ", null)]
+    [InlineData(null, null)]
+    public void NormalizeColorHex_AcceptsOnlyCssHexLiterals(string? input, string? expected)
+    {
+        InventoryService.NormalizeColorHex(input).Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task SearchInventory_WhenSearchingBlueSaree_DoesNotReturnBlueGown()
+    {
+        // Arrange
+        var orgId = Guid.NewGuid();
+        await SeedInventory(orgId, "Powder Blue Duchess Satin Luminous Evening Gown", "Gowns", "Powder Blue", 1250, 4);
+        await SeedInventory(orgId, "Royal Blue Kanjivaram Silk Saree", "Sarees", "Royal Blue", 35000, 2);
+
+        // Act - Search for Blue Saree
+        var request = new SearchInventoryDto
+        {
+            OrgId = orgId,
+            Color = "Blue",
+            Category = "Sarees"
+        };
+        var results = await _service.SearchInventoryAsync(request);
+
+        // Assert
+        results.Should().HaveCount(1);
+        results[0].ItemName.Should().Be("Royal Blue Kanjivaram Silk Saree");
+        results.Should().NotContain(x => x.ItemName.Contains("Evening Gown"));
     }
 }

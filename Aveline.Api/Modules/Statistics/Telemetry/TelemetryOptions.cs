@@ -44,9 +44,12 @@ public sealed class TelemetryOptions
     /// <summary>Raw request-log retention (FR-6.4).</summary>
     public int RawLogRetentionDays { get; set; } = 7;
 
-    /// <summary>Hourly rollup retention; daily compaction beyond this is deferred.</summary>
+    /// <summary>Hourly rollup retention (S-24).</summary>
     public int HourlyRollupRetentionDays { get; set; } = 90;
 
-    /// <summary>Daily rollup retention (S-24); no day rows are produced yet.</summary>
+    /// <summary>
+    /// Daily rollup retention (S-24). Day rows are produced by
+    /// <c>ApiStatsRollupJob</c> when the closed hour is 23:00 UTC.
+    /// </summary>
     public int DailyRollupRetentionDays { get; set; } = 400;
 }

@@ -17,7 +17,14 @@ public class FcmPushChannelTests
             {
                 throw ThrowOnSend;
             }
-            Calls.Add((deviceToken, title, body, data));
+
+            // The real client drops null-valued keys (`FirebaseMessagingClient.cs`);
+            // the fake mirrors that so the contract is assertable here.
+            Calls.Add((
+                deviceToken,
+                title,
+                body,
+                data.Where(kv => kv.Value is not null).ToDictionary(kv => kv.Key, kv => kv.Value!)));
             return Task.CompletedTask;
         }
     }
@@ -44,7 +51,7 @@ public class FcmPushChannelTests
         var channel = new FcmPushChannel(client);
         var recipient = Recipient("tok-a", "tok-b");
 
-        await channel.SendAsync(recipient, NotificationFor());
+        await channel.SendAsync(recipient, NotificationFor(), Guid.NewGuid());
 
         Assert.Equal(2, client.Calls.Count);
         Assert.Equal("tok-a", client.Calls[0].Token);
@@ -63,7 +70,7 @@ public class FcmPushChannelTests
         var client = new FakeFirebaseMessagingClient();
         var channel = new FcmPushChannel(client);
 
-        await channel.SendAsync(Recipient(), NotificationFor());
+        await channel.SendAsync(Recipient(), NotificationFor(), Guid.NewGuid());
 
         Assert.Empty(client.Calls);
     }
@@ -75,6 +82,45 @@ public class FcmPushChannelTests
         var channel = new FcmPushChannel(client);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => channel.SendAsync(Recipient("tok-a"), NotificationFor()));
+            () => channel.SendAsync(Recipient("tok-a"), NotificationFor(), Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task SendAsync_MergesTypeAndNotificationId_AndKeepsTheNotificationsOwnData()
+    {
+        var client = new FakeFirebaseMessagingClient();
+        var channel = new FcmPushChannel(client);
+        var inboxItemId = Guid.NewGuid();
+
+        await channel.SendAsync(Recipient("tok-a"), NotificationFor(), inboxItemId);
+
+        var call = Assert.Single(client.Calls);
+        // The type lets a closed app render the right kind; the id lets a tap mark
+        // that notification read. The notification's own keys survive.
+        Assert.Equal("PaymentConfirmed", call.Data["type"]);
+        Assert.Equal(inboxItemId.ToString(), call.Data["notificationId"]);
+        Assert.Equal("ord-1", call.Data["orderId"]);
+    }
+
+    [Fact]
+    public async Task SendAsync_DropsNullValuedKeys()
+    {
+        var client = new FakeFirebaseMessagingClient();
+        var channel = new FcmPushChannel(client);
+        var notification = NotificationFor() with
+        {
+            Data = new Dictionary<string, string?>
+            {
+                ["orderId"] = "ord-1",
+                ["notOnFile"] = null,
+            },
+        };
+
+        await channel.SendAsync(Recipient("tok-a"), notification, Guid.NewGuid());
+
+        var call = Assert.Single(client.Calls);
+        Assert.True(call.Data.ContainsKey("orderId"));
+        Assert.False(call.Data.ContainsKey("notOnFile"));
+        Assert.DoesNotContain(call.Data, kv => kv.Value is null);
     }
 }

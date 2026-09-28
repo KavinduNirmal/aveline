@@ -16,15 +16,22 @@ class CustomerQuery {
   bool get isEmpty => search.trim().isEmpty && level == null;
 }
 
+/// Reads the client book.
+///
+/// Kept narrower than [CustomerRepository] so a consumer that only needs the
+/// book — Home's log-visit picker — can read it without depending on the
+/// profile contract.
+abstract interface class CustomerBookSource {
+  Future<CustomerBook> fetchBook({CustomerQuery query = const CustomerQuery()});
+}
+
 /// Fetches the boutique's client book.
 ///
 /// One call returns the whole narrowing rather than a page, because the alphabet
 /// index has to be able to reach every letter it offers. The lookup behind it
 /// (`POST /internal/customers/lookup`) is a search, not a feed, which is the same
 /// shape.
-abstract interface class CustomerRepository {
-  Future<CustomerBook> fetchBook({CustomerQuery query = const CustomerQuery()});
-
+abstract interface class CustomerRepository implements CustomerBookSource {
   /// Fetches one client's whole profile, or `null` when the shop has no such
   /// client.
   ///

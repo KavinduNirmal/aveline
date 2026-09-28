@@ -6,6 +6,7 @@ abstract final class Permissions {
   // Catalog & customers
   static const String catalogView = 'catalog:view';
   static const String customersView = 'customers:view';
+  static const String customersManage = 'customers:manage';
   static const String catalogManage = 'catalog:manage';
   static const String approvalsApprove = 'approvals:approve';
   static const String paymentsRefund = 'payments:refund';
@@ -15,6 +16,11 @@ abstract final class Permissions {
 
   // Billing and pricing
   static const String billingView = 'billing:view';
+
+  /// The self-service read of the shop's Blossom position, held by every org
+  /// role. Distinct from [billingView], which reaches usage statements and
+  /// burn-rate and is held only by managers and owners.
+  static const String billingViewSelf = 'billing:view:self';
   static const String billingManage = 'billing:manage';
   static const String billingAdjust = 'billing:adjust';
   static const String pricingView = 'pricing:view';
@@ -36,10 +42,11 @@ abstract final class Permissions {
   static const String adminOrgsRead = 'admin:orgs:read';
   static const String auditView = 'audit:view';
 
-  /// Complete set of all 22 registered permissions.
+  /// Complete set of all 24 registered permissions.
   static const Set<String> all = {
     catalogView,
     customersView,
+    customersManage,
     catalogManage,
     approvalsApprove,
     paymentsRefund,
@@ -47,6 +54,7 @@ abstract final class Permissions {
     settingsManage,
     conversationsView,
     billingView,
+    billingViewSelf,
     billingManage,
     billingAdjust,
     pricingView,
@@ -90,29 +98,35 @@ abstract final class Permissions {
       catalogView,
       customersView,
       conversationsView,
+      billingViewSelf,
     },
     AppRoles.boutiqueManager: {
       catalogView,
       customersView,
+      customersManage,
       catalogManage,
       reportsView,
       conversationsView,
       billingView,
+      billingViewSelf,
       pricingView,
       statsView,
     },
     AppRoles.boutiqueSupervisor: {
       catalogView,
       customersView,
+      customersManage,
       catalogManage,
       approvalsApprove,
       reportsView,
       conversationsView,
+      billingViewSelf,
       statsView,
     },
     AppRoles.boutiqueOwner: {
       catalogView,
       customersView,
+      customersManage,
       catalogManage,
       approvalsApprove,
       paymentsRefund,
@@ -120,6 +134,7 @@ abstract final class Permissions {
       settingsManage,
       conversationsView,
       billingView,
+      billingViewSelf,
       billingManage,
       pricingView,
       apiKeysView,

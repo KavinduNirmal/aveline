@@ -11,6 +11,7 @@ public class UpdateInventoryItemDto
     public string? ItemName { get; set; }
     public string? Category { get; set; }
     public string? Color { get; set; }
+    public string? ColorHex { get; set; }
     public List<string>? Sizes { get; set; }
     public decimal? Price { get; set; }
     public decimal? Cost { get; set; }
@@ -22,4 +23,5 @@ public class UpdateInventoryItemDto
     public string? Sku { get; set; }
     public string? Description { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
+    public List<string>? Tags { get; set; }
 }

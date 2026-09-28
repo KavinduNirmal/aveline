@@ -86,4 +86,25 @@ public class MetricsEndpointAuthTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+
+    /// <summary>
+    /// Slice 1 (plan §3.1): the assertion the repo lacked. A 200 with an empty body is not a
+    /// working scrape, and every dashboard depends on the body carrying real series.
+    /// </summary>
+    [Fact]
+    public async Task Metrics_WithInternalToken_CarriesSeriesNotJustA200()
+    {
+        // One completed request so the library histogram has an observation to publish.
+        await _client.GetAsync("/health/live");
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/metrics");
+        request.Headers.Add(InternalServiceAuthHandler.HeaderName, InternalToken);
+
+        var response = await _client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("# TYPE", body, StringComparison.Ordinal);
+        Assert.Contains("http_server_request_duration_seconds", body, StringComparison.Ordinal);
+    }
 }

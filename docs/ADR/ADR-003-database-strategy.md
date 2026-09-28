@@ -21,3 +21,10 @@ stored in `vector` columns and queried with ANN indexes.
 - Relational + vector queries share the same transaction and backup story.
 - One managed Postgres instance on Azure fits the < $100 budget.
 - Vector search scale is bounded by one instance — acceptable for a boutique.
+- **Image and document bytes no longer live in this database.** The media workstream moved the
+  catalog's public imagery and the conversation's protected attachments to Cloudinary behind an
+  `IMediaStorage` provider seam ([ADR-022](ADR-022-media-storage-and-access.md)); the `bytea`
+  columns remain nullable and are the database tier and the dual-write fallback, not the asset
+  store. The database is therefore no longer the reason a small database tier cannot be chosen —
+  though the `ImageData` column drop that would realise the downsize is deferred (S8 / Wave 5) and
+  has not been performed.

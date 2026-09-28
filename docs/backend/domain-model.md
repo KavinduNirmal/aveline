@@ -381,6 +381,9 @@ row per organisation.
 | `CreatedAt` | `timestamptz` | no | |
 | `UpdatedAt` | `timestamptz` | no | |
 | `CancelledAt` | `timestamptz` | yes | |
+| `RenewalAttemptCount` | `integer` | no | Dunning attempts made, the rollover's own attempt included. Default `0` |
+| `NextRenewalAttemptAt` | `timestamptz` | yes | The next retry; `NULL` once the day 1/3/7 schedule is spent (payment plan §9.4, Q3) |
+| `DunningStartedAt` | `timestamptz` | yes | The failed period boundary the window is anchored to; day 14 is `Expired` |
 | `ConcurrencyToken` | `xid` | no | system |
 
 ```sql
@@ -543,7 +546,7 @@ deterministically.
 | `ConversationId` | `uuid` | yes | FK → `Conversations.Id` |
 | `CustomerId` | `uuid` | yes | FK → `Customers.Id` |
 | `InitiatedByUserId` | `uuid` | yes | FK → `Users.Id` |
-| `Status` | `varchar(24)` | no | `Running`, `Succeeded`, `Failed`, `Cancelled`, `TimedOut`, `PausedForApproval` |
+| `Status` | `varchar(24)` | no | `Running`, `Succeeded`, `Failed`, `Cancelled`, `TimedOut`, `PausedForApproval`, `Skipped` |
 | `AgentsInvolved` | `text[]` | no | `[]`; distinct `AgentKey`s observed |
 | `StartedAt` | `timestamptz` | no | |
 | `CompletedAt` | `timestamptz` | yes | |
@@ -845,6 +848,592 @@ CREATE INDEX "IX_SystemAlerts_Org_Fired"
 
 ---
 
+## 8.5 Home focus deck (Feature area 8)
+
+### 8.5.1 `FocusDismissal` → `Focus_Dismissals` (new)
+
+Home's focus deck is **derived**, not stored: every docket is recomputed on read
+from a fact that already exists (an inventory item at or below the reorder line, a
+customer event inside the preparation window, an agent run paused for a human
+decision). A persisted task table would re-store those facts and introduce
+source-drift as a failure mode.
+
+What is persisted is the only thing the server cannot derive: the **human
+decision**. This table is that record, and it is filtered out of the deciding
+user's feed.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, UUIDv7 |
+| `OrganizationId` | `uuid` | no | FK → `Organizations`, cascade |
+| `UserId` | `uuid` | no | The Aveline user who made the decision |
+| `Domain` | `varchar(32)` | no | `patron` \| `logistics` \| `wardrobe` \| `commerce` |
+| `SourceKey` | `varchar(200)` | no | The **fact's** id (inventory item, customer event, agent run), not the docket id |
+| `Decision` | `varchar(32)` | no | `signOff` \| `approve` \| `reject` \| `acknowledge` \| `markReady` |
+| `ContentHash` | `varchar(64)` | yes | Server-computed SHA-256 of the docket's title + detail at decision time |
+| `Note` | `varchar(500)` | yes | Reserved |
+| `DismissedAtUtc` | `timestamptz` | no | — |
+
+**Why `SourceKey` and `ContentHash` and not the docket id.** The docket id is
+recomputed (`wardrobe:{itemId}`), so it is stable, but the *content* is not: a
+low-stock item can be renamed or its count can change. A dismissal must suppress
+the docket it was made about and nothing else, so a dismissal only matches while
+`SourceKey` matches **and** either no content hash was recorded or the recorded
+hash still equals the docket's current hash. A dismissal of "reorder the raw
+silk" therefore stops suppressing the docket once the docket is about something
+different. This follows `SignOffDecision`'s precedent (an immutable, out-of-band
+record of a human decision bound to a content hash) and `SystemAlert`'s (a
+derived signal with a persisted acknowledgement).
+
+```sql
+CREATE TABLE "Focus_Dismissals" (
+  "Id" uuid PRIMARY KEY,
+  "OrganizationId" uuid NOT NULL REFERENCES "Organizations" ("Id") ON DELETE CASCADE,
+  "UserId" uuid NOT NULL,
+  "Domain" varchar(32) NOT NULL,
+  "SourceKey" varchar(200) NOT NULL,
+  "Decision" varchar(32) NOT NULL,
+  "ContentHash" varchar(64),
+  "Note" varchar(500),
+  "DismissedAtUtc" timestamptz NOT NULL
+);
+-- The feed's read path.
+CREATE INDEX "IX_Focus_Dismissals_OrganizationId_UserId"
+  ON "Focus_Dismissals" ("OrganizationId", "UserId");
+-- Re-dismissing the same fact is the same end state, so the write is an upsert.
+CREATE UNIQUE INDEX "IX_Focus_Dismissals_OrganizationId_UserId_Domain_SourceKey"
+  ON "Focus_Dismissals" ("OrganizationId", "UserId", "Domain", "SourceKey");
+```
+
+**Role split is capability-derived, not stored.** `commerce` dockets are only
+generated for a caller whose role holds `stats:view:agent`; the feed's
+`dataQuality.commerceAvailable` reports which sources were readable and non-empty,
+so an absent domain is explained rather than mistaken for a measured zero.
+
+### 8.6 `Customer.Level` (new, nullable)
+
+The boutique's own grade for a client: `vip | level3 | level2 | level1`. It is
+distinct from `Customer.Status`, which the loyalty rule derives from spend,
+visits and recency — the profile screen already documented that contradiction (a
+pill labelled a "grade" that printed `RETURNING`).
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Level` | `varchar(16)` | **yes** | No default, no backfill |
+
+Nullable on purpose: a default would invent a grade for every client the shop has
+never graded, including those created before the column existed. Consumers render
+the badge when the level is present and omit it when it is null. This is
+`Customer`, not `Users` or `Organization*`.
+
+### 8.7 Customer visit counters (the silent data defect, fixed)
+
+`Customer.VisitCount`, `LastVisitAt` and `TotalSpent` had **no writer** outside
+migrations, so `CustomerLoyaltyService.RecommendStatus` read fields that never
+moved and every client stayed `new`. Three things close that:
+
+1. **A writer.** `ICustomerVisitService.RecordAsync` inserts a
+   `Customer_Interactions` row (the ledger) and moves the counters in the same
+   request. Only an **inbound in-person** interaction counts as a visit.
+2. **An atomic increment.** The counter update is one
+   `ExecuteUpdateAsync` statement on a relational provider
+   (`VisitCount = VisitCount + 1`, `TotalSpent = TotalSpent + @purchase`,
+   conditional `LastVisitAt`, recomputed `Status`). A read-modify-write loses one
+   of two concurrent visits at the counter. The in-memory provider used by tests
+   does not support `ExecuteUpdate`, so it takes the mutation path; the SQL is
+   what carries the guarantee.
+3. **A tier recompute.** `Status` is set from `RecommendStatus` in the same
+   statement, so the tier a screen shows and the counters it is derived from
+   cannot disagree.
+
+A visit is **not billable**. Consumption is an `AiUsageRecord` written after a
+completed agent workflow; in-person visits are customer interactions, not AI
+usage. The receipt returns `blossomsCharged: 0` so nothing can invent a charge.
+
+### 8.8 Conversations inbox row (no new table)
+
+The inbox list is a **derived read**, not a stored projection, and it adds **no
+table**. `ConversationRepository.ListAsync` joins the newest message and the
+customer's `FullName` onto each conversation under the unchanged visibility
+predicate, and one server-side mapper (`ConversationTileMapper`) derives the
+preview, the row's category and the marker set.
+
+- **Category is a content block.** Agent output is published as `kind: Note` for
+  every persona, so the row carries `lastMessageBlock` - the block type the
+  preview came from - and switches on that. The preview is mapped per block type,
+  including `client_message -> its text`.
+- **Markers are a derived set** over the closed vocabulary
+  `approval | choice | draft`, sorted `approval` -> `choice` -> `draft`. `approval`
+  is derived from a message-level `SignOff` with `Status == AwaitingSignOff`; the
+  write path sets both that and `Conversation.Status = AwaitingSignOff`, so the
+  producer (the commerce approval flow, ADR-018) lights the marker with no DTO or
+  client change when it ships.
+- **Customer context is a separate axis from `Kind`.** No `ConversationKind.Customer`
+  member exists, and none is added: `Kind` is the thread's nature, `CustomerId` is
+  the context it carries. The inbound path binds that context at creation through
+  `ICustomerRepository.GetByPhoneAsync`; an unresolved phone leaves `ExternalRef`
+  set and `CustomerId` null, which the client renders as an unnamed client.
+- **The ordering is total.** `OrderByDescending(LastMessageAt ?? CreatedAt)` gains
+  `.ThenByDescending(Id)` and a supporting index
+  `(OrganizationId, LastMessageAt DESC, Id DESC)` (migration
+  `AddConversationListRowSupport`, index only), so paging cannot duplicate or skip
+  a row when two threads share an effective timestamp.
+
+---
+
+### 8.9 Message history and the idempotent send
+
+`Message` is the existing thread row; the client-thread work changes it in two
+places and adds no table.
+
+- **The ordering is total.** `MessageRepository.ListAsync` gains
+  `.ThenBy(m => m.Id)` and the index `(ConversationId, CreatedAt, Id)` replaces
+  `(ConversationId, CreatedAt)` (migration `AddMessageHistoryIndex`, index only).
+  `Id` is a `Guid.CreateVersion7()`, so it is monotone and a tied `CreatedAt` still
+  has a total order: a page seam can neither duplicate nor skip a row. This is the
+  whole paging hardening (D6); a cursor is deliberately **deferred** with the
+  concurrent-insert drift recorded, and `around` is reserved for the notification
+  deep-link and not consumed by a client yet.
+- **`around` opens the anchor's page.** A deep-link asks for the page that *holds* a message
+  instead of a positional `page`; the repository counts the rows strictly before the anchor
+  under the same `(CreatedAt, Id)` order, serves that page, and the endpoint echoes the served
+  page rather than the requested one. That is what keeps `hasEarlier` computable from the
+  response, which the old half-page window could not express.
+- **`Message.ClientMessageId`** (`uuid NULL`, migration
+  `AddMessageClientMessageId`) is a client-generated idempotency key, stable for
+  one composed message across the send and every retry. A filtered unique index
+  `(ConversationId, ClientMessageId) WHERE ClientMessageId IS NOT NULL` enforces
+  exactly one row per key; the filter keeps server-authored messages, which carry
+  no key, out of the index. A replay with the same key and the same text returns
+  the stored row with `200` and does **not** trigger the agent again; the same key
+  with different text is a `409 code: message-idempotency-conflict`, because the
+  key promises exactly one message.
+- **A staff note is still `Published`.** D2 = A keeps the composer a
+  note-to-record surface: the row is visible in the Salon and reaches no customer
+  channel, which is why the bubble draws `NOTE · NOT SENT`. Nothing on the send
+  path sets `MessageStatus.Sent` or calls `IWhatsAppService.SendMessageAsync`.
+
+---
+
+### 8.10 `ConversationReadState` → `ConversationReadStates` (new, thread-owned)
+
+The first per-user conversation read model in the API (D5 = B), mirroring the shape
+Home shipped for `Focus_Dismissals`: a per-user, per-fact row with a read index and a
+unique upsert index, `ITenantEntity`, org FK cascade (plus a conversation FK
+cascade).
+
+| Column | Notes |
+| --- | --- |
+| `Id` | `Guid.CreateVersion7()` |
+| `OrganizationId`, `UserId`, `ConversationId` | the key, unique together |
+| `LastReadMessageId Guid?` | the newest message the user has seen |
+| `LastReadAtUtc` | when the marker was last advanced |
+
+- **Absent row = nothing read.** There is no `coalesce(…, now)`: a missing row means
+  every message is unread, which is the suppression the inbox strategy rejected.
+- **The marker is monotonic.** A write is accepted only when the incoming message is
+  after the stored one by `(CreatedAt, Id)`; otherwise the route still answers `204`
+  and nothing changes. Two devices therefore cannot un-read each other.
+- **One row per user.** A colleague on the same organization-shared thread has an
+  independent marker; the write is an upsert by the natural key.
+- **Route.** `PATCH /api/v1/orgs/{organizationId}/conversations/{conversationId}/read`
+  `{ lastReadMessageId }` → `204`, under `BoutiqueConversationAccessPolicy`; a
+  conversation the caller cannot see is a `404`, a message from another conversation
+  is a `400`.
+- **Consumer: none yet.** The inbox draws no badge (D2 = c). When it wants one it
+  reads this table's aggregate (`unread = messages after the marker`, absent = all
+  unread) rather than creating a second read model.
+- **Migration** `AddConversationReadStates`.
+
+---
+
+### 8.11 Sign-off oversight: the decision `Kind` and the revoke path (D7)
+
+- **`SignOffDecision.Kind`** over `approved | rejected | revoked` replaces the
+  `Approved` bool (migration `AddSignOffDecisionKind`, which adds the column,
+  **backfills** it from the bool, and only then drops the bool). Rows stay immutable
+  and append-only: a revocation appends a `revoked` row rather than mutating the
+  approval, and `GetByMessageIdAsync` already returns the newest, which is now the
+  authoritative state.
+- **Authorization.** A new named org-scoped policy `BoutiqueConversationApproval`
+  (active membership + `Permissions.ApprovalsApprove`) is applied to the decide and
+  revoke routes **in addition to** the group's `BoutiqueConversationAccess`, so an
+  ordinary `Staff` member (who holds `conversations:view`) receives `403`.
+- **Revoke** appends a `revoked` decision, sets `Message.Status = AwaitingSignOff`
+  (the `ContentHash` is retained, so the same payload is decidable again) and
+  `Conversation.Status = AwaitingSignOff`, which relights the inbox's `approval`
+  marker. No LangGraph action is taken (ADR-018 has no resume to undo). A SignOff
+  whose newest decision is not `approved` is a `400`.
+- **Fix found while building this.** `DecideSignOffAsync` re-inserted a loaded
+  `Message` through `IMessageRepository.SaveAsync` (which `Add`s), so the first real
+  decide through the repository answered `500` with a duplicate primary key. Both
+  decide and revoke now write through `UpdateAsync`; the integration test pins it.
+
+---
+
+### 8.12 `MessageAttachment` → `MessageAttachments` (new, D8)
+
+The thread's files, written unbound by the upload route and bound by the same
+idempotent insert that creates the message.
+
+| Column | Notes |
+| --- | --- |
+| `Id` | `Guid.CreateVersion7()` |
+| `OrganizationId`, `ConversationId` | the tenant and the thread |
+| `MessageId Guid?` | null until the send binds it |
+| `UploadedByUserId Guid?` | who picked it |
+| `StorageProvider` / `StorageKey` | `database` (the row's `bytea`) or `cloudinary`; the provider's own key when one exists. `varchar(32)` / `varchar(200)`, and the provider appends a raw file's extension to the key, so the persisted value is what the provider returned rather than a re-derivation |
+| `ImageData bytea NULL` | the catalog's `bytea` precedent; the Cloudinary adapter leaves it null unless `Media:DualWrite=true` |
+| `ContentHash` | `varchar(64)`, nullable. The byte-level lowercase-hex SHA-256 of the stored bytes, written at upload by `AttachmentContentHash.Compute`. Its purpose is observability and the shared image identity the Elle workstream consumes — it is **not** a migration artifact |
+| `ContentType`, `FileName`, `SizeBytes` | metadata |
+| `Width`, `Height` | optional, for a thumbnail's aspect |
+| `Url` | what every reader uses, so the provider swap changes no read path. It stays the authenticated Aveline route even when Cloudinary stores the bytes |
+| `CreatedAtUtc`, `BoundAtUtc` | the sweep's clock, and when the send bound the row |
+
+- **Indexes:** `(OrganizationId, ConversationId)`; `(OrganizationId, ContentHash)` for the
+  per-tenant dedup lookup — **never an authorisation input, only a duplicate detector**;
+  `(MessageId)`; and a filtered
+  `(MessageId, CreatedAtUtc) WHERE MessageId IS NULL` for the sweep.
+- **Content policy:** `Common/Media/MediaContentTypes` (the catalog's
+  `ImageContentTypes` promoted and extended with `application/pdf`). Images and PDF
+  only; audio and video are refused. 5 MB per file, 5 per message.
+- **Serving is authenticated**, under `BoutiqueConversationAccessPolicy`, with
+  `nosniff` and the allow-list re-checked on read; the catalog's anonymous image GET is
+  deliberately not copied.
+- **Orphan sweep:** `AttachmentSweepJob` deletes unbound rows older than 24 h, telling
+  the store first so a provider that keeps bytes elsewhere releases them.
+- **Inbound channel media** goes through the same row and store: the webhook fetches the
+  customer's image or document with the tenant's WhatsApp credentials, stores it with no
+  uploader, and the `client_message` the inbound path records binds it and appends its
+  `attachment` block. A type outside the allow-list, a missing integration or an expired
+  media URL is logged and skipped rather than failing the webhook.
+- **Migration** `AddMessageAttachments`.
+
+---
+
+### 8.13 Notification gateway tables (existing — no new table, no migration)
+
+The notification gateway's four tables predate this document
+(`Modules/Notifications/`, [ADR-013](../ADR/ADR-013-notification-service-architecture.md)).
+They are recorded here for completeness; the notifications inbox work adds **no table and
+no column**.
+
+| Table | What it holds |
+| --- | --- |
+| `NotificationRecords` | One row per dispatch: `OrganizationId` (required FK to `Organizations`), `Type`, `Title`, `Body`, `DataJson`, `CreatedAt`, and the `Deliveries` collection. This is the **audit trail** and is never purged. |
+| `NotificationDeliveries` | One row per (recipient, router-allowed channel) attempt: `NotificationRecordId`, `UserId`, `Channel`, `Status` (`Pending`/`Delivered`/`Failed`), `ErrorMessage`. Also audit trail. |
+| `UserNotifications` | The per-user inbox row: `UserId`, `NotificationRecordId`, `ReadAt`, `DeliveredAt`, `DismissedAt`, `CreatedAt`. Read is one-way and idempotent; dismiss is a soft delete with no restore route. Purged by `NotificationRetentionJob` (S6): dismissed after 30 d, read after 180 d. |
+| `UserDeviceTokens` | The FCM registration: `UserId`, `Token`, `Platform`, active flag. Push is gated on opt-in **and** a token, so an un-opted-in recipient gets no push even when the notification requests it. |
+
+- **Indexes:** `UserNotifications` on `(UserId, DismissedAt, ReadAt)`; `NotificationRecords`
+  on `OrganizationId`; `NotificationDeliveries` on its record and user.
+- **The inbox is merged per user, not scoped per organisation.** `GET /api/v1/notifications`
+  is `/users/me`-shaped and carries no organisation filter, so the list, the count and
+  "Mark all read" always cover the same set. The per-row label
+  (`organizationId`/`organizationName` on `UserNotificationDto`) is a projection of
+  `NotificationRecords.OrganizationId`, added in S7 with no column.
+- **`UnreadCount` on the realtime payload** is the recipient's count after their row was
+  written; the field is named forward-compatibly so the fan-out producer can redefine it
+  to "work items not acted upon" without a rename.
+
+---
+
+### 8.14 `InventoryImage` → `InventoryImages` (provider columns, media migration)
+
+The catalog's image row gained the same provider pair `MessageAttachments` already carried, so a
+catalog image can name a CDN asset instead of holding its bytes. Migration
+`AddMediaProviderColumnsToInventoryImages`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `StorageProvider` | `varchar(32)` NOT NULL, default `database` | `database` or `cloudinary`. The default makes every pre-existing row unambiguously database-backed |
+| `StorageKey` | `varchar(200)` NULL | The provider's own key (`{resourceType}/{deliveryType}:{publicId}` for the Cloudinary tier). Null for a database row, whose key is implicit |
+| `ImageData` | `bytea` NULL | Still the row's bytes on the database tier, and the dual-write second copy when `Media:DualWrite=true`. The Cloudinary tier leaves it null. **The column drop is deferred (S8 / Wave 5) and is not performed** |
+| `ImageUrl` | `varchar(1000)` NOT NULL | The absolute Cloudinary delivery URL on the Cloudinary tier, the relative Aveline catalog route on the database tier. It is `NOT NULL` and was already widened once, so the rendered provider URL length is asserted in a test seeded with a maximum-length organisation id |
+
+- **Serving is per-row dispatch** (strategy §3.3): `GET …/catalog/images/{imageId}` answers `302`
+  to the absolute delivery URL for a Cloudinary row and streams `ImageData` for a database row.
+- **The delivery URL carries exactly one width.** `CatalogDeliveryUrl` renders
+  `w_{Media:CatalogDisplayWidth},f_auto,q_auto` from one scalar width, so no code path can append
+  a second `w_`; adding one multiplies `f_auto`'s derivations and is the fastest way to lose the
+  Free plan.
+- **Metadata is on the provider, not the row.** The catalog write passes
+  `MediaTagger.ForCatalogImage` through `IMediaStorage`; the labels are
+  `catalog-image`, `kind:image`, `organizationId:{orgId}`, `date:{date}` and the context is
+  `o`/`d`/`s=catalog`. See [ADR-022](../ADR/ADR-022-media-storage-and-access.md) and
+  [media-rollout-flags.md](../architecture/media-rollout-flags.md).
+- **The catalog has no `ContentHash`**: dedup is a conversation-tier property. The catalog image
+  delete path is also deferred (S8), so a soft-deleted item leaves its Cloudinary asset in place.
+
+---
+
+### 8.15 Consent foundation: `CustomerConsent` (changed) and `ConsentAuditEntry` → `ConsentAuditEntries` (new, append-only)
+
+The consent row holds the *effective* state; the audit table is the source of truth for how that
+state was reached. The two timestamp scalars on the row are lossy by construction (a revoke, a
+re-grant and a second revoke leave one `ConsentGrantedAt` and one `ConsentRevokedAt`), so history is
+never reconstructed from them.
+
+`CustomerConsent` changes (migration `AddConsentAuditAndPrivacyColumns`, additive except for the
+drop of a column that no code ever wrote):
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `ConsentStatus` | `varchar(16)` | no | `pending` \| `granted` \| `revoked`. Default `pending`. An **absent row also means `pending`** — one wire value for one database state |
+| `ConsentGrantedAt` | `timestamptz` | yes | Stamped on grant, on insert and on update |
+| `ConsentRevokedAt` | `timestamptz` | yes | Stamped on revoke; **cleared** on a re-grant (or a return to `pending`) |
+| `ConsentSource` | `varchar(16)` | yes | `otp_link` \| `staff` \| `api` \| `system` |
+| `GlobalSubjectId` | `uuid` | yes | The customer's identity across organisations, so a global opt-out is one subject rather than one row per boutique |
+| `DisclosureShownAt` | `timestamptz` | yes | When the welcome disclosure was last shown |
+| `DisclosureVersion` | `varchar(32)` | yes | Which disclosure text was shown |
+| ~~`RevokeToken`~~ | — | — | **Dropped.** Declared and EF-configured but never read or written. The permanent opt-out link is a stateless HMAC (decision DR-2), so no `RevokeTokenHash` replaces it |
+
+- **Indexes:** the existing unique `(OrganizationId, CustomerId)` is the lookup path and is kept;
+  the migration adds a non-unique `(OrganizationId, ConsentStatus)` for the "count by status within
+  an org" metrics.
+
+`ConsentAuditEntries`:
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `CustomerId` | `uuid` | no | FK → `Customers.Id`, **ON DELETE CASCADE** (the history is *about* the customer) |
+| `Action` | `varchar(32)` | no | A consent/privacy constant from `Modules/Audit/Models/AuditAction.cs`, e.g. `consent.granted` |
+| `PreviousStatus` | `varchar(16)` | yes | `null` when the row was created |
+| `NewStatus` | `varchar(16)` | no | |
+| `Source` | `varchar(16)` | no | `otp_link` \| `staff` \| `api` \| `system` \| `welcome_message` |
+| `ActorKind` | `varchar(16)` | no | `customer` \| `user` \| `system` \| `internal_service` |
+| `ActorUserId` | `uuid` | yes | FK → `Users.Id`, **ON DELETE RESTRICT** |
+| `ActorRef` | `varchar(128)` | yes | A hashed phone or a clerk id; never a raw identifier |
+| `EvidenceJson` | `jsonb` | no | Default `'{}'`. Identifiers only — **no message content, ever** |
+| `IpHash` | `varchar(64)` | yes | SHA-256, never the raw address (matches `AuditLogEntries`) |
+| `UserAgent` | `varchar(256)` | yes | |
+| `CreatedAt` | `timestamptz` | no | |
+
+```sql
+CREATE INDEX "IX_ConsentAuditEntries_OrganizationId_CustomerId_CreatedAt"
+  ON "ConsentAuditEntries" ("OrganizationId", "CustomerId", "CreatedAt" DESC);
+CREATE INDEX "IX_ConsentAuditEntries_CustomerId_CreatedAt"
+  ON "ConsentAuditEntries" ("CustomerId", "CreatedAt" DESC);
+```
+
+- **Append-only.** Entries are never updated or deleted by application code; erasure is the one
+  deletion path, and it is the customer cascade (open question Q-4 covers whether erasure should
+  instead anonymise a tombstone).
+- **Content policy.** `EvidenceJson` carries an OTP attempt id, a link id or a disclosure version.
+  The existing `AuditRedactor` key-name filter is applied at write time on the generic audit table;
+  this table's writers must pass identifiers only, and the column has no free-text field at all.
+- **Consumers.** Written by the consent service, the OTP opt-out flow and the disclosure
+  dispatcher (later phases); read by the staff consent timeline and the erasure report.
+- **Migration** `AddConsentAuditAndPrivacyColumns`.
+
+---
+
+### 8.16 Payment intents and the provider event inbox (P2-B2)
+
+Two new tables. Both were created by the P2-A migration (`AddPaymentIntentsAndProviderEvents`);
+P2-B2 adds no schema. They are the persistence of the payment-provider abstraction: Aveline models
+the *intent* it needs and treats the provider as a dependency of it, rather than mirroring a
+provider's own object model.
+
+#### `PaymentIntent` → `PaymentIntents`
+
+The provider-neutral record of one charge attempt. `ITenantEntity`-shaped, so tenant isolation is
+enforced at the repository and covered by the isolation regime.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `Provider` | `varchar(32)` | no | The adapter key that created it (`manual` \| `mock` \| `stripe`). Indexed |
+| `ProviderIntentId` | `varchar(128)` | yes | The provider's own id; unique per provider under a filtered index |
+| `Purpose` | `varchar(32)` | no | `PaymentPurpose` as a string; drives the settlement effect, never the provider call |
+| `Status` | `varchar(24)` | no | `PaymentProviderStatus` as a string. `Refunded` is *derived* from `RefundedAt`, and `Expired` from `ExpiresAt`, rather than stored |
+| `AmountMinor` | `bigint` | no | Integer minor units (decision D3); check `> 0` |
+| `Currency` | `varchar(3)` | no | `LKR`; checked against the event at settlement, not at creation |
+| `PriceLkr` | `numeric(18,2)` | no | The list price it was created from, so a later price change does not retro-explain the charge |
+| `SkuCode` | `varchar(64)` | yes | Set for `BlossomTopUp` |
+| `BlossomQuantity` | `numeric(18,4)` | yes | Set for `BlossomTopUp`; exactly what settlement grants |
+| `PlanTier` | `varchar(32)` | yes | Set for subscription purposes |
+| `BillingPeriodStart` / `BillingPeriodEnd` | `timestamp` | yes | For a top-up these are the period cap resolved **before** payment (BR-2.6); a null end means the purchase was deliberately uncapped. For a subscription they are the billing period |
+| `ProviderSubscriptionId` | `varchar(128)` | yes | |
+| `IdempotencyKey` | `varchar(128)` | yes | Client-supplied; unique filtered on `(OrganizationId, Purpose, IdempotencyKey)` |
+| `Description` | `varchar(200)` | no | Sent to the provider |
+| `FailureCode` / `FailureMessage` | `varchar(64)` / `varchar(500)` | yes | |
+| `CreatedByUserId` | `uuid` | yes | Null for a system-created intent (a renewal, later phases) |
+| `CreatedAt` / `UpdatedAt` / `SettledAt` / `RefundedAt` | `timestamp` | `SettledAt`/`RefundedAt` yes | `SettledAt` is the settlement identity guard |
+| `ExpiresAt` | `timestamp` | yes | The read derives `Expired` from it; no sweep exists in this phase |
+| `ConcurrencyToken` | `uint` | no | `.IsRowVersion()` mapped to `xmin` |
+| `ExternalRef` | `varchar(128)` | yes | The `SourceRef` written into both ledgers (`= ProviderIntentId`), kept for reconciliation |
+
+**Deliberately absent:** card number, CVC, expiry, PAN and token. There is no column a client could
+use to send card data to Aveline (constraint C11).
+
+```sql
+CREATE UNIQUE INDEX "IX_PaymentIntents_Provider_IntentId"
+  ON "PaymentIntents" ("Provider", "ProviderIntentId") WHERE "ProviderIntentId" IS NOT NULL;
+CREATE UNIQUE INDEX "IX_PaymentIntents_Org_Purpose_IdempotencyKey"
+  ON "PaymentIntents" ("OrganizationId", "Purpose", "IdempotencyKey") WHERE "IdempotencyKey" IS NOT NULL;
+CREATE INDEX "IX_PaymentIntents_Org" ON "PaymentIntents" ("OrganizationId");
+ALTER TABLE "PaymentIntents" ADD CONSTRAINT "CK_PaymentIntents_Amount" CHECK ("AmountMinor" > 0);
+ALTER TABLE "PaymentIntents" ADD CONSTRAINT "CK_PaymentIntents_TopUpShape"
+  CHECK ("Purpose" <> 'BlossomTopUp' OR ("SkuCode" IS NOT NULL AND "BlossomQuantity" IS NOT NULL));
+ALTER TABLE "PaymentIntents" ADD CONSTRAINT "CK_PaymentIntents_Settled"
+  CHECK ("Status" <> 'Succeeded' OR "SettledAt" IS NOT NULL);
+```
+
+- **`CK_PaymentIntents_Settled` is the point of the table.** An intent that says it succeeded with
+  no settlement timestamp is the Commerce `Status = "confirmed"` defect expressed as a schema rule.
+- **Writers.** `PaymentIntentService` creates, cancels and refunds; `PaymentSettlementService`
+  moves the row to `Succeeded` in the same transaction as the Blossom grant and the income receipt.
+- **Settlement identity.** The Blossom grant dedups on
+  `(OrganizationId, "payments.topup", ProviderIntentId)` and the income receipt on
+  `(BlossomTopUp, ProviderIntentId)`; the intent state is the third belt.
+- **A dispute reversal is a fourth identity (P10).** A `DisputeOpened` event appends a `Verified`
+  `Refund` row to the income ledger with `SourceKind = System` and
+  `SourceRef = "payment-dispute:{ProviderIntentId}"`. The settled receipt and the Blossom grant are
+  left untouched — the journal is append-only — and the intent stays `Succeeded`, because the charge
+  did succeed and the dispute is a separate movement of money. The ledger's filtered unique
+  `(SourceKind, SourceRef)` index is what refuses a second reversal for the same charge.
+
+#### `PaymentProviderEvent` → `PaymentProviderEvents`
+
+The webhook inbox. The inbox is not an optimisation: providers retry, and the unique
+`(Provider, ProviderEventId)` index is what distinguishes a *duplicate* from a *retry of a failed
+dispatch*, which an idempotency-only design cannot tell apart.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `Provider` | `varchar(32)` | no | |
+| `ProviderEventId` | `varchar(128)` | no | **Unique with `Provider`**: the replay guard |
+| `EventType` | `varchar(32)` | no | `PaymentWebhookEventType` as a string. `DisputeOpened` is explicit since P10; only a type with **no** handler is `Unknown` |
+| `ProviderIntentId` | `varchar(128)` | yes | Indexed |
+| `AmountMinor` | `bigint` | yes | Check `>= 0` |
+| `Currency` | `varchar(3)` | yes | |
+| `OccurredAt` | `timestamp` | no | Provider-reported time |
+| `ReceivedAt` | `timestamp` | no | Server time |
+| `RawPayload` | `jsonb` | no | Kept verbatim for forensics |
+| `ProcessedAt` | `timestamp` | yes | **Null means unprocessed**, which is what makes a failed dispatch visible and retryable |
+| `ProcessingError` | `varchar(500)` | yes | Set on an amount/currency mismatch, with `ProcessedAt` left null |
+
+```sql
+CREATE UNIQUE INDEX "IX_PaymentProviderEvents_Provider_EventId"
+  ON "PaymentProviderEvents" ("Provider", "ProviderEventId");
+CREATE INDEX "IX_PaymentProviderEvents_ProviderIntentId"
+  ON "PaymentProviderEvents" ("ProviderIntentId");
+CREATE INDEX "IX_PaymentProviderEvents_Unprocessed"
+  ON "PaymentProviderEvents" ("ReceivedAt") WHERE "ProcessedAt" IS NULL;
+```
+
+- **Mismatch is visible, not reconciled.** An event whose amount or currency does not match the
+  intent is stored unprocessed with a `ProcessingError` and moves the critical
+  `aveline.payment.settlement{outcome="mismatch"}` series. Nothing is granted.
+- **The backlog is the queue.** The partial `ProcessedAt IS NULL` index backs
+  `aveline.payment.webhook.unprocessed_backlog`; re-driving an unprocessed event is Phase 7, not
+  this phase — an inbound duplicate is answered `200 already seen`.
+- **Migration** `AddPaymentIntentsAndProviderEvents` (P2-A; no P2-B2 migration).
+
+---
+
+### 8.17 Data-subject requests and the erasure tombstone (Phase 5)
+
+Two tables carry Objective 4: the durable idempotency/audit log for the anonymous export and delete
+routes, and the anonymised tombstone that lets consent survive an erasure.
+
+#### `DataSubjectRequest` → `DataSubjectRequests` (new)
+
+`IdempotencyRecord` covers 24-hour HTTP replay; an erasure request needs a durable record well beyond
+that window, and the brief requires idempotency plus audit. One table serves both.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `CustomerId` | `uuid` | yes | FK → `Customers.Id`, **ON DELETE SET NULL** — the record survives the customer |
+| `Kind` | `varchar(16)` | no | `export` \| `delete` |
+| `Status` | `varchar(16)` | no | `received` \| `verified` \| `completed` \| `failed` \| `expired` |
+| `PhoneHash` | `varchar(64)` | no | The deterministic `PhoneFingerprint.Of` value. **Never the number** |
+| `RequestedAt` | `timestamptz` | no | |
+| `VerifiedAt` | `timestamptz` | yes | When the code was proven |
+| `CompletedAt` | `timestamptz` | yes | |
+| `ResultJson` | `jsonb` | yes | **Counts only** — `{ "memories": 41, "messages": 12, … }`. Never content |
+| `FailureReason` | `varchar(512)` | yes | A bounded, non-personal reason |
+| `IdempotencyKey` | `varchar(64)` | no | Caller-supplied for `delete`; server-generated `auto:*` for `export` |
+
+```sql
+CREATE UNIQUE INDEX "IX_DataSubjectRequests_OrganizationId_Kind_IdempotencyKey"
+  ON "DataSubjectRequests" ("OrganizationId", "Kind", "IdempotencyKey");
+CREATE INDEX "IX_DataSubjectRequests_CustomerId" ON "DataSubjectRequests" ("CustomerId");
+CREATE INDEX "IX_DataSubjectRequests_OrganizationId_PhoneHash"
+  ON "DataSubjectRequests" ("OrganizationId", "PhoneHash");
+```
+
+- The unique index is the idempotency contract: a repeat key returns the stored `ResultJson` instead
+  of deleting twice. A distributed lease (`IDistributedJobLock`) additionally stops two concurrent
+  erasures racing, and answers `409 erasure-in-progress`.
+- **`ResultJson` is counts, never content.** A result that quoted the erased data would put PII back
+  into the table the erasure is supposed to leave clean, and back into the scope of the next erasure.
+
+#### `PrivacyErasureTombstone` → `PrivacyErasureTombstones` (new)
+
+The Q-4 decision, implemented. The erasure hard-deletes `Customers`, and `CustomerConsent` cascades
+with it; the inbound path treats "no customer" as `pending` and would re-create both on the next
+message, silently lapsing the opt-out (risk R-3). This row preserves the *decision* without
+preserving the person.
+
+| Column | Type | Null | Notes |
+| --- | --- | --- | --- |
+| `Id` | `uuid` | no | PK, `Guid.CreateVersion7()` |
+| `OrganizationId` | `uuid` | no | FK → `Organizations.Id`, **ON DELETE RESTRICT** |
+| `PhoneHash` | `varchar(64)` | no | `PhoneFingerprint.Of(E.164)` — a fingerprint, never a number |
+| `Status` | `varchar(16)` | no | The terminal status, `revoked` |
+| `ErasedAt` | `timestamptz` | no | |
+
+```sql
+CREATE UNIQUE INDEX "IX_PrivacyErasureTombstones_OrganizationId_PhoneHash"
+  ON "PrivacyErasureTombstones" ("OrganizationId", "PhoneHash");
+```
+
+- **One per (organisation, number).** An org-scoped erasure writes one row; a global (`scope = all`)
+  erasure writes one per organisation it touched. A tombstone never crosses a tenant boundary on its
+  own.
+- **How the gate reads it.** `ConsentGateService` treats a tombstone as a revocation whenever the
+  live status is not an explicit `granted`, so a customer who later re-consents is not locked out
+  forever. The phone is passed at the inbound dispatch site, where the conversation may have no
+  customer binding left (`ConversationService.TriggerInboundDraftAsync`).
+- **What it does not store.** No name, email, message, or number — only the salted-in-convention
+  fingerprint and the terminal status.
+- **Migration** `AddDataSubjectRequestsAndErasureTombstones` (§10.4).
+
+#### Retention policy — Q-6 is **open**
+
+Phase 5 makes erasure reachable, but it does not answer how long the surviving rows live, and that
+question (plan §15 Q-6) must not be answered by an implementer. **Q-6 is recorded here as open,
+awaiting legal confirmation.** The proposed defaults from the plan are:
+
+| Data | Proposed window |
+| --- | --- |
+| `Customer*` rows | 24 months of inactivity |
+| Interaction logs (`InboundMessageLogs`, `CustomerInteractions`) | 12 months |
+| Consent audit (`ConsentAuditEntries`) | 7 years (typical evidentiary horizon) |
+
+What Phase 5 ships, and what a retention policy will have to account for:
+
+- **`InboundMessageLogs` outlive the customer by design.** Erasure nulls `From`/`Content` but keeps
+  the row, because it is the evidence that the message arrived and the opt-out was honoured
+  (DR-3). Without a retention job those rows accumulate indefinitely (risk R-13).
+- **`DataSubjectRequests` and `PrivacyErasureTombstones` are retained with no expiry.** The request
+  log is the proof a deletion happened and holds counts plus a phone fingerprint; the tombstone is
+  what keeps the opt-out effective (Q-4). Neither has a scheduled purge.
+- **`ConsentAuditEntries` cascade with the customer.** Erasure removes them; the terminal decision
+  survives only in the tombstone.
+- **No `PrivacyRetentionJob` exists yet.** A job mirroring `NotificationRetentionJob` is Phase 6
+  scope, and it cannot be written before Q-6 is answered.
+
+---
+
 ## 9. Audit (shared, all feature areas)
 
 ### 9.1 `AuditLogEntry` → `AuditLogEntries` (new, append-only)
@@ -971,6 +1560,15 @@ dotnet ef migrations add AddBlossomPricingRules \
 `dotnet-ef` is pinned to `10.0.11` in `dotnet-tools.json` and the file names use
 the `yyyyMMddHHmmss_PascalCase` convention already present in
 `Aveline.Api/Migrations/`.
+
+### 10.4 Phase 5 migration: `AddDataSubjectRequestsAndErasureTombstones`
+
+Purely additive: it creates `DataSubjectRequests` and `PrivacyErasureTombstones` with their foreign
+keys and indexes (§8.17), and touches no existing table. Because migrations share one
+`AppDbContextModelSnapshot`, it was generated with a **full build** (never `--no-build`) and
+immediately verified with
+`dotnet ef migrations has-pending-model-changes --project Aveline.Api --startup-project Aveline.Api`,
+which reported *"No changes have been made to the model since the last migration."*
 
 ---
 

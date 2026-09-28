@@ -146,4 +146,16 @@ public sealed class UsageRepository(AppDbContext db) : IUsageRepository
             .OrderBy(r => r.CreatedAt)
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<decimal> SumBlossomUnitsInWindowAsync(
+        Guid organizationId, DateTime from, DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var sum = await db.AiUsageRecords
+            .Where(record => record.OrganizationId == organizationId)
+            .Where(record => record.CreatedAt >= from && record.CreatedAt < to)
+            .SumAsync(record => (decimal?)record.BlossomUnits, cancellationToken);
+
+        return sum ?? 0m;
+    }
 }

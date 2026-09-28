@@ -31,10 +31,11 @@ public class EventReminderServiceTests
     {
         public List<Notification> Sent { get; } = [];
 
-        public Task DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
+        public Task<NotificationRecord?> DispatchAsync(Notification notification, CancellationToken cancellationToken = default)
         {
             Sent.Add(notification);
-            return Task.CompletedTask;
+            // This producer ignores the record id; the alert path uses it.
+            return Task.FromResult<NotificationRecord?>(null);
         }
     }
 
@@ -131,5 +132,21 @@ public class EventReminderServiceTests
 
         Assert.Equal(0, sent);
         Assert.Empty(dispatcher.Sent);
+    }
+
+    [Fact]
+    public async Task ProcessDue_RequestsPushAlongsideRealtimeAndEmail()
+    {
+        await AddEventAsync(DateTime.UtcNow.AddDays(1));
+        var dispatcher = new FakeDispatcher();
+
+        await Sut(dispatcher).ProcessDueEventsAsync();
+
+        var notification = Assert.Single(dispatcher.Sent);
+        // Q8: the missing push was an oversight. Push still needs opt-in and a
+        // registered token, so an un-opted-in recipient gets no push either way.
+        Assert.Equal(
+            NotificationChannel.Realtime | NotificationChannel.Push | NotificationChannel.Email,
+            notification.Channels);
     }
 }

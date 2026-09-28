@@ -12,10 +12,28 @@ namespace Aveline.Api.Infrastructure.Eventing;
 /// </summary>
 public sealed class EventBusMetrics
 {
+    /// <summary>
+    /// The meter these instruments are created on. Registered by
+    /// <c>ObservabilityConfiguration.AddAvelineObservability</c>; before that registration
+    /// existed all four instruments were produced and silently dropped (M-1).
+    /// </summary>
+    public const string MeterName = Configurations.ObservabilityConfiguration.EventingMeterName;
+
     private readonly Counter<long> _published;
     private readonly Counter<long> _received;
     private readonly Counter<long> _failed;
     private readonly Histogram<double> _publishLatencyMs;
+
+    /// <summary>
+    /// Minimum samples before the publish-latency percentile is reported. Below it the metric is
+    /// omitted rather than computed from one observation (BR-7.10 and the repo's percentile rule).
+    /// </summary>
+    public const int MinLatencySamplesForPercentile = 5;
+
+    private const int LatencyWindow = 256;
+
+    private readonly object _latencyGate = new();
+    private readonly Queue<double> _latencySamples = new(LatencyWindow);
 
     private long _publishedTotal;
     private long _receivedTotal;
@@ -23,7 +41,7 @@ public sealed class EventBusMetrics
 
     public EventBusMetrics()
     {
-        var meter = new Meter("Aveline.Api.Eventing");
+        var meter = new Meter(MeterName);
         _published = meter.CreateCounter<long>("aveline.events.published", "events", "Events published to the bus.");
         _received = meter.CreateCounter<long>("aveline.events.received", "events", "Events received from the bus.");
         _failed = meter.CreateCounter<long>("aveline.events.failed", "events", "Events that failed to publish or dispatch.");
@@ -49,7 +67,50 @@ public sealed class EventBusMetrics
     }
 
     public void RecordPublishLatency(double milliseconds, string eventType)
-        => _publishLatencyMs.Record(milliseconds, new KeyValuePair<string, object?>("event_type", eventType));
+    {
+        _publishLatencyMs.Record(milliseconds, new KeyValuePair<string, object?>("event_type", eventType));
+
+        // M-8 persist half: the collector samples this so `aveline.eventbus.publish_latency_ms`
+        // stops being permanently omitted. Bounded so a busy bus cannot grow the buffer.
+        lock (_latencyGate)
+        {
+            if (_latencySamples.Count >= LatencyWindow)
+            {
+                _latencySamples.Dequeue();
+            }
+
+            _latencySamples.Enqueue(milliseconds);
+        }
+    }
+
+    /// <summary>
+    /// Interpolated p95 of the recent publish latencies, or <c>null</c> below
+    /// <see cref="MinLatencySamplesForPercentile"/> so the metric is omitted rather than guessed.
+    /// </summary>
+    public double? LatencyP95Ms
+    {
+        get
+        {
+            double[] samples;
+            lock (_latencyGate)
+            {
+                if (_latencySamples.Count < MinLatencySamplesForPercentile)
+                {
+                    return null;
+                }
+
+                samples = _latencySamples.ToArray();
+            }
+
+            Array.Sort(samples);
+            var rank = 0.95 * (samples.Length - 1);
+            var lower = (int)Math.Floor(rank);
+            var upper = (int)Math.Ceiling(rank);
+            return lower == upper
+                ? samples[lower]
+                : samples[lower] + (samples[upper] - samples[lower]) * (rank - lower);
+        }
+    }
 
     /// <summary>
     /// A snapshot of the cumulative event counters, keyed by instrument name. Empty until at

@@ -35,6 +35,10 @@ export interface WizardDraft {
   businessRules: string
   preferredColorsFabrics: string
   customerPreferences: string
+  /** The server-priced subscription for the selected tier, once plan selection has answered. */
+  planPriceLkr: number | null
+  planCurrency: string
+  planSubscriptionStatus: string | null
 }
 
 export const DEFAULT_DRAFT: WizardDraft = {
@@ -54,6 +58,10 @@ export const DEFAULT_DRAFT: WizardDraft = {
     'Pure mulberry silk, Italian linen, hand-loomed cotton, cashmere, bridal ivory, and jewel tones.',
   customerPreferences:
     'Welcome client with Ceylon silver tips tea. Address by formal title. Note styling sizing and anniversary dates.',
+  // No server price yet: the plan cards fall back to the collection copy until step 4 answers.
+  planPriceLkr: null,
+  planCurrency: 'LKR',
+  planSubscriptionStatus: null,
 }
 
 interface OwnerOnboardingWizardContextValue {
@@ -131,6 +139,11 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
               org.preferredColorsFabrics || DEFAULT_DRAFT.preferredColorsFabrics,
             customerPreferences:
               org.customerPreferences || DEFAULT_DRAFT.customerPreferences,
+            // A reload mid-wizard must keep the price the server already resolved rather than
+            // falling back to the hardcoded collection copy.
+            planPriceLkr: org.priceLkr ?? DEFAULT_DRAFT.planPriceLkr,
+            planCurrency: org.currency || DEFAULT_DRAFT.planCurrency,
+            planSubscriptionStatus: org.subscriptionStatus ?? DEFAULT_DRAFT.planSubscriptionStatus,
           })
           setStep(Math.max(2, res.currentStep))
         }
@@ -214,14 +227,21 @@ export function OwnerOnboardingWizardProvider({ children }: { children: React.Re
   const handleSelectPlan = useCallback(async () => {
     try {
       setIsSubmitting(true)
-      await selectPlan(draft.selectedPlanTier)
+      const selected = await selectPlan(draft.selectedPlanTier)
+      // Render the price the server resolved (plan §9.1 F1). `null` means "no price row", which is
+      // not the same as the free plan's `0`, so the card keeps the collection copy in that case.
+      patch({
+        planPriceLkr: selected.priceLkr ?? null,
+        planCurrency: selected.currency || DEFAULT_DRAFT.planCurrency,
+        planSubscriptionStatus: selected.subscriptionStatus ?? null,
+      })
       setStep(5)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to select plan.')
     } finally {
       setIsSubmitting(false)
     }
-  }, [draft.selectedPlanTier])
+  }, [draft.selectedPlanTier, patch])
 
   const handleSaveAiContext = useCallback(async () => {
     try {

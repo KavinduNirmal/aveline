@@ -1,0 +1,17 @@
+# Grafana dashboard provider (Slice 3). Dashboards are code: Grafana 13 migrates folders and
+# dashboards to unified storage on startup, and allowUiUpdates: false means a UI edit is
+# discarded on the next restart.
+apiVersion: 1
+
+providers:
+  - name: Aveline
+    orgId: 1
+    folder: Aveline
+    folderUid: aveline
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -67,12 +67,18 @@ public class CatalogWriteAuthorizationTests
     }
 
     [Fact]
-    public void ExactlyElevenRoutesUseThePermissionFreeMemberGate()
+    public void ExactlyTwelveRoutesUseThePermissionFreeMemberGate()
     {
-        // The ten operational tools plus the counter sale: a staff member who may record a customer
-        // interaction that writes the takings journal must also be able to sell a piece from the
-        // catalog (the customer-interaction route already writes the same journal at member level).
-        Assert.Equal(11, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)));
+        // The ten operational tools, the counter sale, and registering a partner supplier: a staff
+        // member who may record a customer interaction that writes the takings journal must also be
+        // able to sell a piece from the catalog (the customer-interaction route already writes the
+        // same journal at member level), and registering the atelier a piece came from is the same
+        // operational act.
+        //
+        // `POST /catalog/suppliers` brought this from eleven to twelve. The count is asserted rather
+        // than inferred from the route table on purpose: the failure it guards against is a route
+        // silently inheriting the group policy, so a new route has to be accounted for here.
+        Assert.Equal(12, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)));
     }
 
     [Theory]

@@ -555,13 +555,6 @@ class CommerceAgent:
                 approval_type = "discount"
                 approval_reason = f"Requested discount {proposed_discount:.1%} exceeds {tier} tier cap"
 
-        # Orders placed via conversational flow always queue for owner review and manual sign-off
-        if purpose != QUOTE_PURPOSE:
-            requires_approval = True
-            is_auto_approved = False
-            approval_type = approval_type or "order_approval"
-            approval_reason = approval_reason or f"Order for {customer_name or 'customer'} awaiting owner review and approval"
-
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
             org_id, subtotal, total, margin, requires_approval

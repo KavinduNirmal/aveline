@@ -39,10 +39,6 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
             "delivery_address": "45 Ward Place, Colombo 07",
             "channel": "whatsapp",
             "message": "Can I order 2 cashmere scarves for Rs. 15,000?",
-            # The owner has already signed this order off. A conversational order always queues for
-            # owner review (`nodes.evaluate_deal`), so the settlement arm is reached only by a
-            # decision - which is what this field is.
-            "approval_decision": "approved",
         }
 
         result = await self.graph.ainvoke(commerce_state)
@@ -89,7 +85,6 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
             "delivery_address": None,
             "channel": "whatsapp",
             "message": "Please confirm this order",
-            "approval_decision": "approved",
         }
 
         result = await self.graph.ainvoke(state)
@@ -129,8 +124,6 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
             "delivery_address": "45 Ward Place, Colombo 07",
             "channel": "whatsapp",
             "message": "Please confirm this order",
-            # Settled only after the owner's decision, so the failure under test is the provider's.
-            "approval_decision": "approved",
         }
 
         result = await graph.ainvoke(state)
@@ -196,7 +189,6 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
             "delivery_address": "45 Ward Place, Colombo 07",
             "channel": "whatsapp",
             "message": "Order 1 scarf please",
-            "approval_decision": "approved",
         }
 
         result = await graph.ainvoke(state)
@@ -232,7 +224,6 @@ class TestCommerceAgentE2E(unittest.IsolatedAsyncioTestCase):
             "delivery_address": "45 Ward Place, Colombo 07",
             "channel": "whatsapp",
             "message": "Order 1 scarf please",
-            "approval_decision": "approved",
         }
 
         result = await graph.ainvoke(state)

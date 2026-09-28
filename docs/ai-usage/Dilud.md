@@ -1,3 +1,40 @@
+## Session 2026-09-28 (Dismissible Low Stock Warning Banner in Inventory Tab)
+
+**Task:** Add a dismiss (X) button to the low-stock alert banner in the catalog `InventoryTab.tsx` so users can easily dismiss and hide the warning banner during their active session.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Dismiss State & Action in InventoryTab (`frontend/web/src/components/catalog/InventoryTab.tsx`)**:
+   - Added `isWarningDismissed` local state initialized to `false`.
+   - Updated condition to render low-stock alert banner only when `!isWarningDismissed && lowStockItems.length > 0`.
+   - Added accessible dismiss icon button (`<Button size="icon" variant="ghost" aria-label="Dismiss low stock warning">`) using `X` from `lucide-react`.
+   - Fixed singular/plural grammar string for single-item low-stock notices (`"1 piece has low stock levels..."` vs `"N pieces have..."`).
+
+2. **Automated Unit Testing & Verification (`frontend/web/src/components/catalog/InventoryTab.dom.test.tsx`)**:
+   - Added DOM tests verifying:
+     - Warning banner renders when items with low stock exist (`stockQuantity <= 2` / `status: 'low_stock'`).
+     - Clicking the dismiss button removes the warning banner from view.
+   - Verified 2/2 tests in `InventoryTab.dom.test.tsx` pass.
+   - Ran full catalog test suite: 63/63 tests passed across 10 test files.
+   - Ran `npm run lint` (0 errors) and `npm run build` (successful compilation).
+
+### Files Created or Modified
+
+- `frontend/web/src/components/catalog/InventoryTab.tsx`
+- `frontend/web/src/components/catalog/InventoryTab.dom.test.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `npm test -- src/components/catalog/InventoryTab.dom.test.tsx`: 2 passed (100%).
+- `npm test -- src/components/catalog/`: 63 passed across 10 test files (100%).
+- `npm run lint`: 0 errors.
+- `npm run build`: built in 842ms without errors.
+
+---
+
 ## Session 2026-09-28 (Visual Insight Agent Partner Atelier Scraping & Piece Sourcing)
 
 **Task:** Refine the Visual Insight Agent (Elle) behavior when an in-stock search fails (e.g. "is there any yellow saree"): Elle should first scrape partner atelier websites using refined search criteria (color + category) to find matches before emitting responses or creating fallback tickets, and render found partner pieces with images, titles, and pricing in Salon chat blocks.

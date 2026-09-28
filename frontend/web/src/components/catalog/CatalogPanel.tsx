@@ -562,6 +562,7 @@ export function CatalogPanel({
       {openItemId ? (
         <CatalogItemDetail
           item={openItem}
+          organizationId={organization?.id}
           isLoading={isLoading}
           onBack={() => onCloseItem?.()}
           onEdit={handleEditProduct}

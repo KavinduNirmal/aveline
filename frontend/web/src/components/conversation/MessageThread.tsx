@@ -13,6 +13,7 @@ interface MessageThreadProps {
   /** Aveline's in-progress reasoning, rendered as a live bubble while non-null. */
   agentActivity?: AgentActivity | null
   onSignOff?: (messageId: string, approved: boolean) => void
+  onRequestPayment?: (orderId: string) => void
   onSelectCustomer?: (customerId: string) => void
   /** Called with the attachment id when a thread attachment is opened for viewing. */
   onOpenAttachment?: (attachmentId: string) => void
@@ -31,6 +32,7 @@ export function MessageThread({
   loading,
   agentActivity,
   onSignOff,
+  onRequestPayment,
   onSelectCustomer,
   onOpenAttachment,
   blockActions,
@@ -86,6 +88,7 @@ export function MessageThread({
             onStreamProgress={handleStreamProgress}
             onSelectCustomer={onSelectCustomer}
             onOpenAttachment={onOpenAttachment}
+            onRequestPayment={onRequestPayment}
             onSignOff={
               message.kind === 'SignOff' && message.status === 'AwaitingSignOff'
                 ? (approved) => onSignOff?.(message.id, approved)

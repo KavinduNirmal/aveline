@@ -13,17 +13,20 @@ public class ApprovalService : IApprovalService
     private readonly IOrderRepository _orderRepository;
     private readonly IAgentServiceClient? _agentClient;
     private readonly ILogger<ApprovalService>? _logger;
+    private readonly ICommerceSalonNotifier? _salonNotifier;
 
     public ApprovalService(
         IApprovalRepository approvalRepository,
         IOrderRepository orderRepository,
         IAgentServiceClient? agentClient = null,
-        ILogger<ApprovalService>? logger = null)
+        ILogger<ApprovalService>? logger = null,
+        ICommerceSalonNotifier? salonNotifier = null)
     {
         _approvalRepository = approvalRepository ?? throw new ArgumentNullException(nameof(approvalRepository));
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
         _agentClient = agentClient;
         _logger = logger;
+        _salonNotifier = salonNotifier;
     }
 
     public async Task<PagedResult<ApprovalQueueResponseDto>> GetPendingApprovalsAsync(
@@ -95,6 +98,17 @@ public class ApprovalService : IApprovalService
                     order.Status = "confirmed";
                     order.UpdatedAt = DateTime.UtcNow;
                     await _orderRepository.UpdateAsync(order, ct);
+                    if (_salonNotifier is not null)
+                    {
+                        try
+                        {
+                            await _salonNotifier.NotifyOrderApprovedAsync(organizationId, order.Id, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.LogWarning(ex, "Failed to send salon approval notification for order {OrderId}", order.Id);
+                        }
+                    }
                 }
                 break;
 
@@ -105,6 +119,17 @@ public class ApprovalService : IApprovalService
                     order.Status = "cancelled";
                     order.UpdatedAt = DateTime.UtcNow;
                     await _orderRepository.UpdateAsync(order, ct);
+                    if (_salonNotifier is not null)
+                    {
+                        try
+                        {
+                            await _salonNotifier.NotifyOrderRejectedAsync(organizationId, order.Id, dto.Reason, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger?.LogWarning(ex, "Failed to send salon rejection notification for order {OrderId}", order.Id);
+                        }
+                    }
                 }
                 break;
 

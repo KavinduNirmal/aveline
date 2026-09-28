@@ -51,6 +51,16 @@ public interface IConversationOrderBridge
         string? customerName,
         OrderContext context,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Settles the approval queue entry and order corresponding to a human sign-off decision in the conversation.
+    /// </summary>
+    Task SettleSignOffAsync(
+        Guid organizationId,
+        Guid conversationId,
+        bool approved,
+        string? reason = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -271,5 +281,44 @@ public sealed class ConversationOrderBridge : IConversationOrderBridge
         }
 
         return null;
+    }
+
+    /// <inheritdoc />
+    public async Task SettleSignOffAsync(
+        Guid organizationId,
+        Guid conversationId,
+        bool approved,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var paged = await _approvals.ListAsync(organizationId, "pending", 1, 50, cancellationToken);
+            var entry = paged.Items.FirstOrDefault(a => a.ConversationId == conversationId);
+            if (entry is null)
+            {
+                _logger.LogInformation("No pending approval found for conversation {ConversationId} during sign-off settlement.", conversationId);
+                return;
+            }
+
+            entry.Status = approved ? "approved" : "rejected";
+            entry.DecisionComment = reason ?? (approved ? "Approved via Salon SignOff" : "Rejected via Salon SignOff");
+            entry.DecidedAt = DateTime.UtcNow;
+            await _approvals.UpdateAsync(entry, cancellationToken);
+
+            var targetStatus = approved ? "confirmed" : "cancelled";
+            await _orders.TransitionStatusAsync(entry.OrderId, organizationId, new UpdateOrderStatusDto { Status = targetStatus }, cancellationToken);
+
+            _logger.LogInformation(
+                "Settled approval {ApprovalId} and order {OrderId} as {Status} for conversation {ConversationId}.",
+                entry.Id,
+                entry.OrderId,
+                targetStatus,
+                conversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to settle sign-off for conversation {ConversationId}.", conversationId);
+        }
     }
 }

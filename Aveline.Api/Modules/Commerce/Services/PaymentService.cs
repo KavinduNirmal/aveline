@@ -67,6 +67,7 @@ public class PaymentService : IPaymentService
     private readonly IPaymentIntentService _intents;
     private readonly IOptions<PaymentsOptions> _options;
     private readonly AppDbContext _db;
+    private readonly ICommerceSalonNotifier? _salonNotifier;
 
     public PaymentService(
         IPaymentRepository paymentRepository,
@@ -74,7 +75,8 @@ public class PaymentService : IPaymentService
         IBoutiqueSaleLedgerService ledger,
         IPaymentIntentService intents,
         IOptions<PaymentsOptions> options,
-        AppDbContext db)
+        AppDbContext db,
+        ICommerceSalonNotifier? salonNotifier = null)
     {
         _paymentRepository = paymentRepository ?? throw new ArgumentNullException(nameof(paymentRepository));
         _orderRepository = orderRepository ?? throw new ArgumentNullException(nameof(orderRepository));
@@ -82,6 +84,7 @@ public class PaymentService : IPaymentService
         _intents = intents ?? throw new ArgumentNullException(nameof(intents));
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _db = db ?? throw new ArgumentNullException(nameof(db));
+        _salonNotifier = salonNotifier;
     }
 
     private bool UseProviderIntents => _options.Value.Commerce.UseProviderIntents;
@@ -157,6 +160,18 @@ public class PaymentService : IPaymentService
 
         await _paymentRepository.AddAsync(payment, ct);
         await _orderRepository.UpdateAsync(order, ct);
+
+        if (_salonNotifier is not null)
+        {
+            try
+            {
+                await _salonNotifier.NotifyPaymentRequestedAsync(organizationId, dto.OrderId, payment.PaymentLink, payment.Amount, ct);
+            }
+            catch
+            {
+                // Best-effort notification to customer salon
+            }
+        }
 
         return MapToDto(payment);
     }
@@ -468,6 +483,18 @@ public class PaymentService : IPaymentService
 
         await _paymentRepository.AddAsync(payment, ct);
         await _orderRepository.UpdateAsync(order, ct);
+
+        if (_salonNotifier is not null)
+        {
+            try
+            {
+                await _salonNotifier.NotifyPaymentRequestedAsync(organizationId, dto.OrderId, payment.PaymentLink, payment.Amount, ct);
+            }
+            catch
+            {
+                // Best-effort notification to customer salon
+            }
+        }
 
         return MapToDto(payment);
     }

@@ -7,7 +7,7 @@ logger = logging.getLogger("aveline.agent.tools.commerce.loyalty")
 
 # Standard discount caps by tier
 TIER_DISCOUNT_CAPS = {
-    "VIP": 0.10,       # 10% maximum auto-approved discount
+    "VIP": 0.15,       # 15% maximum auto-approved discount
     "Regular": 0.05,   # 5% maximum auto-approved discount
     "New": 0.00,       # 0% standard discount
 }

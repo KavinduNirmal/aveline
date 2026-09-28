@@ -20,7 +20,8 @@ public sealed record OrderContextItem(
     string ItemName,
     int Quantity,
     decimal UnitPrice,
-    decimal WholesaleCost)
+    decimal WholesaleCost,
+    decimal PieceDiscountRate = 0m)
 {
     /// <summary>The line total, computed the same way <c>OrderService</c> computes it.</summary>
     public decimal TotalPrice => Math.Round(UnitPrice * Quantity, 2);
@@ -116,6 +117,7 @@ public interface IOrderContextBuilder
 public sealed class OrderContextBuilder : IOrderContextBuilder
 {
     private readonly IInventoryService _inventory;
+    private readonly IBusinessRulesService? _businessRules;
 
     /// <summary>How many catalog rows a single match is allowed to consider.</summary>
     private const int CatalogScanLimit = 200;
@@ -123,9 +125,12 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
     /// <summary>The most line items one message may resolve to, as a safety rail.</summary>
     private const int MaxItems = 5;
 
-    public OrderContextBuilder(IInventoryService inventory)
+    public OrderContextBuilder(
+        IInventoryService inventory,
+        IBusinessRulesService? businessRules = null)
     {
         _inventory = inventory ?? throw new ArgumentNullException(nameof(inventory));
+        _businessRules = businessRules;
     }
 
     /// <summary>
@@ -262,19 +267,55 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         var selected = SelectDistinct(matches);
         var quantity = QuantityFrom(message, normalized);
 
+        IReadOnlyDictionary<Guid, decimal>? pieceDiscounts = null;
+        if (_businessRules is not null)
+        {
+            try
+            {
+                var discounts = await _businessRules.GetPieceDiscountsAsync(organizationId, cancellationToken);
+                if (discounts.Count > 0)
+                {
+                    pieceDiscounts = discounts
+                        .Where(d => d.IsActive && d.DiscountPercentage > 0m)
+                        .ToDictionary(d => d.ItemId, d => d.DiscountPercentage);
+                }
+            }
+            catch
+            {
+                // Graceful fallback if business rules service is unreachable or unseeded
+            }
+        }
+
         var items = selected
             .Take(MaxItems)
-            .Select(match => new OrderContextItem(
-                match.Item.Id,
-                match.Item.ItemName,
-                quantity,
-                match.Item.Price,
-                match.Item.Cost))
+            .Select(match =>
+            {
+                var pieceDiscount = pieceDiscounts is not null && pieceDiscounts.TryGetValue(match.Item.Id, out var pd)
+                    ? pd
+                    : 0m;
+                return new OrderContextItem(
+                    match.Item.Id,
+                    match.Item.ItemName,
+                    quantity,
+                    match.Item.Price,
+                    match.Item.Cost,
+                    pieceDiscount);
+            })
             .ToList();
 
         if (items.Count == 0)
         {
             return OrderContext.Empty;
+        }
+
+        if (customerHint is not null)
+        {
+            var hintLower = customerHint.ToLowerInvariant();
+            if (items.Any(i => i.ItemName.ToLowerInvariant().Contains(hintLower) || hintLower.Contains(i.ItemName.ToLowerInvariant()))
+                || catalog.Any(c => c.ItemName.ToLowerInvariant().Contains(hintLower) || hintLower.Contains(c.ItemName.ToLowerInvariant())))
+            {
+                customerHint = null;
+            }
         }
 
         return new OrderContext(
@@ -449,18 +490,43 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
             return phoneMatch.Value;
         }
 
+        // If "for" is preceded by discount or pricing keywords (e.g. "15% off for Emerald...", "discount for the saree"),
+        // then "for" introduces the product unless explicitly qualified with "client" or "customer".
+        if (Regex.IsMatch(message, @"\b(?:off|discount|percent|pct|%|price|quote|cost)\s+for\s+(?!client\b|customer\b)", RegexOptions.IgnoreCase))
+        {
+            var explicitMatch = Regex.Match(
+                message,
+                @"\b(?:for\s+(?:client|customer)\s+|(?:client|customer)(?:\s+is)?\s+)(?<name>[A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)",
+                RegexOptions.IgnoreCase);
+            if (explicitMatch.Success)
+            {
+                var explicitName = explicitMatch.Groups["name"].Value.Trim();
+                return CleanCustomerName(explicitName);
+            }
+
+            return null;
+        }
+
         var match = CustomerNameHintRegex.Match(message);
         if (match.Success)
         {
             var name = match.Groups["name"].Value.Trim();
-            var lower = name.ToLowerInvariant();
-            if (lower is not "the" and not "this" and not "a" and not "an" and not "order" and not "approval")
+            return CleanCustomerName(name);
+        }
+
+        return null;
+    }
+
+    private static string? CleanCustomerName(string name)
+    {
+        var cleaned = Regex.Replace(name, @"^(?:the|this|a|an)\s+", "", RegexOptions.IgnoreCase).Trim();
+        var lower = cleaned.ToLowerInvariant();
+        if (lower is not "the" and not "this" and not "a" and not "an" and not "order" and not "approval")
+        {
+            cleaned = Regex.Replace(cleaned, @"\s+(?:please|order|saree|dress|gown|midi)$", "", RegexOptions.IgnoreCase).Trim();
+            if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length >= 2)
             {
-                var cleaned = Regex.Replace(name, @"\s+(?:please|order|saree|dress|gown)$", "", RegexOptions.IgnoreCase).Trim();
-                if (!string.IsNullOrWhiteSpace(cleaned))
-                {
-                    return cleaned;
-                }
+                return cleaned;
             }
         }
 

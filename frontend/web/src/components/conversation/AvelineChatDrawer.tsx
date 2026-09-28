@@ -38,6 +38,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
     openAveline,
     sendToAveline,
     decideAveline,
+    requestPayment,
     regenerateAveline,
     deliverToClient,
     // The drawer's thread shares the one pending-attachment tray, keyed by conversation id, with the
@@ -110,6 +111,7 @@ export function AvelineChatDrawer({ open, onClose }: AvelineChatDrawerProps) {
           agentActivity={avelineAgentActivity}
           blockActions={blockActions}
           onSignOff={(messageId, approved) => void decideAveline(messageId, approved)}
+          onRequestPayment={(orderId) => void requestPayment(orderId)}
         />
       </div>
 

@@ -850,6 +850,11 @@ public class ConversationService : IConversationService
             "SignOff resume for thread {ThreadId} is deferred (no LangGraph resume wired, ADR-018).",
             conversation.ThreadId);
 
+        if (_orderBridge is not null)
+        {
+            await _orderBridge.SettleSignOffAsync(orgId, conversationId, approved, null, cancellationToken);
+        }
+
         return MessageDto.From(message);
     }
 
@@ -1138,7 +1143,8 @@ public class ConversationService : IConversationService
         quantity = item.Quantity,
         unit_price = item.UnitPrice,
         wholesale_cost = item.WholesaleCost,
-        total_price = item.TotalPrice
+        total_price = item.TotalPrice,
+        piece_discount = item.PieceDiscountRate
     };
 
     /// <summary>
@@ -1266,6 +1272,23 @@ public class ConversationService : IConversationService
 
             var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, query, recentTexts, cancellationToken);
 
+            string? effectiveCustomerName = orderContext.CustomerHint;
+            if (string.IsNullOrWhiteSpace(effectiveCustomerName) && customerId.HasValue)
+            {
+                try
+                {
+                    var row = await _conversations.GetRowAsync(conversation.Id, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(row?.CustomerName))
+                    {
+                        effectiveCustomerName = row.CustomerName;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not resolve customer name for conversation {ConversationId}", conversation.Id);
+                }
+            }
+
             var payload = new
             {
                 query,
@@ -1276,7 +1299,7 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: the transcript window is keyed by this id.
                     conversation_id = conversation.Id,
                     customer_id = customerId,
-                    customer_name = orderContext.CustomerHint,
+                    customer_name = effectiveCustomerName,
                     // The staff path (Salon note, regeneration, agent brief), so the tenant's own
                     // account figures are in scope: "how many Blossoms do I have left?" is a
                     // question about this boutique, not about a customer (ADR-026). This flag is
@@ -1299,7 +1322,7 @@ public class ConversationService : IConversationService
             // agent replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
             await HandleAgentOutcomeAsync(
-                conversation, response, orderContext, phoneNumber: null, customerName: orderContext.CustomerHint, cancellationToken);
+                conversation, response, orderContext, phoneNumber: null, customerName: effectiveCustomerName, cancellationToken);
         }
         catch (Exception ex)
         {

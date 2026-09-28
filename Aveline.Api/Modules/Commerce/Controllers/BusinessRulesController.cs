@@ -107,4 +107,50 @@ public class BusinessRulesController : ControllerBase
         var result = await _service.EvaluateOrderRulesAsync(organizationId, request, ct);
         return Ok(result);
     }
+
+    [HttpGet("piece-discounts")]
+    public async Task<ActionResult<IReadOnlyList<PieceDiscountResponseDto>>> GetPieceDiscounts(
+        [FromRoute] Guid organizationId,
+        CancellationToken ct = default)
+    {
+        var discounts = await _service.GetPieceDiscountsAsync(organizationId, ct);
+        return Ok(discounts);
+    }
+
+    [HttpGet("piece-discounts/{itemId:guid}")]
+    public async Task<ActionResult<PieceDiscountResponseDto>> GetPieceDiscountByItemId(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid itemId,
+        CancellationToken ct = default)
+    {
+        var discount = await _service.GetPieceDiscountByItemIdAsync(organizationId, itemId, ct);
+        return discount is not null ? Ok(discount) : NotFound();
+    }
+
+    [HttpPost("piece-discounts")]
+    public async Task<ActionResult<PieceDiscountResponseDto>> SetPieceDiscount(
+        [FromRoute] Guid organizationId,
+        [FromBody] SetPieceDiscountDto dto,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _service.SetPieceDiscountAsync(organizationId, dto, ct);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpDelete("piece-discounts/{itemId:guid}")]
+    public async Task<IActionResult> DeletePieceDiscount(
+        [FromRoute] Guid organizationId,
+        [FromRoute] Guid itemId,
+        CancellationToken ct = default)
+    {
+        var deleted = await _service.DeletePieceDiscountAsync(organizationId, itemId, ct);
+        return deleted ? NoContent() : NotFound();
+    }
 }

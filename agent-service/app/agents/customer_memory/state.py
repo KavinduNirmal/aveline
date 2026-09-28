@@ -48,6 +48,15 @@ class MemoryAgentState(TypedDict, total=False):
     _preference_signals: list[dict[str, Any]]
     #: "complaint" | "sentiment" | None - how the customer reported things in this message (A7).
     _experience_signal: str | None
+    #: The small facts the model read out of this message - the "nitbits" no deterministic shape
+    #: covers (an observation, a resolved pronoun, a constraint). Declared because LangGraph drops
+    #: undeclared keys silently: without this the extraction would run, be paid for, and reach
+    #: neither `persist` nor the at-a-glance table.
+    _extracted_facts: list[dict[str, Any]]
+    #: Tokens the extraction call spent. Private because it is not an output: `compose_output` folds
+    #: it into the run's single `usage` figure (ADR-010), so the reporter sees one run, not two
+    #: calls it would have to know about.
+    _extraction_usage: dict[str, Any] | None
     # Token usage captured when an LLM generated the draft (input/output tokens), else None.
     usage: dict[str, Any] | None
     # Output

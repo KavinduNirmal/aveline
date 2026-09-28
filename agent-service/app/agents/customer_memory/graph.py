@@ -2,10 +2,10 @@
 
 Compiles the memory agent into a checkpointable ``StateGraph``:
 
-    resolve_customer -> check_consent -> parse -> retrieve -> persist -> compose_output
+    resolve_customer -> check_consent -> parse -> retrieve -> extract -> persist -> compose_output
 
 Conditional edges short-circuit to END when the customer cannot be resolved or has revoked
-consent (both emit a ``skipped`` status). ``retrieve``/``persist`` require a resolved,
+consent (both emit a ``skipped`` status). ``retrieve``/``extract``/``persist`` require a resolved,
 consenting customer; the message-parse nodes always run.
 
 The graph is dependency-injected over a ``ToolRegistry`` so it is fully testable with a stub.
@@ -50,6 +50,7 @@ def build_memory_graph(
     graph.add_node("check_consent", agent.check_consent)
     graph.add_node("parse", agent.parse)
     graph.add_node("retrieve", agent.retrieve)
+    graph.add_node("extract", agent.extract)
     graph.add_node("persist", agent.persist)
     graph.add_node("compose_output", agent.compose_output)
 
@@ -75,13 +76,17 @@ def build_memory_graph(
         {"continue": "parse", "skip": END},
     )
 
-    # parse always runs, then retrieve/persist for a resolved, consenting customer.
+    # parse always runs, then retrieve/extract/persist for a resolved, consenting customer.
     graph.add_conditional_edges(
         "parse",
         _route_can_personalize,
         {"personalize": "retrieve", "compose": "compose_output"},
     )
-    graph.add_edge("retrieve", "persist")
+    # Extraction sits between retrieval and the writes: retrieval supplies the context the model
+    # reads the message against, and persist owns every write, so the node itself never touches the
+    # store (a provider failure costs facts, never a run).
+    graph.add_edge("retrieve", "extract")
+    graph.add_edge("extract", "persist")
     graph.add_edge("persist", "compose_output")
     graph.add_edge("compose_output", END)
 

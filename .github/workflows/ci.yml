@@ -79,11 +79,16 @@ jobs:
       - name: Build API
         run: dotnet build Aveline.Api/Aveline.Api.sln --no-restore -c Release
 
-      - name: Test API
-        run: dotnet test Aveline.Api/Aveline.Api.sln --no-build --no-restore -c Release
-
-      - name: Collect code coverage
-        run: dotnet test Aveline.Api/Aveline.Api.sln -c Release --no-build --no-restore --collect:"XPlat Code Coverage" --results-directory TestResults
+      # One run, not two. This used to be a plain `dotnet test` followed by an identical
+      # `dotnet test` that only added `--collect`, so the entire suite executed twice to produce one
+      # answer each time. That made this job the longest in the workflow by a wide margin - roughly
+      # 50 minutes, of which about 48 were these two steps running the same 4,000 tests.
+      #
+      # Collecting on the single run keeps every downstream step working: the cobertura file below
+      # is what the threshold check, ReportGenerator and the artefact all read, and `dotnet test`
+      # still exits non-zero on a failing test whether or not coverage is being collected.
+      - name: Test API and collect coverage
+        run: dotnet test Aveline.Api/Aveline.Api.sln --no-build --no-restore -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
 
       - name: Enforce coverage threshold (line >= 30%)
         run: |

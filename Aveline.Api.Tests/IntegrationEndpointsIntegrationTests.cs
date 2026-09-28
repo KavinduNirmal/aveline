@@ -40,6 +40,7 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Credentials:EncryptionKey", Base64Key);
             })
@@ -236,7 +237,15 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
             $"/api/v1/orgs/{org.Id}/integrations/whatsapp/test", token));
         Assert.Equal(HttpStatusCode.OK, test.StatusCode);
         var body = await test.Content.ReadAsStringAsync();
-        Assert.Contains("Connected", body);
+
+        // The body must be the flat IntegrationStatusDto, because that is what every client reads.
+        // It used to be the wrapping IntegrationTestResultDto, and the dashboard's Test button then
+        // compared an object against the string "Connected", failed that comparison, and reported a
+        // failed test on every click regardless of the real outcome (2026-09-26).
+        using var document = System.Text.Json.JsonDocument.Parse(body);
+        Assert.Equal("Connected", document.RootElement.GetProperty("status").GetString());
+        Assert.False(document.RootElement.TryGetProperty("isValid", out _));
+
         Assert.DoesNotContain("wa-secret-token", body);
     }
 
@@ -295,7 +304,7 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }
@@ -319,5 +328,15 @@ public class IntegrationEndpointsIntegrationTests : IAsyncLifetime
             string languageCode, IReadOnlyList<object>? components,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("This test double does not send templates.");
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 }

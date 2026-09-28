@@ -81,7 +81,17 @@ public class PrivacyOptOutVerifyTests : IAsyncLifetime
             string languageCode, IReadOnlyList<object>? components,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     private sealed class NoopAgentClient : IAgentServiceClient
     {
@@ -203,6 +213,7 @@ public class PrivacyOptOutVerifyTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", "https://clerk.invalid");
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:59999");
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
@@ -249,7 +260,7 @@ public class PrivacyOptOutVerifyTests : IAsyncLifetime
 
     private static AppDbContext CreateContext()
         => new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static async Task<Guid> SeedOrganizationAsync(string suffix)

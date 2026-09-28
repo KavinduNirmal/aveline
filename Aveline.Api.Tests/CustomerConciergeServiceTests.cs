@@ -44,6 +44,7 @@ public class CustomerConciergeServiceTests
         var gate = new ConsentGateService(
             new CustomerConsentRepository(_context), NullLogger<ConsentGateService>.Instance);
         var memories = new CustomerMemoryService(
+            _context,
             new CustomerMemoryRepository(_context),
             new CustomerRepository(_context),
             new CustomerEventRepository(_context),

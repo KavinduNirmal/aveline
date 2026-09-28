@@ -1,0 +1,130 @@
+{
+  "generatedAt": "2026-09-26T10:53:13.550Z",
+  "profile": "mobile Slow 4G (Lighthouse) + 4x CPU, cold cache, 412x915",
+  "note": "A = shipped build. B = same source with App.tsx routes converted to React.lazy + Suspense, built in a scratch copy.",
+  "routeComponentsLazyLoaded": 41,
+  "eagerBytes": {
+    "baseline": {
+      "files": 16,
+      "raw": 3463566,
+      "gzip": 925563,
+      "brotli": 738079
+    },
+    "codesplit": {
+      "files": 12,
+      "raw": 916575,
+      "gzip": 247785,
+      "brotli": 212729
+    }
+  },
+  "runtime": {
+    "baseline": {
+      "runs": 4,
+      "fcpMs": 12804,
+      "lcpMs": 13804,
+      "tbtMs": 5927,
+      "mainThreadBusyMs": 11677,
+      "domContentLoadedMs": 10755,
+      "jsTransferBytes": 964549,
+      "totalTransferBytes": 991828,
+      "requests": 33
+    },
+    "codesplit": {
+      "runs": 4,
+      "fcpMs": null,
+      "lcpMs": null,
+      "tbtMs": 118,
+      "mainThreadBusyMs": 168,
+      "domContentLoadedMs": 2258,
+      "jsTransferBytes": 190854,
+      "totalTransferBytes": 217511,
+      "requests": 13
+    }
+  },
+  "rawRuns": {
+    "baseline": [
+      {
+        "fcp": 12804,
+        "lcp": 13804,
+        "tbt": 5973,
+        "busy": 12223,
+        "dcl": 10755,
+        "jsBytes": 964549,
+        "totalBytes": 991828,
+        "reqs": 33
+      },
+      {
+        "fcp": 12960,
+        "lcp": 13956,
+        "tbt": 6317,
+        "busy": 12617,
+        "dcl": 10794,
+        "jsBytes": 964549,
+        "totalBytes": 991828,
+        "reqs": 32
+      },
+      {
+        "fcp": 11264,
+        "lcp": 12340,
+        "tbt": 5103,
+        "busy": 11503,
+        "dcl": 9599,
+        "jsBytes": 964549,
+        "totalBytes": 991828,
+        "reqs": 33
+      },
+      {
+        "fcp": 13148,
+        "lcp": 14020,
+        "tbt": 5927,
+        "busy": 11677,
+        "dcl": 11190,
+        "jsBytes": 964549,
+        "totalBytes": 991828,
+        "reqs": 33
+      }
+    ],
+    "codesplit": [
+      {
+        "fcp": null,
+        "lcp": null,
+        "tbt": 118,
+        "busy": 168,
+        "dcl": 2258,
+        "jsBytes": 190854,
+        "totalBytes": 217813,
+        "reqs": 14
+      },
+      {
+        "fcp": null,
+        "lcp": null,
+        "tbt": 121,
+        "busy": 171,
+        "dcl": 3258,
+        "jsBytes": 190854,
+        "totalBytes": 217511,
+        "reqs": 13
+      },
+      {
+        "fcp": null,
+        "lcp": null,
+        "tbt": 176,
+        "busy": 226,
+        "dcl": 2553,
+        "jsBytes": 190854,
+        "totalBytes": 217511,
+        "reqs": 13
+      },
+      {
+        "fcp": null,
+        "lcp": null,
+        "tbt": 85,
+        "busy": 135,
+        "dcl": 2228,
+        "jsBytes": 190854,
+        "totalBytes": 217511,
+        "reqs": 13
+      }
+    ]
+  }
+}

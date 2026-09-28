@@ -1,7 +1,7 @@
 # Diagnosis: `ActualCostUsd` is always `0` and the "log columns" are not empty
 
 **Status:** root cause confirmed
-**Scope:** `Aveline.Api` (`Modules/Billing`) + `agnet-service` (`app/services/usage_reporter.py`, `app/api/agents.py`)
+**Scope:** `Aveline.Api` (`Modules/Billing`) + `agent-service` (`app/services/usage_reporter.py`, `app/api/agents.py`)
 **Subject data:** `AiUsageRecords` rows for org `01a078bf-45c1-7231-bae1-3e0ea1dc0471`, 2026-09-09
 
 ---
@@ -11,10 +11,10 @@
 `ActualCostUsd` is `0` because **no process in this system ever computes a monetary cost for an
 LLM call**. The Python agent service declares an `actual_cost_usd` parameter on
 `report_usage()` with a default of `0.0` and **never passes it** at either of its two call sites
-(`agnet-service/app/services/usage_reporter.py:20`; call sites
-`agnet-service/app/api/agents.py:247` and `agnet-service/app/agents/visual_insight/nodes.py:427`).
+(`agent-service/app/services/usage_reporter.py:20`; call sites
+`agent-service/app/api/agents.py:247` and `agent-service/app/agents/visual_insight/nodes.py:427`).
 A second path hardcodes the literal `0.0`
-(`agnet-service/app/api/agents.py:271` and `:325`/`:344`). No price table, per-token rate, or
+(`agent-service/app/api/agents.py:271` and `:325`/`:344`). No price table, per-token rate, or
 token×rate multiplication exists anywhere in either service. The `.NET` API stores whatever value
 it is handed and nothing else (`Aveline.Api/Modules/Billing/Services/UsageTrackerService.cs:52`).
 
@@ -42,7 +42,7 @@ settles the "backend cannot store cost" hypothesis.
 |---|---|
 | `Aveline.Api` Billing + Statistics source (read) | cost is pass-through; no calculator |
 | `AiUsageRecords` EF config + all migrations touching it (read) | exact 19-column schema |
-| `agnet-service/app/**` (read; `.venv` excluded) | cost hardcoded `0.0`; tokens captured |
+| `agent-service/app/**` (read; `.venv` excluded) | cost hardcoded `0.0`; tokens captured |
 | `docs/backend/**`, `docs/ADR/ADR-010*.md`, `docs/ai-usage/**` (read) | D-8 / G-5 are pre-existing, accepted |
 | `git log -S actual_cost_usd` | parameter has defaulted to `0.0` since introduction (`7438c1a`) |
 | `dotnet test` (ran) | backend persists non-zero cost correctly → defect is upstream |
@@ -51,11 +51,11 @@ settles the "backend cannot store cost" hypothesis.
 **Commands run (read-only; `dotnet test` builds to `bin/`, `obj/`)**
 
 ```
-grep -rn "actual_cost_usd\|actualCostUsd" agnet-service/app Aveline.Api
+grep -rn "actual_cost_usd\|actualCostUsd" agent-service/app Aveline.Api
 grep -rn "ActualCostUsd" --include="*.cs" Aveline.Api/Modules Aveline.Api/Infrastructure
 grep -rn "HasData" Aveline.Api/Migrations/*.cs
-git log --oneline -S "actual_cost_usd" -- agnet-service/
-git show 7438c1a:agnet-service/app/services/usage_reporter.py
+git log --oneline -S "actual_cost_usd" -- agent-service/
+git show 7438c1a:agent-service/app/services/usage_reporter.py
 dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj \
   --filter "FullyQualifiedName~UsageTrackerServiceTests|FullyQualifiedName~UsageEndpointsIntegrationTests"
 ```
@@ -176,8 +176,8 @@ stores no result content at all, only `ArgsHash` and `ResultBytes`
 > **A plausible source of the confusion.** The LangGraph Postgres checkpointer creates its own
 > snake_case tables **in the same database** — `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`
 > — and `checkpoints` carries a `metadata jsonb` column holding serialized graph state
-> (`agnet-service/app/workflows/checkpointer.py:58,87`; DDL at
-> `agnet-service/.venv/lib/python3.14/site-packages/langgraph/checkpoint/postgres/base.py:47-76`).
+> (`agent-service/app/workflows/checkpointer.py:58,87`; DDL at
+> `agent-service/.venv/lib/python3.14/site-packages/langgraph/checkpoint/postgres/base.py:47-76`).
 > An ad-hoc inspection that joins across the database can therefore surface snake_case columns and a
 > `metadata` column that belong to the checkpointer, not to AI usage.
 
@@ -214,7 +214,7 @@ only validation is a non-negativity check (`UsageTrackerService.cs:189-190`) —
 `actual_cost_usd` is declared with a default of `0.0` and documented as "Raw provider cost in USD":
 
 ```python
-# agnet-service/app/services/usage_reporter.py:11-23
+# agent-service/app/services/usage_reporter.py:11-23
 async def report_usage(
     ...,
     cached_tokens: int = 0,
@@ -227,16 +227,16 @@ Both call sites — the only two in `app/` — omit the argument:
 
 | Call site | Passes `actual_cost_usd`? |
 |---|---|
-| `agnet-service/app/api/agents.py:247` | no → defaults to `0.0` |
-| `agnet-service/app/agents/visual_insight/nodes.py:427` | no → defaults to `0.0` |
+| `agent-service/app/api/agents.py:247` | no → defaults to `0.0` |
+| `agent-service/app/agents/visual_insight/nodes.py:427` | no → defaults to `0.0` |
 
 And the second, independent reporting path hardcodes the literal:
 
 | Line | Code |
 |---|---|
-| `agnet-service/app/api/agents.py:271` | `actual_cost_usd=0.0,` (arg to `collector.finalize`) |
-| `agnet-service/app/api/agents.py:325` | `"actualCostUsd": 0.0,` (synthetic run payload) |
-| `agnet-service/app/api/agents.py:344` | `"actualCostUsd": 0.0,` (synthetic step payload) |
+| `agent-service/app/api/agents.py:271` | `actual_cost_usd=0.0,` (arg to `collector.finalize`) |
+| `agent-service/app/api/agents.py:325` | `"actualCostUsd": 0.0,` (synthetic run payload) |
+| `agent-service/app/api/agents.py:344` | `"actualCostUsd": 0.0,` (synthetic step payload) |
 | `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs:178` | `ActualCostUsd: 0m` (**the fourth production writer, and the only one in .NET**) |
 
 The vision path is a fourth writer worth naming separately: `VisionService.cs:169-179` posts a usage
@@ -246,9 +246,9 @@ producer, and it too hardcodes zero rather than deriving it. (`git blame` attrib
 (`VisionService.cs:173-174`), so those rows are mis-attributed as well — the same defect D-4
 describes for the visual agent.
 
-Every `actual_cost_usd` occurrence in `agnet-service/app/` is one of the three Python zero-valued
+Every `actual_cost_usd` occurrence in `agent-service/app/` is one of the three Python zero-valued
 plumbing lines plus the dataclass field defaults in
-`agnet-service/app/telemetry/agent_telemetry.py:79,116,201,225,245,270`. There is no thirteenth
+`agent-service/app/telemetry/agent_telemetry.py:79,116,201,225,245,270`. There is no thirteenth
 occurrence that computes anything. A whole-repo search for any USD-per-token rate returns nothing:
 `grep -rn "per_token\|PerToken\|PricePer\|cost_per\|CostPer"` finds only Commerce `OrderItem.UnitPrice`
 and one prose line in `docs/backend/statistics-catalog.md:111`. No `HasData` seed exists anywhere
@@ -257,13 +257,13 @@ seeded and then missed.
 
 ### 4.3 No cost calculator exists in either service
 
-Searched `agnet-service/app/` and `Aveline.Api/` for a price table or a rate multiplication. The
+Searched `agent-service/app/` and `Aveline.Api/` for a price table or a rate multiplication. The
 result is an absence:
 
 | Probe | Result |
 |---|---|
-| `grep -rn "per_1k\|per_1m\|token_cost\|input_cost\|output_cost" agnet-service/app/` | 0 hits |
-| `grep -rnE '\* *0\.0000' agnet-service/app/` (per-token rate constant) | 0 hits |
+| `grep -rn "per_1k\|per_1m\|token_cost\|input_cost\|output_cost" agent-service/app/` | 0 hits |
+| `grep -rnE '\* *0\.0000' agent-service/app/` (per-token rate constant) | 0 hits |
 | `grep -rniE "pric" Aveline.Api/ --include=*.cs` minus Blossom/pricing-rule names | 1 hit, unrelated (`AgentStatisticsDtos.cs:217`, a DTO doc comment) |
 | `grep -rn "HasData" Aveline.Api/Migrations/*.cs \| grep -i "deepseek\|usd"` | 0 hits |
 
@@ -301,14 +301,14 @@ the API lands in the database.** Combined with §4.2, the defect is entirely on 
 
 > **D-8** | **`cached_tokens` and `actual_cost_usd` are never sent by any caller**, so both are
 > permanently zero on the wire and the cost-anomaly detector can never fire. |
-> `agnet-service/app/services/usage_reporter.py:19-20`; no caller supplies them
+> `agent-service/app/services/usage_reporter.py:19-20`; no caller supplies them
 
 `docs/backend/backend-requirements.md:680` (gap G-5) and `:737`:
 
 > BR-5.7 | `ActualCostUsd >= 0`, `decimal(18,8)`. **A zero cost is valid and expected while G-5 is
 > unfixed.**
 
-`git show 7438c1a:agnet-service/app/services/usage_reporter.py` — the commit that introduced usage
+`git show 7438c1a:agent-service/app/services/usage_reporter.py` — the commit that introduced usage
 tracking — already declares `actual_cost_usd: float = 0.0`. Nothing ever changed that.
 
 ---
@@ -335,9 +335,9 @@ were all present and well-formed in the request body.
 
 **(c) Token provenance is the real provider response.** Counts come from LangChain's
 `AIMessage.usage_metadata` on the actual provider reply — memory agent at
-`agnet-service/app/agents/customer_memory/nodes.py:404-420` (`result = await self.llm.ainvoke(...)`,
+`agent-service/app/agents/customer_memory/nodes.py:404-420` (`result = await self.llm.ainvoke(...)`,
 then `meta.get("input_tokens")` / `meta.get("output_tokens")`), visual agent at
-`agnet-service/app/agents/visual_insight/nodes.py:310-315`. So the DeepSeek integration **is**
+`agent-service/app/agents/visual_insight/nodes.py:310-315`. So the DeepSeek integration **is**
 parsing the response correctly for tokens.
 
 **The integration is correct; only cost is absent.** `ChatDeepSeek` adds no cost field:
@@ -351,7 +351,7 @@ nothing, and LangChain's own `UsageMetadata` carries only
 swallows every failure:
 
 ```python
-# agnet-service/app/api/agents.py:254-259
+# agent-service/app/api/agents.py:254-259
 except Exception:  # noqa: BLE001 - usage reporting must never fail the agent query
     logger.exception(
         "Failed to report usage for workflow %s (best-effort).", workflow_id, ...)
@@ -379,7 +379,7 @@ future cost calculation, not just for reporting.
 The memory agent does capture it:
 
 ```python
-# agnet-service/app/agents/customer_memory/nodes.py:415-425
+# agent-service/app/agents/customer_memory/nodes.py:415-425
 meta = getattr(result, "usage_metadata", None) or {}
 token_details = meta.get("input_token_details") or {}
 cached_tokens = int(token_details.get("cache_read") or 0)      # captured
@@ -391,13 +391,13 @@ if cached_tokens > 0:
     usage["cached_tokens"] = cached_tokens                     # carried on state
 ```
 
-It survives the state hop (`agnet-service/app/workflows/concierge_workflow.py:172-173` returns
+It survives the state hop (`agent-service/app/workflows/concierge_workflow.py:172-173` returns
 `{"usage": usage}`) and reaches the run-level telemetry rollup
 (`concierge_workflow.py:426`, `cached_tokens=int(tokens.get("cached_tokens") or 0)` →
 `agents.py:270`). **But it stops there.** `_build_usage_metadata` maps only the two token fields:
 
 ```python
-# agnet-service/app/workflows/concierge_workflow.py:325-331
+# agent-service/app/workflows/concierge_workflow.py:325-331
 return AgentMetadata(
     model=settings.llm_model or "rule-based",
     tokens_used=input_tokens + output_tokens,   # cached_tokens not included
@@ -407,14 +407,14 @@ return AgentMetadata(
 ```
 
 and `report_usage` is called with only two token fields
-(`agnet-service/app/api/agents.py:247-253`), so `cachedTokens` defaults to `0`
+(`agent-service/app/api/agents.py:247-253`), so `cachedTokens` defaults to `0`
 (`usage_reporter.py:19`). The result is that `AiUsageRecords.CachedTokens` is structurally always
 zero — a second, independent instance of the same defect class as D-8, and it is D-8's other half.
 
 `langchain_core` exposes the cache breakdown needed to fix the cost calculation exactly:
 `input_token_details` carries both `cache_creation` (cache writes) and `cache_read` (cache hits)
 under `UsageMetadata`
-(`agnet-service/.venv/lib/python3.14/site-packages/langchain_core/messages/ai.py:104-154`). The
+(`agent-service/.venv/lib/python3.14/site-packages/langchain_core/messages/ai.py:104-154`). The
 code currently reads only `cache_read` (`nodes.py:417`) and discards `cache_creation`.
 
 ---
@@ -450,7 +450,7 @@ values explain the `deepseek` row:
 
 - `.env:37` → `LLM_PROVIDER=deepseek`; `.env:39` → `LLM_BASE_URL=https://api.deepseek.com`;
   `.env:40` → `LLM_MODEL=deepseek-v4-flash`.
-- The shipped defaults differ: `agnet-service/app/core/config.py:28` and both `.env.example` files
+- The shipped defaults differ: `agent-service/app/core/config.py:28` and both `.env.example` files
   use `deepseek-chat`, so the local `.env` *is* the source of the `deepseek-v4-flash` value.
 - `deepseek-v4-flash` is a real, billable, legacy-accepted model id served as DeepSeek-V4.1-Flash
   ([DeepSeek Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing/), footnote 1).
@@ -540,7 +540,7 @@ input, `$0.30` cache-miss input, `$1.2` output; off-peak is exactly half.
 **Derive like this, not naively.** LangChain's `input_tokens` is the *total* input count, and
 `input_token_details.cache_read`/`cache_creation` are **components of it** — the docstring is
 explicit: "Count of input (or prompt) tokens. **Sum of all input token types.**"
-(`agnet-service/.venv/lib/python3.14/site-packages/langchain_core/messages/ai.py:137-139`). So the
+(`agent-service/.venv/lib/python3.14/site-packages/langchain_core/messages/ai.py:137-139`). So the
 cache-hit and cache-write counts must be **subtracted** from the total, or they are double-counted:
 
 ```
@@ -664,7 +664,7 @@ for the backend's own echo of what it was told:
   `workflow_id`, `model`.
 
 If the API log line reports `cost_usd=0`, the zero was received, and the producer is at fault.
-`agnet-service/app/api/agents.py:271,325,344` and `usage_reporter.py:20` are then the fix sites.
+`agent-service/app/api/agents.py:271,325,344` and `usage_reporter.py:20` are then the fix sites.
 A best-effort failure would instead appear as `Failed to report usage for workflow ...` with a
 traceback (`agents.py:255-259`).
 
@@ -695,9 +695,9 @@ Phase 4 work with no evidence of it having landed.
 **Q2 — What produced `t-cap4`, and does the reuse of `thread_id` harm run↔usage linking?**
 Resolved in part, and it raises a new concern. `WorkflowId` is the **caller-supplied** `thread_id`:
 `workflow_id=payload.thread_id or request_id`
-(`agnet-service/app/api/agents.py:141`; the same expression builds the collector id at `:102`), and
+(`agent-service/app/api/agents.py:141`; the same expression builds the collector id at `:102`), and
 `thread_id` is an unconstrained optional field on the request DTO with no format validation
-(`agnet-service/app/schemas/query.py:16-19`). So `t-cap4` is a client-chosen label, not something
+(`agent-service/app/schemas/query.py:16-19`). So `t-cap4` is a client-chosen label, not something
 the repository defines — a full-history `git grep` over all commits finds neither `t-cap4` nor
 `t-new3`, and the only literal workflow ids in the repo are test fixtures like `wf-test-1`.
 

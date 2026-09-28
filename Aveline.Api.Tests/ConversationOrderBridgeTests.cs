@@ -59,7 +59,7 @@ public class ConversationOrderBridgeTests
             .Setup(service => service.IdentifyOrCreateAsync(
                 It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid org, string phone, string? name, CancellationToken _) => new CustomerProfileDto(
-                Guid.CreateVersion7(), phone, null, name, "new", 0m, 0,
+                Guid.CreateVersion7(), phone, null, name, null, "new", 0m, 0,
                 Array.Empty<CustomerPreferenceDto>(), Array.Empty<string>(), "pending"));
 
         return new Harness(
@@ -257,5 +257,64 @@ public class ConversationOrderBridgeTests
 
         Assert.NotNull(outcome);
         Assert.False(outcome!.RequiresApproval);
+    }
+
+    [Fact]
+    public async Task APauseWithRegisteredCustomerName_ResolvesCustomerFromDatabaseAndQueuesForApproval()
+    {
+        var harness = BuildHarness();
+        var registeredCustomerId = Guid.CreateVersion7();
+
+        harness.Customers
+            .Setup(c => c.LookupAsync(
+                It.Is<CustomerLookupRequest>(r => r.OrganizationId == OrgId && r.Name == "Kaveesha"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomerLookupResponse(
+                new List<CustomerMatchDto>
+                {
+                    new(
+                        registeredCustomerId,
+                        "Kaveesha Tharindi Mahindarathne",
+                        "+94779037760",
+                        "VIP",
+                        DateTime.UtcNow.AddDays(-2))
+                },
+                IsExact: true,
+                Total: 1));
+
+        CreateOrderDto? capturedDto = null;
+        harness.Orders
+            .Setup(o => o.CreateOrderAsync(
+                OrgId,
+                It.IsAny<CreateOrderDto>(),
+                null,
+                It.IsAny<CancellationToken>()))
+            .Callback<Guid, CreateOrderDto, Guid?, CancellationToken>((_, dto, _, _) => capturedDto = dto)
+            .ReturnsAsync(new OrderResponseDto
+            {
+                Id = Guid.CreateVersion7(),
+                OrganizationId = OrgId,
+                CustomerId = registeredCustomerId,
+                CustomerName = "Kaveesha Tharindi Mahindarathne",
+                Status = "pending_approval",
+                Items = new List<OrderItemDto>()
+            });
+
+        var outcome = await CreateAsync(
+            harness,
+            phoneNumber: null,
+            customerName: "Kaveesha",
+            customerId: null);
+
+        Assert.NotNull(outcome);
+        Assert.True(outcome!.Created);
+        Assert.True(outcome.RequiresApproval);
+        Assert.Equal(registeredCustomerId, outcome.CustomerId);
+
+        Assert.NotNull(capturedDto);
+        Assert.Equal(registeredCustomerId, capturedDto!.CustomerId);
+        Assert.Equal("Kaveesha Tharindi Mahindarathne", capturedDto.CustomerName);
+        Assert.Equal("VIP", capturedDto.CustomerTier);
+        Assert.True(capturedDto.RequireApproval);
     }
 }

@@ -30,6 +30,9 @@ public static class CommerceModule
         // no persistence.
         services.AddScoped<IConversationOrderBridge, ConversationOrderBridge>();
 
+        // Dispatches real-time Lina notifications into the customer Salon on order events
+        services.AddScoped<ICommerceSalonNotifier, CommerceSalonNotifier>();
+
         // Approvals (Feature 4)
         services.AddScoped<IApprovalRepository, ApprovalRepository>();
         services.AddScoped<IApprovalService, ApprovalService>();

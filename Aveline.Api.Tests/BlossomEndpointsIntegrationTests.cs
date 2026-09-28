@@ -37,6 +37,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
             });
 
@@ -91,7 +92,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
     private static async Task<(Guid OrgId, string OwnerClerkId)> SeedBoutiqueAsync(string suffix)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var owner = new User
@@ -133,7 +134,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
     private static async Task SeedAdminAsync(string clerkId)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         context.Users.Add(new User
@@ -160,7 +161,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         string suffix, string boutiqueRole)
     {
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         var member = new User
@@ -413,7 +414,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         Assert.Single(responses, response => response.Headers.Contains("Idempotency-Replayed"));
 
         await using var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
         // The per-key lease serialises the pair, so the second request replays the first
@@ -537,7 +538,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         var token = CreateToken(ownerClerk, orgRole: Roles.BoutiqueOwner);
 
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb").Options))
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name()).Options))
         {
             context.AiUsageRecords.Add(new Modules.Billing.Models.AiUsageRecord
             {
@@ -589,7 +590,7 @@ public class BlossomEndpointsIntegrationTests : IAsyncLifetime
         var token = CreateToken(adminClerk, userRole: Roles.Admin);
 
         await using (var context = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb").Options))
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name()).Options))
         {
             context.AiUsageRecords.Add(new Modules.Billing.Models.AiUsageRecord
             {

@@ -4,6 +4,8 @@
  * texture frequency gradients, and image metadata in the browser.
  */
 
+import type { CatalogCategory } from './catalog-api'
+
 export interface ExtractedColorResult {
   hex: string
   colorName: string
@@ -13,7 +15,7 @@ export interface ExtractedColorResult {
 }
 
 export interface VisualAttributesExtractionResult {
-  category: 'Sarees' | 'Lehengas' | 'Gowns' | 'Kurtas & Tunics' | 'Outerwear' | 'Drapes & Shawls' | 'Jewelry & Accessories'
+  category: CatalogCategory
   garmentType: string
   suggestedItemName: string
   /**
@@ -112,8 +114,11 @@ function lightnessOf(r: number, g: number, b: number): number {
 
 function saturationOf(r: number, g: number, b: number): number {
   const max = Math.max(r, g, b)
+  if (max === 0) return 0
   const min = Math.min(r, g, b)
-  return max === 0 ? 0 : (max - min) / max
+  const sat = (max - min) / max
+  // Dampen saturation heavily for dark pixels where noise/ambient tint creates false saturation
+  return max < 120 ? sat * (max / 120) : sat
 }
 
 /**
@@ -138,6 +143,15 @@ export function getClosestColorName(r: number, g: number, b: number): string {
   const lightness = lightnessOf(r, g, b)
   const hue = hueDegrees(r, g, b)
 
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const channelDelta = max - min
+  // Truly achromatic: pure greys (delta < 8 or saturation < 0.06), or pale ivory neutrals (saturation < 0.13 when lightness > 0.82 and hue ~ 60)
+  const isTrulyAchromatic =
+    channelDelta < 8 ||
+    saturation < 0.06 ||
+    (saturation < 0.13 && lightness > 0.82 && Math.abs(hue - 60) <= 30)
+
   let closest = COLOR_PALETTE[0].name
   let minDistance = Infinity
   let closestAchromatic = COLOR_PALETTE[0].name
@@ -147,9 +161,7 @@ export function getClosestColorName(r: number, g: number, b: number): string {
     const itemLightness = lightnessOf(item.r, item.g, item.b)
     const itemSaturation = saturationOf(item.r, item.g, item.b)
 
-    // A grey pixel cannot carry hue information, so track the best grey-only match as well. Only
-    // genuinely grey swatches compete: without the saturation guard a near-black pixel took
-    // `Navy Blue` on lightness alone, because a navy swatch is darker than black is light.
+    // Track achromatic swatches for greyscale comparison
     const achromaticSwatch = itemSaturation < 0.15
     const achromaticDistance = Math.abs(lightness - itemLightness) * 2
     if (achromaticSwatch && achromaticDistance < minAchromaticDistance) {
@@ -157,15 +169,11 @@ export function getClosestColorName(r: number, g: number, b: number): string {
       closestAchromatic = item.name
     }
 
-    // When either side is effectively grey, hue comparison is meaningless: only greys compete.
-    // The floor is 0.15, matching the swatch guard above, because severe dark-end quantisation
-    // leaves `rgb(12,12,14)` at saturation 0.14 - enough to look "chromatic" to a 0.08 gate and
-    // take Navy Blue on a hue that is an artefact of two levels of blue.
-    if (saturation < 0.15 || itemSaturation < 0.15) {
-      if (saturation < 0.15 && achromaticSwatch && achromaticDistance < minDistance) {
-        minDistance = achromaticDistance
-        closest = item.name
-      }
+    if (achromaticSwatch) {
+      continue
+    }
+    if (isTrulyAchromatic) {
+      // The pixel is truly grey/white/black/ivory. It should only compete on lightness against achromatic swatches.
       continue
     }
 
@@ -179,8 +187,8 @@ export function getClosestColorName(r: number, g: number, b: number): string {
     }
   }
 
-  // Every swatch was chromatic and the pixel was grey: fall back to the closest grey swatch.
-  return minDistance === Infinity ? closestAchromatic : closest
+  // If truly achromatic or no chromatic match found, return the closest grey swatch.
+  return isTrulyAchromatic ? closestAchromatic : (minDistance === Infinity ? closestAchromatic : closest)
 }
 
 export interface CanvasAnalysisMetrics {
@@ -219,17 +227,91 @@ export interface IsolatedGarmentColor {
   achromatic: boolean
 }
 
-function isBackdropPixel(r: number, g: number, b: number): boolean {
+/**
+ * Samples the outer perimeter border (top, left, right, and bottom outer bands)
+ * to identify dominant backdrop color cluster(s) in studio/catalogue photography.
+ */
+export function extractPerimeterBackdropColors(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): { r: number; g: number; b: number }[] {
+  const borderX = Math.max(1, Math.floor(width * 0.08))
+  const borderY = Math.max(1, Math.floor(height * 0.08))
+  const bins = new Map<string, { count: number; r: number; g: number; b: number }>()
+
+  let totalSamples = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const isPerimeter = x < borderX || x >= width - borderX || y < borderY || y >= height - borderY
+      if (!isPerimeter) continue
+
+      const i = (y * width + x) * 4
+      if (data[i + 3] < 128) continue
+
+      const r = data[i]
+      const g = data[i + 1]
+      const b = data[i + 2]
+
+      // Quantize channels into 24-step bins (0..10 per channel)
+      const key = `${(r / 24) | 0}_${(g / 24) | 0}_${(b / 24) | 0}`
+      const bin = bins.get(key) ?? { count: 0, r: 0, g: 0, b: 0 }
+      bin.count++
+      bin.r += r
+      bin.g += g
+      bin.b += b
+      bins.set(key, bin)
+      totalSamples++
+    }
+  }
+
+  if (totalSamples === 0) return []
+
+  const sorted = Array.from(bins.values()).sort((a, b) => b.count - a.count)
+  const backdropColors: { r: number; g: number; b: number }[] = []
+
+  for (const cluster of sorted) {
+    // Clusters representing at least 8% of the perimeter border
+    if (cluster.count / totalSamples >= 0.08) {
+      backdropColors.push({
+        r: Math.round(cluster.r / cluster.count),
+        g: Math.round(cluster.g / cluster.count),
+        b: Math.round(cluster.b / cluster.count),
+      })
+    }
+    if (backdropColors.length >= 3) break
+  }
+
+  return backdropColors
+}
+
+function isBackdropPixel(
+  r: number,
+  g: number,
+  b: number,
+  perimeterBackdrops: { r: number; g: number; b: number }[] = [],
+): boolean {
   const saturation = saturationOf(r, g, b)
   const luminance = 0.299 * r + 0.587 * g + 0.114 * b
-  // Neutral studio backdrops (white, light grey, textured walls, studio floors) and ambient
-  // shadows/glare. Everything else stays in the running.
-  return (
-    (saturation < 0.12 && luminance > 200) ||
-    luminance > 245 ||
-    luminance < 14 ||
-    (saturation < 0.06 && luminance > 60 && luminance < 195)
-  )
+
+  // 1. Extreme white, bright neutral studio highlights, or glare
+  if (luminance > 250 || (saturation < 0.12 && luminance > 220)) {
+    return true
+  }
+
+  // 2. Check if pixel matches sampled perimeter backdrop wall/floor colors
+  for (const bg of perimeterBackdrops) {
+    const dr = r - bg.r
+    const dg = g - bg.g
+    const db = b - bg.b
+    const distSq = dr * dr + dg * dg + db * db
+    // Tolerant color sphere matching backdrop cluster (dist ~42)
+    if (distSq < 42 * 42) {
+      return true
+    }
+  }
+
+  return false
 }
 
 /**
@@ -255,20 +337,9 @@ function passesRegionPrior(x: number, y: number, width: number, height: number):
  *
  * Each stage addresses a distinct way a whole-frame histogram went wrong:
  *
- * 1. A **relative** saturation floor. An absolute gate cannot separate a cream garment from a
- *    cream wall, but a garment is reliably more saturated than its surroundings, so the gate
- *    scales with the most saturated pixels present.
- * 2. **Connected-component** selection scored by size, centre prior, and how *solid* the segment
- *    is at the centre of the frame. Solidity is what stops a wall or console that merely rings
- *    the subject from winning on pixel count.
- * 3. **Hue-family modal colour at a brightness percentile** inside the winning segment. A plain
- *    mean of the segment is dragged toward shadow by folds and mirror shading; the modal hue
- *    family's percentile reports the fabric's actual colour.
- *
- * The frame is segmented twice, once for chromatic fabric and once for neutral fabric, and the
- * better-scoring segment wins. Scored on solidity, the two do not compete wrongly: the neutral
- * mask of the failing mirror selfie collects only scattered grey, while its chromatic mask finds
- * the saree. A black or ivory piece is the reverse.
+ * 1. Perimeter backdrop sampling: analyzes outer borders to detect studio walls (peach, beige, cream).
+ * 2. Connected-component selection scored by size, centre prior, solidity, and border exclusion.
+ * 3. Hue-family modal colour at a brightness percentile inside the winning segment.
  *
  * Returns `null` only when the frame yields no usable pixels at all.
  */
@@ -280,15 +351,12 @@ export function isolateGarmentColor(
   const total = width * height
   if (total === 0 || data.length < total * 4) return null
 
-  // Stage 1: the relative saturation floor, from the most saturated pixels present.
-  let maxSaturation = 0
-  for (let p = 0; p < total; p++) {
-    const i = p * 4
-    if (data[i + 3] < 128) continue
-    const saturation = saturationOf(data[i], data[i + 1], data[i + 2])
-    if (saturation > maxSaturation) maxSaturation = saturation
-  }
-  const saturationFloor = Math.max(0.14, Math.min(0.55, maxSaturation * 0.72))
+  // Sample perimeter borders to identify studio backdrop wall tones
+  const perimeterBackdrops = extractPerimeterBackdropColors(data, width, height)
+
+  // Use a sensible base floor (0.10) so soft pastels (Mint Green, Light Sage, Powder Blue, Lavender)
+  // are never filtered out by more saturated background elements.
+  const saturationFloor = 0.10
 
   const chromaticMask = new Uint8Array(total)
 
@@ -300,7 +368,7 @@ export function isolateGarmentColor(
       const r = data[i]
       const g = data[i + 1]
       const b = data[i + 2]
-      if (isBackdropPixel(r, g, b)) continue
+      if (isBackdropPixel(r, g, b, perimeterBackdrops)) continue
       if (!passesRegionPrior(x, y, width, height)) continue
       if (saturationOf(r, g, b) >= saturationFloor) chromaticMask[p] = 1
     }
@@ -325,7 +393,7 @@ export function isolateGarmentColor(
       const r = data[i]
       const g = data[i + 1]
       const b = data[i + 2]
-      if (isBackdropPixel(r, g, b)) continue
+      if (isBackdropPixel(r, g, b, perimeterBackdrops)) continue
       if (!passesRegionPrior(x, y, width, height)) continue
       if (saturationOf(r, g, b) >= saturationFloor) continue
       if (chromaticMean !== null) {
@@ -372,6 +440,7 @@ function strongestSegment(
     cy: number
     centreRatio: number
     fillRatio: number
+    borderRatio: number
   }[] = []
   const stack: number[] = []
 
@@ -416,16 +485,23 @@ function strongestSegment(
           const dg = data[qi + 1] - data[pi + 1]
           const db = data[qi + 2] - data[pi + 2]
           // Grow across folds and shading, but not across a colour boundary.
-          if (dr * dr + dg * dg + db * db > 110 * 110) continue
+          // A strict limit is required so contrasting embroidery (like gold motifs on black)
+          // does not merge into the base fabric and hijack the hue extraction.
+          if (dr * dr + dg * dg + db * db > 90 * 90) continue
           labels[q] = id
           stack.push(q)
         }
       }
 
-      // Two shape tests, because a pixel count alone cannot tell a garment from a room.
+      // Two shape tests, plus border ratio test:
       // `centreRatio`: a garment fills the middle of the frame; a wall that merely *surrounds* the
       // garment is a ring. `fillRatio`: a garment fills its own bounding box; the ring does not.
+      // `borderRatio`: background walls touch the outer borders, while garments stay in the center.
       let withinCentre = 0
+      let borderCount = 0
+      const borderX = Math.max(1, Math.floor(width * 0.08))
+      const borderY = Math.max(1, Math.floor(height * 0.08))
+
       for (let y = minY; y <= maxY; y++) {
         for (let x = minX; x <= maxX; x++) {
           const p = y * width + x
@@ -433,6 +509,9 @@ function strongestSegment(
           const dx = (x / width - 0.5) / 0.2
           const dy = (y / height - 0.55) / 0.25
           if (dx * dx + dy * dy <= 1) withinCentre++
+          if (x < borderX || x >= width - borderX || y < borderY || y >= height - borderY) {
+            borderCount++
+          }
         }
       }
       const boundingBoxArea = (maxX - minX + 1) * (maxY - minY + 1)
@@ -444,6 +523,7 @@ function strongestSegment(
         cy: sumY / count / height,
         centreRatio: withinCentre / count,
         fillRatio: count / boundingBoxArea,
+        borderRatio: borderCount / count,
       })
     }
   }
@@ -456,10 +536,19 @@ function strongestSegment(
     cy: number
     centreRatio: number
     fillRatio: number
+    borderRatio: number
   }): number => {
+    // A background wall forms a ring/horseshoe around the model or touches outer borders.
+    // Disqualify segments with virtually no center presence or that heavily bleed into perimeter borders.
+    if (c.centreRatio < 0.12) return 0
+    if (c.borderRatio > 0.35) return 0
+    
     const dx = (c.cx - 0.5) / 0.42
     const dy = (c.cy - 0.62) / 0.45
-    return c.count * Math.exp(-(dx * dx + dy * dy)) * (0.35 + c.centreRatio) * (0.3 + c.fillRatio)
+    const centerFalloff = Math.exp(-(dx * dx + dy * dy))
+    const borderPenalty = Math.max(0, 1 - c.borderRatio * 3)
+
+    return c.count * centerFalloff * Math.pow(c.centreRatio, 2.5) * c.fillRatio * borderPenalty
   }
 
   let best = components[0]
@@ -569,7 +658,6 @@ function isolateAchromaticColor(
       const r = data[i]
       const g = data[i + 1]
       const b = data[i + 2]
-      if (0.299 * r + 0.587 * g + 0.114 * b < 14) continue
       const nx = (x / width - 0.5) / 0.28
       const ny = (y / height - 0.55) / 0.35
       if (nx * nx + ny * ny <= 1) centre.push([r, g, b])
@@ -620,6 +708,8 @@ export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: numbe
     const topBound = Math.floor(height * 0.33)
     const midBound = Math.floor(height * 0.66)
 
+    const perimeterBackdrops = extractPerimeterBackdropColors(data, width, height)
+
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const i = (y * width + x) * 4
@@ -633,7 +723,7 @@ export function analyzeCanvasMetrics(ctx: CanvasRenderingContext2D, width: numbe
 
         if (luminance > 210 && (r > 185 || g > 165) && saturation > 0.18) specularHighlights++
 
-        if (isBackdropPixel(r, g, b)) continue
+        if (isBackdropPixel(r, g, b, perimeterBackdrops)) continue
 
         if (y < topBound) topMass++
         else if (y < midBound) midMass++
@@ -802,7 +892,7 @@ export function inferGarmentFromMetricsAndMetadata(
   const rawLower = imageUrl.startsWith('data:') ? '' : imageUrl.toLowerCase()
   const combined = `${rawLower} ${fileName || ''} ${contextHint || ''}`.toLowerCase()
 
-  let detectedCategory: 'Sarees' | 'Lehengas' | 'Gowns' | 'Kurtas & Tunics' | 'Outerwear' | 'Drapes & Shawls' | 'Jewelry & Accessories' = 'Sarees'
+  let detectedCategory: CatalogCategory = 'Sarees'
   let detectedGarment = 'Silk Kanjeevaram Saree'
   let detectedFabric = 'Pure Mulberry Silk'
   let detectedPattern = 'Gold Zari Brocade'
@@ -879,20 +969,76 @@ export function inferGarmentFromMetricsAndMetadata(
     detectedPattern = combined.includes('chikankari') ? 'Chikankari Motif' : 'Handloom Weave'
     detectedStyle = 'Contemporary Luxe'
   } else if (
+    combined.includes('top') ||
+    combined.includes('shirt') ||
+    combined.includes('t-shirt') ||
+    combined.includes('tee') ||
+    combined.includes('corset')
+  ) {
+    detectedCategory = 'Tops & Blouses'
+    detectedGarment = combined.includes('corset') ? 'Sculpted Silk Corset Top'
+      : combined.includes('shirt') ? 'Tailored Silk Shirt'
+      : 'Contemporary Silk Top'
+    detectedFabric = 'Pure Mulberry Silk'
+    detectedPattern = 'Solid Satin Sheen'
+    detectedStyle = 'Contemporary Luxe'
+  } else if (
+    combined.includes('trouser') ||
+    combined.includes('pant') ||
+    combined.includes('jeans') ||
+    combined.includes('skirt') ||
+    combined.includes('bottom') ||
+    combined.includes('shorts')
+  ) {
+    detectedCategory = 'Trousers & Pants'
+    detectedGarment = combined.includes('skirt') ? 'Pleated Statement Skirt'
+      : combined.includes('jeans') ? 'Tailored Denim Trousers'
+      : 'Tailored Silk Trousers'
+    detectedFabric = combined.includes('denim') ? 'Premium Denim' : 'Raw Silk'
+    detectedPattern = 'Solid Matte Weave'
+    detectedStyle = 'Contemporary Luxe'
+  } else if (
+    combined.includes('footwear') ||
+    combined.includes('shoe') ||
+    combined.includes('heel') ||
+    combined.includes('sandal') ||
+    combined.includes('jutti') ||
+    combined.includes('mojari')
+  ) {
+    detectedCategory = 'Footwear'
+    detectedGarment = combined.includes('jutti') || combined.includes('mojari') ? 'Embroidered Artisan Juttis'
+      : combined.includes('heel') ? 'Handcrafted Stiletto Heels'
+      : 'Artisan Leather Mojaris'
+    detectedFabric = 'Embellished Genuine Leather'
+    detectedPattern = 'Handcrafted Embellishment'
+    detectedStyle = 'Traditional Heirloom'
+  } else if (
     combined.includes('blazer') ||
     combined.includes('jacket') ||
     combined.includes('coat') ||
+    combined.includes('overcoat') ||
+    combined.includes('trench') ||
+    combined.includes('trenchcoat') ||
     combined.includes('outerwear') ||
     combined.includes('cape') ||
-    combined.includes('sherwani')
+    combined.includes('sherwani') ||
+    combined.includes('duster') ||
+    combined.includes('parka') ||
+    combined.includes('cardigan')
   ) {
     detectedCategory = 'Outerwear'
     detectedGarment = combined.includes('sherwani') ? 'Handcrafted Silk Sherwani'
       : combined.includes('cape') ? 'Embroidered Cape'
+      : combined.includes('trench') ? 'Double-Breasted Trench Coat'
+      : combined.includes('overcoat') || (combined.includes('long') && combined.includes('coat')) ? 'Tailored Woolen Overcoat'
       : combined.includes('velvet') ? 'Structured Velvet Jacket'
+      : combined.includes('coat') ? 'Tailored Woolen Overcoat'
       : 'Tailored Boutique Blazer'
-    detectedFabric = combined.includes('velvet') ? 'Micro Velvet' : 'Pure Mulberry Silk'
-    detectedPattern = 'Solid Satin Sheen'
+    detectedFabric = combined.includes('velvet') ? 'Micro Velvet'
+      : combined.includes('cotton') || (combined.includes('trench') && !combined.includes('wool')) ? 'Structured Cotton Gabardine'
+      : combined.includes('wool') || combined.includes('overcoat') || combined.includes('coat') ? 'Pure Wool Blend'
+      : 'Pure Mulberry Silk'
+    detectedPattern = 'Solid Matte Weave'
     detectedStyle = 'Contemporary Luxe'
   } else if (
     combined.includes('shawl') ||
@@ -939,19 +1085,38 @@ export function inferGarmentFromMetricsAndMetadata(
         detectedFabric = metrics.isWarmEthnicTone ? 'Micro Velvet' : 'Pure Mulberry Silk'
         detectedPattern = metrics.highFreqEdgeCount > 60 ? 'Gold Zari Brocade' : 'French Knot Embroidery'
         detectedStyle = 'Royal Bridal'
-      } else if (metrics.isWarmEthnicTone || metrics.highFreqEdgeCount > 40 || metrics.specularPoints > 10 || metrics.isRoyalJewelTone) {
-        // Traditional drape silhouette with zari / rich ethnic palette -> Saree
+      } else if (
+        (metrics.isWarmEthnicTone && metrics.highFreqEdgeCount > 70 && metrics.specularPoints > 10) ||
+        (metrics.highFreqEdgeCount > 90 && metrics.specularPoints > 12)
+      ) {
+        // Traditional drape silhouette with heavy zari brocade / metallic embellishments -> Saree
         detectedCategory = 'Sarees'
         detectedGarment = metrics.highFreqEdgeCount > 80 ? 'Banarasi Silk Brocade Saree' : 'Silk Kanjeevaram Saree'
         detectedFabric = 'Pure Mulberry Silk'
         detectedPattern = 'Gold Zari Brocade'
         detectedStyle = 'Traditional Heirloom'
-      } else if (metrics.flareRatio < 1.15 && metrics.aspectRatio < 1.3) {
-        // Fitted/tunic proportion -> Kurti / Kurta Set
+      } else if (
+        metrics.aspectRatio >= 1.2 &&
+        metrics.aspectRatio <= 1.55 &&
+        metrics.flareRatio >= 1.05 &&
+        metrics.flareRatio <= 1.35 &&
+        (metrics.color.colorName.includes('Forest') || metrics.color.colorName.includes('Bottle') || metrics.color.colorName.includes('Camel') || metrics.color.colorName.includes('Charcoal'))
+      ) {
+        // Structured long outerwear / overcoat / trench silhouette (tall vertical, sleek moderate flare, outerwear palette)
+        detectedCategory = 'Outerwear'
+        detectedGarment = 'Tailored Woolen Overcoat'
+        detectedFabric = 'Pure Wool Blend'
+        detectedPattern = 'Solid Matte Weave'
+        detectedStyle = 'Contemporary Luxe'
+      } else if (
+        metrics.flareRatio <= 1.30 &&
+        metrics.aspectRatio <= 1.55
+      ) {
+        // Straight / tailored tunic silhouette over pants / trousers -> Kurti / Kurta Set
         detectedCategory = 'Kurtas & Tunics'
-        detectedGarment = 'Silk Kurta Set'
+        detectedGarment = metrics.flareRatio > 1.20 ? 'Anarkali Kurta & Tunic' : 'Silk Kurta Set'
         detectedFabric = 'Handloom Chanderi Silk'
-        detectedPattern = 'Woven Buta Motif'
+        detectedPattern = metrics.highFreqEdgeCount > 30 ? 'Woven Buta Motif' : 'Solid Satin Sheen'
         detectedStyle = 'Contemporary Luxe'
       } else {
         // Contemporary monochrome evening silhouette -> Gown

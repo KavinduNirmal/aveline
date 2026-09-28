@@ -5,7 +5,7 @@ The knowledge base Aveline answers platform and company questions from. Two corp
 | Corpus | Where it lives | How it is found |
 |---|---|---|
 | **Product documentation** | `frontend/web/src/docs/*.md` | discovered automatically; read **in place**, never copied |
-| **Company knowledge** | `handbook/company/*.md` | listed explicitly in `agnet-service/app/handbook/sources.py` |
+| **Company knowledge** | `handbook/company/*.md` | listed explicitly in `agent-service/app/handbook/sources.py` |
 
 The product docs are the source of truth for how the app works, and reading them in place is what
 stops the index from drifting from the documentation it describes. The company pages exist because
@@ -29,7 +29,7 @@ page about what the handbook does not cover.
 ## Adding a company page
 
 1. Add the markdown file to `handbook/company/`.
-2. Add a `CompanyPage` entry to `COMPANY_PAGES` in `agnet-service/app/handbook/sources.py` with its
+2. Add a `CompanyPage` entry to `COMPANY_PAGES` in `agent-service/app/handbook/sources.py` with its
    key, title, URL and audience. A page in the manifest but missing from disk fails the seed loudly;
    an unlisted page is simply not indexed.
 3. Re-seed with `--source company/<slug>` and, when retiring a page, `--prune`.
@@ -37,7 +37,7 @@ page about what the handbook does not cover.
 ## Seeding
 
 ```bash
-cd agnet-service
+cd agent-service
 python scripts/seed_handbook.py --dry-run                      # no HTTP at all
 python scripts/seed_handbook.py --token "$INTERNAL_API_TOKEN"  # upsert everything
 python scripts/seed_handbook.py --source web-docs/salon --prune

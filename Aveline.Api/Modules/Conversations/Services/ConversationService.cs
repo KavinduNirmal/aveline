@@ -850,6 +850,11 @@ public class ConversationService : IConversationService
             "SignOff resume for thread {ThreadId} is deferred (no LangGraph resume wired, ADR-018).",
             conversation.ThreadId);
 
+        if (_orderBridge is not null)
+        {
+            await _orderBridge.SettleSignOffAsync(orgId, conversationId, approved, null, cancellationToken);
+        }
+
         return MessageDto.From(message);
     }
 
@@ -1044,7 +1049,7 @@ public class ConversationService : IConversationService
                 conversation.OrganizationId,
                 attachment is null ? Array.Empty<MessageAttachment>() : new[] { attachment });
 
-            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, text, cancellationToken);
+            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, text, null, cancellationToken);
 
             var payload = new
             {
@@ -1080,6 +1085,7 @@ public class ConversationService : IConversationService
                     // ceiling can be computed for them, and declares itself a quote so the agent may
                     // answer without pausing and this API may not write an order (ADR-028).
                     purpose = ToWirePurpose(orderContext),
+                    proposed_discount = orderContext.ProposedDiscount ?? 0m,
                 },
             };
             using var content = JsonContent.Create(payload);
@@ -1087,7 +1093,7 @@ public class ConversationService : IConversationService
             // replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
             await HandleAgentOutcomeAsync(
-                conversation, response, orderContext, from, customerName: null, cancellationToken);
+                conversation, response, orderContext, from, customerName: orderContext.CustomerHint, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -1107,6 +1113,7 @@ public class ConversationService : IConversationService
     private async Task<OrderContext> BuildOrderContextAsync(
         Guid organizationId,
         string? message,
+        IReadOnlyList<string>? recentMessages,
         CancellationToken cancellationToken)
     {
         if (_orderContext is null)
@@ -1116,7 +1123,7 @@ public class ConversationService : IConversationService
 
         try
         {
-            return await _orderContext.BuildAsync(organizationId, message, cancellationToken);
+            return await _orderContext.BuildAsync(organizationId, message, recentMessages, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -1136,7 +1143,8 @@ public class ConversationService : IConversationService
         quantity = item.Quantity,
         unit_price = item.UnitPrice,
         wholesale_cost = item.WholesaleCost,
-        total_price = item.TotalPrice
+        total_price = item.TotalPrice,
+        piece_discount = item.PieceDiscountRate
     };
 
     /// <summary>
@@ -1246,7 +1254,40 @@ public class ConversationService : IConversationService
             var (described, imageUrl) = DescribeAttachments(
                 conversation.OrganizationId, attachments ?? Array.Empty<MessageAttachment>());
 
-            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, query, cancellationToken);
+            // Retrieve recent messages to support context fallback (e.g. pieces showcased by Elle)
+            IReadOnlyList<string>? recentTexts = null;
+            try
+            {
+                var recentMessages = await _messages.ListLatestAsync(conversation.Id, 10, cancellationToken);
+                recentTexts = recentMessages
+                    .OrderByDescending(m => m.CreatedAt)
+                    .Select(m => ConversationBlockText.Flatten(m.ContentBlocksJson))
+                    .Where(t => !string.IsNullOrWhiteSpace(t))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not load recent messages for order context in conversation {ConversationId}", conversation.Id);
+            }
+
+            var orderContext = await BuildOrderContextAsync(conversation.OrganizationId, query, recentTexts, cancellationToken);
+
+            string? effectiveCustomerName = orderContext.CustomerHint;
+            if (string.IsNullOrWhiteSpace(effectiveCustomerName) && customerId.HasValue)
+            {
+                try
+                {
+                    var row = await _conversations.GetRowAsync(conversation.Id, cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(row?.CustomerName))
+                    {
+                        effectiveCustomerName = row.CustomerName;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not resolve customer name for conversation {ConversationId}", conversation.Id);
+                }
+            }
 
             var payload = new
             {
@@ -1258,6 +1299,7 @@ public class ConversationService : IConversationService
                     // See TriggerInboundDraftAsync: the transcript window is keyed by this id.
                     conversation_id = conversation.Id,
                     customer_id = customerId,
+                    customer_name = effectiveCustomerName,
                     // The staff path (Salon note, regeneration, agent brief), so the tenant's own
                     // account figures are in scope: "how many Blossoms do I have left?" is a
                     // question about this boutique, not about a customer (ADR-026). This flag is
@@ -1272,6 +1314,7 @@ public class ConversationService : IConversationService
                     // ...and whether they are there to be bought or only to be priced (ADR-028). A
                     // staff price question is a quote: Lina answers the ceiling and nothing commits.
                     purpose = ToWirePurpose(orderContext),
+                    proposed_discount = orderContext.ProposedDiscount ?? 0m,
                 },
             };
             using var content = JsonContent.Create(payload);
@@ -1279,7 +1322,7 @@ public class ConversationService : IConversationService
             // agent replies arrive later as message.created events.
             var response = await _agentClient.PostAsync("/agents/query", content, cancellationToken);
             await HandleAgentOutcomeAsync(
-                conversation, response, orderContext, phoneNumber: null, customerName: null, cancellationToken);
+                conversation, response, orderContext, phoneNumber: null, customerName: effectiveCustomerName, cancellationToken);
         }
         catch (Exception ex)
         {

@@ -18,10 +18,10 @@ Python agent orchestrates via internal endpoints.
 WhatsApp message
       │
       ▼
-Intent Gate (agnet-service/app/gate.py)
+Intent Gate (agent-service/app/gate.py)
       │  intent_type + routing
       ▼
-Customer Memory Agent sub-graph (agnet-service/app/agents/customer_memory/)
+Customer Memory Agent sub-graph (agent-service/app/agents/customer_memory/)
   resolve_customer → check_consent → parse → retrieve → persist → compose_output
       │                (ToolRegistry → HTTP → ASP.NET Core internal endpoints)
       ▼
@@ -37,9 +37,9 @@ Customer Memory Agent sub-graph (agnet-service/app/agents/customer_memory/)
 | Services (identify, memory, consent, interactions, events, brief, loyalty, reminders) | `Aveline.Api/Modules/CustomerConcierge/Services` |
 | Embedding generation (`IEmbeddingService`) | `Aveline.Api/Modules/CustomerConcierge/Services` |
 | Internal endpoints (`/internal/customers/*`) | `Aveline.Api/Endpoints/CustomerConciergeEndpoints.cs` |
-| Typed I/O schemas | `agnet-service/app/schemas/customer_memory.py` |
-| Backend client (`ToolRegistry`) | `agnet-service/app/tools/registry.py` |
-| LangGraph sub-graph (nodes, state, parsing) | `agnet-service/app/agents/customer_memory/` |
+| Typed I/O schemas | `agent-service/app/schemas/customer_memory.py` |
+| Backend client (`ToolRegistry`) | `agent-service/app/tools/registry.py` |
+| LangGraph sub-graph (nodes, state, parsing) | `agent-service/app/agents/customer_memory/` |
 
 The Python agent never writes to the database and never calls third parties directly — it calls
 the API's internal endpoints guarded by the `X-Internal-Token` header (ADR-009).
@@ -51,10 +51,10 @@ All entities are tenant-scoped (`OrganizationId`) and created by the
 
 | Table | Purpose | Notes |
 |---|---|---|
-| `Customers` | Customer identity | unique `(OrganizationId, PhoneNumber)`, status `new/returning/vip/dormant/deleted`, soft-delete |
+| `Customers` | Customer identity | unique `(OrganizationId, PhoneNumber)`, status `new/returning/vip/dormant/deleted`, optional staff-written `Description`, soft-delete |
 | `Customer_Preferences` | Stated / inferred preferences | `preference_key/value`, `is_explicit`, `confidence` |
 | `Customer_Events` | Weddings, birthdays, parties… | `event_type`, `event_date`, `is_active` |
-| `Customer_Memory` | Semantic memory | `embedding vector(1536)` + HNSW cosine index (raw SQL, ADR-017) |
+| `Customer_Memory` | Semantic memory | `embedding vector(1536)` + HNSW cosine index (raw SQL, ADR-017); normalised `ContentKey` with a partial unique index over `(OrganizationId, CustomerId, ContentKey)` where `DeletedAt IS NULL`; optional `ExpiresAt` |
 | `Customer_Interactions` | Inbound/outbound log | `channel`, `direction`, `parsed_intent` (jsonb) |
 | `Customer_Consent` | Data-processing consent | one row per org + customer |
 | `Customer_Tags` | Free-form labels | unique per customer |
@@ -69,9 +69,13 @@ Routed under `/internal/customers`, all require the `InternalServicePolicy`
 | POST | `/identify` | Look up a customer by phone, creating a `new` profile when absent |
 | POST | `/lookup` | Read-only lookup by name and/or phone/email (never creates) - used to resolve a customer from free text |
 | GET | `/{id}/profile` | Full profile (preferences, tags, consent) |
-| POST | `/{id}/memories` | Persist a semantic memory (embeds content) |
-| POST | `/memories/search` | pgvector cosine search over a customer's memories |
-| GET | `/{id}/brief` | Staff-facing interaction brief (real events/tags/preferences) |
+| POST | `/{id}/memories` | Persist a semantic memory with its provenance (embeds content) |
+| GET | `/{id}/memories` | List a customer's live memories, newest first |
+| PATCH | `/{id}/memories/{memoryId}` | Correct one memory's statement and re-embed it (409 on a collapse) |
+| DELETE | `/{id}/memories/{memoryId}` | Withdraw one memory (soft delete) |
+| POST | `/memories/search` | pgvector cosine search with a `minSimilarity` floor |
+| POST | `/{id}/preferences` | Record a stated preference in the preferences table |
+| GET | `/{id}/brief` | Staff-facing interaction brief (description/events/tags/preferences) |
 | POST | `/{id}/interactions` | Record an interaction (with parsed-intent JSON) |
 | GET/POST | `/{id}/consent` | Read / update consent |
 | GET/POST | `/{id}/events` | List / add customer events |
@@ -94,6 +98,10 @@ honoured), but no agent runs.
 | Orchestrator routing (visual / commerce) | `_route_after_memory` on `ConciergeState.consent_status` | Short-circuits to `formulate_response`; `run_visual_agent` and `run_commerce_agent` never run. |
 | Agent sub-graph (memory) | `CustomerMemoryAgent.check_consent` | `skipped`; nothing retrieved, parsed, persisted or drafted. |
 | Memory write | `CustomerMemoryService.SaveMemoryAsync` | Returns `null`; nothing stored. |
+| Memory correction / withdrawal | `CustomerMemoryService.CorrectMemoryAsync` / `RemoveMemoryAsync` | Returns `null` / `false`; the row is untouched. |
+| Preference write | `CustomerMemoryService.SavePreferenceAsync` | Returns `null`; nothing stored. |
+| Memory list | `CustomerMemoryService.ListMemoriesAsync` | **Deliberately ungated.** The customer's own memory panel is what this backs and the tenant route behind it was never gated; gating it would empty a panel whose notes are already on screen. |
+| Outbound customer delivery | `CustomerDeliveryService` via `IConsentGateService` | `DeliveryOutcome.Refused(ConsentRevoked, …)`; nothing leaves and no message row is written. |
 | Memory read (semantic search) | `CustomerMemoryService.SearchAsync` | Returns an empty list; the embedding call and the store are never reached. |
 | Brief generation | `CustomerMemoryService.GenerateBriefAsync` | Returns `null`; profile, tags and events are not read. |
 | Interaction log write | `CustomerInteractionService.RecordAsync` | Returns `null`; endpoint answers 400, nothing written. |
@@ -125,10 +133,25 @@ the staff-facing "Welcome to your Salon" string in `ConversationService`; that i
 message for a different audience.
 
 **Where the trigger lives.** `WebhookEndpoints` (the inbound POST) is the first place that knows
-both the organization and the identified customer. After the message is recorded it asks
-`IConsentGateService` whether the customer may be processed, and if so enqueues a
-`DisclosureIntent`. An unknown number is not enqueued (there is no consent row to stamp); it is
-disclosed once the agent identifies it and it messages again. A revoked customer is never enqueued.
+both the organization and the sender. It resolves the sender against the customer book by phone
+and, when the number is new, creates the profile there and then (`IdentifyOrCreateAsync`), so a
+first-time customer has a consent row to stamp. It then asks `IConsentGateService` whether the
+customer may be processed - passing the number as well, so an erasure tombstone is honoured - and
+if so enqueues a `DisclosureIntent`. A revoked or erased customer is never enqueued. Creating the
+profile in the webhook, before `message.received` is published, also means the agent's own identify
+finds the row rather than racing it. An unknown number used to be skipped here, which meant a
+brand-new customer received no disclosure on the first message they ever sent.
+
+**The message itself is an image with the notice as its caption.** `DisclosureImageComposer`
+(`Modules/Privacy/Services/`) draws a co-branding lockup - the Aveline mark and wordmark, a cross,
+and the boutique's own name - knocked out to white on the app's aurora, at 1200x675. The fonts
+(Playfair Display SemiBold, DM Sans SemiBold and Regular) are embedded resources, because the
+runtime image is chiseled with no font packages. `DisclosureImageProvider` renders it, publishes it
+to Cloudinary under a public id that carries a hash of the boutique's name and the layout version,
+and returns the unsigned, version-less delivery URL for Meta to fetch. **The text remains the
+fallback**: if no image can be produced or Meta refuses the image, the identical notice goes out as
+text under the same idempotency key. The image is decoration on a consent notice, and a notice must
+not depend on an image host.
 
 **Synchronous or asynchronous? (plan §15 Q-1).** Asynchronous. The webhook's contract is "return
 200 fast and record what we can", and holding it open for a Meta round-trip risks a Meta retry that
@@ -271,11 +294,16 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
    above. The resolved status is promoted to the orchestrator, which stops the visual and commerce
    agents too.
 3. **parse** — deterministic rule parsing extracts intent (occasion/colour/size/budget), explicit
-   preferences ("I like/prefer/love/hate …"), and event signals.
-4. **retrieve** — semantic search over prior memories for context.
-5. **persist** — saves explicit preferences and detected events as `Customer_Memory` rows, records
-   the inbound interaction with its parsed intent (`Customer_Interactions`), and creates a
-   **structured `Customer_Event` row** for each dated event (undated signals stay text-only).
+   preferences ("I like/prefer/love/hate …"), event signals, and a complaint or sentiment signal.
+4. **retrieve** — semantic search over prior memories for context, with a similarity floor
+   (`MEMORY_SIMILARITY_FLOOR = 0.25`) so an unrelated note is not handed back as context, and with
+   each hit's `source`, `isExplicit`, `confidence` and `similarity` preserved.
+5. **persist** — saves explicit preferences, detected events and the quoted complaint/sentiment as
+   `Customer_Memory` rows **with their provenance** (`source="conversation"`, `IsExplicit=true`,
+   `confidence=0.90`), mirrors a stated preference into `Customer_Preferences` (the table the
+   brief's summary is assembled from), records the inbound interaction with its parsed intent
+   (`Customer_Interactions`), and creates a **structured `Customer_Event` row** for each dated
+   event (undated signals stay text-only).
 6. **compose_output** — enriches the `interaction_brief` from the backend
    `CustomerMemoryService.GenerateBriefAsync` (real events/tags/status) plus semantic context,
    generates a draft reply via the LLM (falling back to a deterministic template when no LLM/key
@@ -307,7 +335,7 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
 When staff type natural language into the **General Salon** (e.g. "Any events for Samantha
 Arias?") there is no `customer_id`/phone in context. The concierge orchestrator resolves the
 customer **once** before dispatching specialists via the shared module
-`agnet-service/app/customer_resolution/`:
+`agent-service/app/customer_resolution/`:
 
 - Deterministic extraction (`extract_phone`, `extract_customer_name`) finds a phone or a
   capitalized proper-name phrase in the message.
@@ -330,8 +358,9 @@ The graph is a dependency-injected `ToolRegistry` consumer, so it is fully testa
 
 - **.NET in-memory** — entities/EF config, repository CRUD, service logic, endpoint auth + happy
   paths (stubbed `IEmbeddingService`).
-- **.NET Testcontainers Postgres** — real `vector(1536)` column, HNSW index, cosine ordering, and
-  the end-to-end search path (`pgvector/pgvector:pg16`).
+- **.NET Testcontainers Postgres** — real `vector(1536)` column, HNSW index, cosine ordering, the
+  similarity floor as a predicate, and the end-to-end search path plus the live `/brief` payload
+  shape (`pgvector/pgvector:pg16`).
 - **Python pytest** — schema validation, `ToolRegistry` routing against a mocked client, the
   sub-graph golden cases (wedding inquiry, revoked consent, missing context, preference
   extraction), and rule-based parsing — all plain assertions.

@@ -139,6 +139,8 @@ export function RecordSaleModal({
           <div className="flex items-center gap-3.5 rounded-xl border border-border bg-muted/20 p-3">
             {item.imageUrl ? (
               <img
+                loading="lazy"
+                decoding="async"
                 src={item.imageUrl}
                 alt=""
                 className="size-14 shrink-0 rounded-lg border border-border object-cover"

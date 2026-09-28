@@ -1,5 +1,6 @@
 using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Repositories;
+using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.Extensions.Logging;
 
@@ -49,6 +50,16 @@ public interface IConversationOrderBridge
         string? phoneNumber,
         string? customerName,
         OrderContext context,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Settles the approval queue entry and order corresponding to a human sign-off decision in the conversation.
+    /// </summary>
+    Task SettleSignOffAsync(
+        Guid organizationId,
+        Guid conversationId,
+        bool approved,
+        string? reason = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -148,11 +159,18 @@ public sealed class ConversationOrderBridge : IConversationOrderBridge
             return new PausedOrderOutcome(pending.OrderId, existingCustomer, Created: false, RequiresApproval: true);
         }
 
-        var resolvedCustomerId = customerId is { } bound && bound != Guid.Empty
-            ? bound
-            : await ResolveCustomerAsync(organizationId, phoneNumber, customerName, cancellationToken);
+        CustomerResolution? resolvedCustomer = null;
+        if (customerId is { } bound && bound != Guid.Empty)
+        {
+            var profile = await _customers.GetProfileAsync(organizationId, bound, cancellationToken);
+            resolvedCustomer = new CustomerResolution(bound, profile?.FullName ?? customerName, profile?.Status);
+        }
+        else
+        {
+            resolvedCustomer = await ResolveCustomerAsync(organizationId, phoneNumber, customerName, cancellationToken);
+        }
 
-        if (resolvedCustomerId is null)
+        if (resolvedCustomer is null)
         {
             // An order must reference a customer. Creating a nameless placeholder here would be the
             // duplicate-customer bug all over again, so the pause is recorded and the order is not.
@@ -162,11 +180,19 @@ public sealed class ConversationOrderBridge : IConversationOrderBridge
             return null;
         }
 
+        var subtotal = items.Sum(i => i.TotalPrice);
+        var discount = context.ProposedDiscount.HasValue && context.ProposedDiscount.Value > 0
+            ? Math.Round(subtotal * context.ProposedDiscount.Value, 2)
+            : (decimal?)null;
+
         var dto = new CreateOrderDto
         {
-            CustomerId = resolvedCustomerId.Value,
-            CustomerName = string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName.Trim(),
+            CustomerId = resolvedCustomer.CustomerId,
+            CustomerName = resolvedCustomer.FullName ?? (string.IsNullOrWhiteSpace(customerName) ? "Customer" : customerName.Trim()),
+            CustomerTier = resolvedCustomer.Tier,
             OrderType = "whatsapp",
+            RequireApproval = true,
+            Discount = discount,
             Items = items.Select(item => new OrderItemDto
             {
                 ItemId = item.ItemId,
@@ -196,31 +222,103 @@ public sealed class ConversationOrderBridge : IConversationOrderBridge
         return new PausedOrderOutcome(order.Id, order.CustomerId, Created: true, RequiresApproval: pendingApproval);
     }
 
+    private sealed record CustomerResolution(Guid CustomerId, string? FullName, string? Tier);
+
     /// <summary>
-    /// Find (or create) the customer behind an inbound conversation's phone number.
+    /// Find (or create) the customer behind a name query or inbound conversation's phone number.
+    /// Matches against existing registered clients in the database first.
     /// </summary>
-    /// <remarks>
-    /// Reuses <see cref="ICustomerService.IdentifyOrCreateAsync"/>, the same call the agent's own
-    /// identify tool lands on, so a first-contact order and a later staff lookup agree about who the
-    /// person is.
-    /// </remarks>
-    private async Task<Guid?> ResolveCustomerAsync(
+    private async Task<CustomerResolution?> ResolveCustomerAsync(
         Guid organizationId,
         string? phoneNumber,
         string? customerName,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(phoneNumber))
+        // 1. If we have a customer name or phone number, query registered customers in the database (Issue #161)
+        if (!string.IsNullOrWhiteSpace(customerName) || !string.IsNullOrWhiteSpace(phoneNumber))
         {
-            return null;
+            try
+            {
+                var lookup = await _customers.LookupAsync(
+                    new CustomerLookupRequest
+                    {
+                        OrganizationId = organizationId,
+                        Name = string.IsNullOrWhiteSpace(customerName) ? null : customerName.Trim(),
+                        PhoneNumber = string.IsNullOrWhiteSpace(phoneNumber) ? null : phoneNumber.Trim()
+                    },
+                    cancellationToken);
+
+                if (lookup.Matches.Count > 0)
+                {
+                    // If multiple matches, check for exact match on full name or phone
+                    var match = lookup.Matches.FirstOrDefault(m =>
+                        (!string.IsNullOrWhiteSpace(phoneNumber) && m.PhoneNumber == phoneNumber.Trim()) ||
+                        (!string.IsNullOrWhiteSpace(customerName) && string.Equals(m.FullName, customerName.Trim(), StringComparison.OrdinalIgnoreCase)))
+                        ?? lookup.Matches[0];
+
+                    return new CustomerResolution(match.CustomerId, match.FullName, match.Status);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Customer lookup failed for '{CustomerName}' / '{Phone}'", customerName, phoneNumber);
+            }
         }
 
-        var profile = await _customers.IdentifyOrCreateAsync(
-            organizationId,
-            phoneNumber,
-            string.IsNullOrWhiteSpace(customerName) ? null : customerName,
-            cancellationToken);
+        // 2. Inbound WhatsApp fallback: if phone number is present, identify or create
+        if (!string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            var profile = await _customers.IdentifyOrCreateAsync(
+                organizationId,
+                phoneNumber,
+                string.IsNullOrWhiteSpace(customerName) ? null : customerName,
+                cancellationToken);
 
-        return profile.CustomerId == Guid.Empty ? null : profile.CustomerId;
+            if (profile.CustomerId != Guid.Empty)
+            {
+                return new CustomerResolution(profile.CustomerId, profile.FullName, profile.Status);
+            }
+        }
+
+        return null;
+    }
+
+    /// <inheritdoc />
+    public async Task SettleSignOffAsync(
+        Guid organizationId,
+        Guid conversationId,
+        bool approved,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var paged = await _approvals.ListAsync(organizationId, "pending", 1, 50, cancellationToken);
+            var entry = paged.Items.FirstOrDefault(a => a.ConversationId == conversationId);
+            if (entry is null)
+            {
+                _logger.LogInformation("No pending approval found for conversation {ConversationId} during sign-off settlement.", conversationId);
+                return;
+            }
+
+            entry.Status = approved ? "approved" : "rejected";
+            entry.DecisionComment = reason ?? (approved ? "Approved via Salon SignOff" : "Rejected via Salon SignOff");
+            entry.DecidedAt = DateTime.UtcNow;
+            await _approvals.UpdateAsync(entry, cancellationToken);
+
+            var targetStatus = approved ? "confirmed" : "cancelled";
+            await _orders.TransitionStatusAsync(entry.OrderId, organizationId, new UpdateOrderStatusDto { Status = targetStatus }, cancellationToken);
+
+            _logger.LogInformation(
+                "Settled approval {ApprovalId} and order {OrderId} as {Status} for conversation {ConversationId}.",
+                entry.Id,
+                entry.OrderId,
+                targetStatus,
+                conversationId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to settle sign-off for conversation {ConversationId}.", conversationId);
+        }
     }
 }

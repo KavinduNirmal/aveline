@@ -913,8 +913,12 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 | `POST` | `/internal/customers/identify` | Resolve/create a customer from a message |
 | `GET` | `/internal/customers/{customerId:guid}/profile` | Customer profile for the agent |
 | `POST` | `/internal/customers/lookup` | Search by name/phone/email |
-| `POST` | `/internal/customers/{customerId:guid}/memories` | Store a memory |
-| `POST` | `/internal/customers/memories/search` | pgvector semantic search |
+| `POST` | `/internal/customers/{customerId:guid}/memories` | Store a memory (carries `source`, `isExplicit`, `confidence`, `metadataJson`, `expiresAt`) |
+| `GET` | `/internal/customers/{customerId:guid}/memories` | List a customer's live memories, newest first |
+| `PATCH` | `/internal/customers/{customerId:guid}/memories/{memoryId:guid}` | Correct one memory's statement and re-embed it |
+| `DELETE` | `/internal/customers/{customerId:guid}/memories/{memoryId:guid}` | Withdraw one memory (soft delete) |
+| `POST` | `/internal/customers/memories/search` | pgvector semantic search (honours `minSimilarity`) |
+| `POST` | `/internal/customers/{customerId:guid}/preferences` | Record a stated preference in the preferences table |
 | `GET` | `/internal/customers/{customerId:guid}/brief` | Interaction brief |
 | `POST` | `/internal/customers/{customerId:guid}/interactions` | Record an interaction |
 | `GET`/`POST` | `/internal/customers/{customerId:guid}/consent` | Read/update consent |
@@ -955,7 +959,7 @@ book. `limit` bounds the *named* clients, not the book, and is clamped by the se
 - `consentStatus` is one of `pending | granted | revoked`. **An absent row reads as `pending`**
   on this route *and* on `GET …/profile` — one value for one database state (defect D-2). The
   Python agent parses this exact field
-  (`agnet-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
+  (`agent-service/app/agents/customer_memory/nodes.py`), so the property name is part of the
   contract.
 - `POST` accepts `pending`, `granted` and `revoked`. Re-granting clears `consentRevokedAt`, and
   the first update for a customer with no row inserts a row and stamps
@@ -1334,6 +1338,24 @@ discount.
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/reject` | `BoutiqueOrderManage` | **cancels the order**; requires `orders:manage` (T6) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/approvals/{id:guid}/revise` | `BoutiqueOrderManage` | **rewrites discount/total/margin**; requires `orders:manage` (T6) |
 
+**The decision body, per route.** The three verb routes take the decision from the **URL**, so the
+body carries only the optional fields and `decision` may be omitted entirely:
+
+| Route | Body |
+| --- | --- |
+| `…/approve` | `{ reason? }` — a body is optional |
+| `…/reject` | `{ reason? }` — a body is optional |
+| `…/revise` | `{ revisedDiscount, reason? }` — a body is required, because the discount is the point of the verb |
+| `…/decision` | `{ decision, reason?, revisedDiscount? }` — `decision` is **required** and is one of `approve` \| `reject` \| `revise` |
+
+`decision` is deliberately **not** a `[Required]` body field on the DTO: it used to be, and because
+`[ApiController]` validates the body before the action runs, every verb route answered
+`400 {"errors":{"Decision":["The Decision field is required."]}}` to the dashboard's own payload.
+The requirement is enforced by `ApprovalService.ProcessDecisionAsync` instead, which is the one
+boundary that is true for the `/decision` route and harmless for the other three. The verb routes
+overwrite whatever `decision` a body tries to send, so the Q14 permission split cannot be bypassed
+by posting `reject` to `…/approve`.
+
 **Commerce order payments (Phase 9).** The `payments/**` row above was a wildcard, which is exactly
 how the fabricated-URL and caller-trusted-confirmation defects survived
 (`docs/reports/PR-290-slice3-review.md:269`). They are itemised here, and the behaviour they carry
@@ -1393,9 +1415,14 @@ nothing correct to gate a write on).
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/highlights` | `customers:view` | Home's client row; `activity` is generated from a real interaction, and there is deliberately **no** `hasNewActivity` flag — no read marker exists in the schema |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | `customers:view` | **E-6.** The tenant-safe detail |
 | `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | **E-9.** Paged history, newest first |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Tenant-safe consent read (returns `unknown` when no row exists) |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/memories` | `customers:view` | Tenant-safe customer memories |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/brief` | `customers:view` | **Pre-contact brief.** Description, preferences, tags, upcoming occasions and (consent-gated) memories |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | `customers:view` | Customer life/boutique events list |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers` | `customers:view` | Walk-in creation; requires `Idempotency-Key`. Also creates the client's organization-shared Salon, seeded with Aveline's greeting (see below) |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/interactions` | `customers:view` | Records an interaction; requires `Idempotency-Key` |
-| `GET` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | `customers:view` | Reads the client's consent status. A client in another boutique is `404`, indistinguishable from a missing one |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/events` | **`customers:manage`** | Add a customer event |
+| `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/status` | **`customers:manage`** | Recomputes derived loyalty tier from spend/visits |
 | `POST` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}/consent` | **`customers:manage`** | **Phase 4 (item 4.4).** Sets `pending` \| `granted` \| `revoked`. This is the **staff** surface: the audit records `ActorKind = User` and `Source = staff`, which is what distinguishes it from the anonymous customer OTP path (§B.25). There is deliberately no `scope` field — a staff action always revokes this boutique's row only |
 | `PATCH` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-7.** Partial update of the writable subset |
 | `DELETE` | `/api/v1/orgs/{organizationId:guid}/customers/{customerId:guid}` | **`customers:manage`** | **E-8.** Soft delete |
@@ -2243,6 +2270,28 @@ rather than silently dropping rows. The window defaults to the last 24 hours.
 **Errors:** `400 invalid-window` (`from` after `to`); `401`; `403`.
 **Source:** `Modules/Payments/Endpoints/PaymentReconciliationEndpoints.cs`,
 `Modules/Payments/Services/PaymentReconciliationService.cs`.
+
+### B.28 Global cross-entity search
+
+> **Status: implemented.** Tenant-scoped cross-entity search aggregating inventory pieces,
+> customer profiles, and conversation threads.
+
+| Method | Path | Policy | Returns |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/orgs/{organizationId:guid}/search` | `BoutiqueMember` | `GlobalSearchResponseDto` |
+
+**Params:**
+- `q` (string, required, min length 2) — query text matching SKU/name/fabric/color for catalog items, name/phone/email for customers, and externalRef/customer name/message content for conversations.
+- `scope` (string, optional, default `all`) — entity filter scope (`all` \| `catalog` \| `customers` \| `conversations`).
+- `page` (int, optional, default 1, min 1).
+- `pageSize` (int, optional, default 20, 1..100).
+
+**Permission & tenant gating:** Caller must be an active member of `{organizationId}`. Entity results are filtered based on caller's role permissions (`catalog:view` for catalog items, `customers:view` for customer profiles, `conversations:view` for conversation threads). If the caller's role lacks access to an entity type, that entity type is omitted from results rather than returning 403.
+
+**Response `200`:** `GlobalSearchResponseDto` (`{ items: GlobalSearchResultItemDto[], total, page, pageSize }`).
+
+**Errors:** `400` query too short (< 2 chars); `401` unauthenticated; `403` not an active boutique member.
+**Source:** `Endpoints/SearchEndpoints.cs`, `Modules/Shared/DTOs/SearchDtos.cs`.
 
 ---
 

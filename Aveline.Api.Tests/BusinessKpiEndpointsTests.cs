@@ -37,6 +37,7 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("Telemetry:Enabled", "false");
             });
@@ -72,7 +73,7 @@ public class BusinessKpiEndpointsTests : IAsyncLifetime
 
     private static AppDbContext Context() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private async Task SeedAsync(string role = Roles.Owner)

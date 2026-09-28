@@ -254,6 +254,8 @@ export function SourcingTab({
                         {/* Reference Image */}
                         {open && ticket.referenceImageUrl && (
                           <img
+                            loading="lazy"
+                            decoding="async"
                             src={ticket.referenceImageUrl}
                             alt={ticket.category}
                             className="h-28 w-full rounded-lg object-cover border border-border mb-2.5"

@@ -43,7 +43,7 @@ real environment variables — it does not load an `.env` file.
 ## 4. Start the agent service
 
 ```bash
-cd agnet-service
+cd agent-service
 cp .env.example .env          # read by app/core/config.py
 # set INTERNAL_API_TOKEN to a non-placeholder value ("change-me" and
 # "change-me-internal-token" make the service refuse to start) and send the same

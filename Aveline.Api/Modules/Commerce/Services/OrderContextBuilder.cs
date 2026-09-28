@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Services;
 
@@ -18,7 +20,8 @@ public sealed record OrderContextItem(
     string ItemName,
     int Quantity,
     decimal UnitPrice,
-    decimal WholesaleCost)
+    decimal WholesaleCost,
+    decimal PieceDiscountRate = 0m)
 {
     /// <summary>The line total, computed the same way <c>OrderService</c> computes it.</summary>
     public decimal TotalPrice => Math.Round(UnitPrice * Quantity, 2);
@@ -49,7 +52,9 @@ public enum OrderContextPurpose
 /// </summary>
 public sealed record OrderContext(
     IReadOnlyList<OrderContextItem> Items,
-    OrderContextPurpose Purpose = OrderContextPurpose.Order)
+    OrderContextPurpose Purpose = OrderContextPurpose.Order,
+    decimal? ProposedDiscount = null,
+    string? CustomerHint = null)
 {
     /// <summary>The context of a message that named no resolvable item.</summary>
     public static readonly OrderContext Empty = new(Array.Empty<OrderContextItem>());
@@ -70,6 +75,17 @@ public interface IOrderContextBuilder
     Task<OrderContext> BuildAsync(
         Guid organizationId,
         string? message,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Return the inventory-resolved line items a message asks to buy, considering preceding
+    /// conversation history as fallback when the current message confirms an order for an item
+    /// recently presented in the chat thread.
+    /// </summary>
+    Task<OrderContext> BuildAsync(
+        Guid organizationId,
+        string? message,
+        IReadOnlyList<string>? recentMessages,
         CancellationToken cancellationToken = default);
 }
 
@@ -101,6 +117,7 @@ public interface IOrderContextBuilder
 public sealed class OrderContextBuilder : IOrderContextBuilder
 {
     private readonly IInventoryService _inventory;
+    private readonly IBusinessRulesService? _businessRules;
 
     /// <summary>How many catalog rows a single match is allowed to consider.</summary>
     private const int CatalogScanLimit = 200;
@@ -108,9 +125,12 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
     /// <summary>The most line items one message may resolve to, as a safety rail.</summary>
     private const int MaxItems = 5;
 
-    public OrderContextBuilder(IInventoryService inventory)
+    public OrderContextBuilder(
+        IInventoryService inventory,
+        IBusinessRulesService? businessRules = null)
     {
         _inventory = inventory ?? throw new ArgumentNullException(nameof(inventory));
+        _businessRules = businessRules;
     }
 
     /// <summary>
@@ -155,9 +175,17 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
     };
 
     /// <inheritdoc />
+    public Task<OrderContext> BuildAsync(
+        Guid organizationId,
+        string? message,
+        CancellationToken cancellationToken = default)
+        => BuildAsync(organizationId, message, null, cancellationToken);
+
+    /// <inheritdoc />
     public async Task<OrderContext> BuildAsync(
         Guid organizationId,
         string? message,
+        IReadOnlyList<string>? recentMessages,
         CancellationToken cancellationToken = default)
     {
         if (organizationId == Guid.Empty || string.IsNullOrWhiteSpace(message))
@@ -166,19 +194,16 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var normalized = Normalize(message);
+        var proposedDiscount = DiscountFrom(message);
+        var customerHint = CustomerHintFrom(message);
         var isOrder = HasPurchaseSignal(normalized);
-        var isQuote = !isOrder && IsPricingQuestion(normalized);
+        var isQuote = !isOrder && (IsPricingQuestion(normalized) || proposedDiscount is not null);
         if (!isOrder && !isQuote)
         {
             return OrderContext.Empty;
         }
 
         var messageTokens = Tokenize(normalized);
-        if (messageTokens.Count == 0)
-        {
-            return OrderContext.Empty;
-        }
-
         var catalog = await LoadCatalogAsync(organizationId, cancellationToken);
         if (catalog.Count == 0)
         {
@@ -186,12 +211,51 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var matches = new List<Match>();
-        foreach (var item in catalog)
+        if (messageTokens.Count > 0)
         {
-            var match = MatchItem(item, messageTokens);
-            if (match is not null)
+            foreach (var item in catalog)
             {
-                matches.Add(match);
+                var match = MatchItem(item, messageTokens);
+                if (match is not null)
+                {
+                    matches.Add(match);
+                }
+            }
+        }
+
+        // If this is an order purchase signal and no item was named in this message, check recent messages
+        // (e.g. from Elle or preceding messages showcasing a piece).
+        if (matches.Count == 0 && isOrder && recentMessages is { Count: > 0 })
+        {
+            foreach (var recent in recentMessages)
+            {
+                if (string.IsNullOrWhiteSpace(recent))
+                {
+                    continue;
+                }
+
+                var recentNormalized = Normalize(recent);
+                var recentTokens = Tokenize(recentNormalized);
+                if (recentTokens.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var item in catalog)
+                {
+                    var match = MatchItem(item, recentTokens);
+                    if (match is not null)
+                    {
+                        matches.Add(match);
+                    }
+                }
+
+                if (matches.Count > 0)
+                {
+                    customerHint ??= CustomerHintFrom(recent);
+                    proposedDiscount ??= DiscountFrom(recent);
+                    break;
+                }
             }
         }
 
@@ -201,16 +265,42 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         }
 
         var selected = SelectDistinct(matches);
-        var quantity = QuantityFrom(normalized);
+        var quantity = QuantityFrom(message, normalized);
+
+        IReadOnlyDictionary<Guid, decimal>? pieceDiscounts = null;
+        if (_businessRules is not null)
+        {
+            try
+            {
+                var discounts = await _businessRules.GetPieceDiscountsAsync(organizationId, cancellationToken);
+                if (discounts.Count > 0)
+                {
+                    pieceDiscounts = discounts
+                        .Where(d => d.IsActive && d.DiscountPercentage > 0m)
+                        .ToDictionary(d => d.ItemId, d => d.DiscountPercentage);
+                }
+            }
+            catch
+            {
+                // Graceful fallback if business rules service is unreachable or unseeded
+            }
+        }
 
         var items = selected
             .Take(MaxItems)
-            .Select(match => new OrderContextItem(
-                match.Item.Id,
-                match.Item.ItemName,
-                quantity,
-                match.Item.Price,
-                match.Item.Cost))
+            .Select(match =>
+            {
+                var pieceDiscount = pieceDiscounts is not null && pieceDiscounts.TryGetValue(match.Item.Id, out var pd)
+                    ? pd
+                    : 0m;
+                return new OrderContextItem(
+                    match.Item.Id,
+                    match.Item.ItemName,
+                    quantity,
+                    match.Item.Price,
+                    match.Item.Cost,
+                    pieceDiscount);
+            })
             .ToList();
 
         if (items.Count == 0)
@@ -218,9 +308,21 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
             return OrderContext.Empty;
         }
 
+        if (customerHint is not null)
+        {
+            var hintLower = customerHint.ToLowerInvariant();
+            if (items.Any(i => i.ItemName.ToLowerInvariant().Contains(hintLower) || hintLower.Contains(i.ItemName.ToLowerInvariant()))
+                || catalog.Any(c => c.ItemName.ToLowerInvariant().Contains(hintLower) || hintLower.Contains(c.ItemName.ToLowerInvariant())))
+            {
+                customerHint = null;
+            }
+        }
+
         return new OrderContext(
             items,
-            isOrder ? OrderContextPurpose.Order : OrderContextPurpose.Quote);
+            isOrder ? OrderContextPurpose.Order : OrderContextPurpose.Quote,
+            proposedDiscount,
+            customerHint);
     }
 
     private async Task<IReadOnlyList<InventoryItemDto>> LoadCatalogAsync(
@@ -336,11 +438,107 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
         return ordered;
     }
 
+    private static readonly Regex DiscountRateRegex = new(
+        @"\b(?<rate>\d+(?:\.\d+)?)\s*(?:%|percent\b|pct\b|off\b)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extract a proposed discount rate from the message if one was explicitly stated (e.g. "10% off",
+    /// "15 percent discount", "10 off"), returning null if no discount percentage was asked.
+    /// </summary>
+    internal static decimal? DiscountFrom(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var match = DiscountRateRegex.Match(message);
+        if (match.Success && decimal.TryParse(match.Groups["rate"].Value, CultureInfo.InvariantCulture, out var pct))
+        {
+            if (pct is > 0m and <= 100m)
+            {
+                return Math.Round(pct / 100m, 4);
+            }
+        }
+
+        return null;
+    }
+
+    private static readonly Regex PhoneHintRegex = new(
+        @"(?:\+94|0)\d{9}\b",
+        RegexOptions.Compiled);
+
+    private static readonly Regex CustomerNameHintRegex = new(
+        @"\b(?:for\s+(?:client\s+|customer\s+)?|(?:client|customer)(?:\s+is)?\s+)(?<name>[A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Extract a customer hint (name or phone) if provided in the message (e.g. "for Kaveesha",
+    /// "for client Tharindi", "customer is 0779037760").
+    /// </summary>
+    internal static string? CustomerHintFrom(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var phoneMatch = PhoneHintRegex.Match(message);
+        if (phoneMatch.Success)
+        {
+            return phoneMatch.Value;
+        }
+
+        // If "for" is preceded by discount or pricing keywords (e.g. "15% off for Emerald...", "discount for the saree"),
+        // then "for" introduces the product unless explicitly qualified with "client" or "customer".
+        if (Regex.IsMatch(message, @"\b(?:off|discount|percent|pct|%|price|quote|cost)\s+for\s+(?!client\b|customer\b)", RegexOptions.IgnoreCase))
+        {
+            var explicitMatch = Regex.Match(
+                message,
+                @"\b(?:for\s+(?:client|customer)\s+|(?:client|customer)(?:\s+is)?\s+)(?<name>[A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)",
+                RegexOptions.IgnoreCase);
+            if (explicitMatch.Success)
+            {
+                var explicitName = explicitMatch.Groups["name"].Value.Trim();
+                return CleanCustomerName(explicitName);
+            }
+
+            return null;
+        }
+
+        var match = CustomerNameHintRegex.Match(message);
+        if (match.Success)
+        {
+            var name = match.Groups["name"].Value.Trim();
+            return CleanCustomerName(name);
+        }
+
+        return null;
+    }
+
+    private static string? CleanCustomerName(string name)
+    {
+        var cleaned = Regex.Replace(name, @"^(?:the|this|a|an)\s+", "", RegexOptions.IgnoreCase).Trim();
+        var lower = cleaned.ToLowerInvariant();
+        if (lower is not "the" and not "this" and not "a" and not "an" and not "order" and not "approval")
+        {
+            cleaned = Regex.Replace(cleaned, @"\s+(?:please|order|saree|dress|gown|midi)$", "", RegexOptions.IgnoreCase).Trim();
+            if (!string.IsNullOrWhiteSpace(cleaned) && cleaned.Length >= 2)
+            {
+                return cleaned;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// The quantity the customer stated, defaulting to one. A number immediately after "size" is a
-    /// measurement, not a count.
+    /// measurement, not a count. A number followed by "%", "percent", "pct", or "off" is a discount
+    /// percentage, not a count.
     /// </summary>
-    internal static int QuantityFrom(string normalizedMessage)
+    internal static int QuantityFrom(string rawMessage, string normalizedMessage)
     {
         var raw = normalizedMessage.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         for (var i = 0; i < raw.Length; i++)
@@ -350,7 +548,31 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
                 continue;
             }
 
+            // Size measurement: "size 8", "sizes 10"
             if (i > 0 && raw[i - 1] is "size" or "sizes")
+            {
+                continue;
+            }
+
+            // Discount indicators following the number: "10 percent", "10 pct", "10 off", "10 percent off"
+            if (i + 1 < raw.Length && raw[i + 1] is "percent" or "pct" or "off")
+            {
+                continue;
+            }
+
+            // Discount indicator preceding the number: "discount 10", "discount of 10"
+            if (i > 0 && raw[i - 1] is "discount")
+            {
+                continue;
+            }
+            if (i > 1 && raw[i - 1] is "of" && raw[i - 2] is "discount")
+            {
+                continue;
+            }
+
+            // Check if in rawMessage this number is immediately followed by "%" (e.g. "10% off" or "10%")
+            var tokenPattern = $@"\b{value}\s*%";
+            if (Regex.IsMatch(rawMessage, tokenPattern))
             {
                 continue;
             }
@@ -360,6 +582,9 @@ public sealed class OrderContextBuilder : IOrderContextBuilder
 
         return 1;
     }
+
+    internal static int QuantityFrom(string normalizedMessage)
+        => QuantityFrom(normalizedMessage, normalizedMessage);
 
     /// <summary>True when the message asks to buy something rather than asking about it.</summary>
     internal static bool HasPurchaseSignal(string normalizedMessage)

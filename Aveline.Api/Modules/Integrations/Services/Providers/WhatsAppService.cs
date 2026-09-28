@@ -247,6 +247,67 @@ public sealed class WhatsAppService : IWhatsAppService
     }
 
     /// <inheritdoc/>
+    public async Task<WhatsAppSendResult> SendImageAsync(
+        string accessToken,
+        string phoneNumberId,
+        string to,
+        string imageUrl,
+        string caption,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accessToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(phoneNumberId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(to);
+        ArgumentException.ThrowIfNullOrWhiteSpace(imageUrl);
+        ArgumentException.ThrowIfNullOrWhiteSpace(caption);
+
+        var payload = new
+        {
+            messaging_product = "whatsapp",
+            recipient_type = "individual",
+            to,
+            type = "image",
+            // `link` rather than a media id: Meta fetches the URL itself, which is why the caller
+            // must hand it a public, non-expiring one.
+            image = new { link = imageUrl, caption },
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{phoneNumberId}/messages")
+        {
+            Content = JsonContent.Create(payload),
+        };
+        request.Headers.Authorization = new("Bearer", accessToken);
+
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                var messageId = ExtractMessageId(body);
+                _logger.LogInformation(
+                    "WhatsApp image sent. phoneNumberId={PhoneNumberId} to={To} messageId={MessageId}",
+                    phoneNumberId, Mask(to), messageId);
+                return new WhatsAppSendResult(
+                    IsSuccess: true, MessageId: messageId, HttpStatus: (int)response.StatusCode);
+            }
+
+            var error = await ReadErrorAsync(response, cancellationToken);
+            _logger.LogWarning(
+                "WhatsApp image send failed. phoneNumberId={PhoneNumberId} to={To} status={Status} error={Error}",
+                phoneNumberId, Mask(to), (int)response.StatusCode, error);
+            return new WhatsAppSendResult(
+                IsSuccess: false, Error: error, HttpStatus: (int)response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WhatsApp image send threw. phoneNumberId={PhoneNumberId} to={To}",
+                phoneNumberId, Mask(to));
+            return new WhatsAppSendResult(IsSuccess: false, Error: ex.Message);
+        }
+    }
+
+    /// <inheritdoc/>
     public async Task<WhatsAppSendResult> SendTemplateAsync(
         string accessToken,
         string phoneNumberId,

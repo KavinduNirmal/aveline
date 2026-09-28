@@ -37,6 +37,7 @@ public class OnboardingEndpointsIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.ConfigureServices(services =>
                 {
@@ -271,7 +272,7 @@ public class OnboardingEndpointsIntegrationTests : IAsyncLifetime
     }
 
     private static AppDbContext Context() => new(new DbContextOptionsBuilder<AppDbContext>()
-        .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+        .UseInMemoryDatabase(databaseName: TestDatabase.Name())
         .Options);
 
     /// <summary>

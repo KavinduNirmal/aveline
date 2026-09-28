@@ -17,7 +17,6 @@ namespace Aveline.Api.Tests;
 /// </summary>
 public class ClerkWebhookTests : IAsyncLifetime
 {
-    private const string DatabaseName = "AvelineInMemoryDb";
     private static readonly string Secret =
         "whsec_" + Convert.ToBase64String(Encoding.UTF8.GetBytes("aveline-webhook-test-signing-key"));
 
@@ -48,6 +47,7 @@ public class ClerkWebhookTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 if (webhookSecret is not null)
                 {
@@ -57,7 +57,7 @@ public class ClerkWebhookTests : IAsyncLifetime
 
     private static AppDbContext CreateContext() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: DatabaseName)
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     private static HttpRequestMessage SignedRequest(string body, bool valid = true)

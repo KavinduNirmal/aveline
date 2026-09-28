@@ -4,6 +4,7 @@ using Aveline.Api.Modules.Conversations.Repositories;
 using Aveline.Api.Modules.Conversations.Services;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Repositories;
+using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Integrations.DTOs;
 using Aveline.Api.Modules.Integrations.Models;
 using Aveline.Api.Modules.Integrations.Services;
@@ -160,7 +161,17 @@ public class CustomerDeliveryServiceTests
 
         public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken ct)
             => throw new NotImplementedException();
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     private sealed class FakeBroadcaster : IMessageBroadcaster
     {
@@ -177,19 +188,36 @@ public class CustomerDeliveryServiceTests
         public Task BroadcastConversationChangedAsync(ConversationTile tile, CancellationToken ct) => Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The consent decision, supplied directly. The delivery path asks one question - may this
+    /// customer be messaged - so the double answers exactly that.
+    /// </summary>
+    private sealed class FakeConsentGate : IConsentGateService
+    {
+        public bool ShouldProcess { get; set; } = true;
+        public string Status { get; set; } = "granted";
+
+        public Task<ConsentDecision> CheckAsync(
+            Guid organizationId, Guid? customerId, CancellationToken cancellationToken = default)
+            => Task.FromResult(ShouldProcess
+                ? ConsentDecision.Process(Status)
+                : ConsentDecision.Skip(Status, ConsentGateReasons.ConsentRevoked));
+    }
+
     private readonly FakeConversationRepository _conversations = new();
     private readonly FakeMessageRepository _messages = new();
     private readonly FakeCustomerRepository _customers = new();
     private readonly FakeIntegrationService _integrations = new();
     private readonly FakeWhatsAppService _whatsApp = new();
     private readonly FakeBroadcaster _broadcaster = new();
+    private readonly FakeConsentGate _consentGate = new();
     private readonly CustomerDeliveryService _sut;
 
     public CustomerDeliveryServiceTests()
     {
         _sut = new CustomerDeliveryService(
             _conversations, _messages, _customers, _integrations, _whatsApp, _broadcaster,
-            new NullLogger<CustomerDeliveryService>());
+            _consentGate, new NullLogger<CustomerDeliveryService>());
     }
 
     /// <summary>A customer-bound thread, with WhatsApp connected unless a test says otherwise.</summary>
@@ -225,6 +253,68 @@ public class CustomerDeliveryServiceTests
         };
 
         return (orgId, userId, customer.Id, conversation);
+    }
+
+    [Fact]
+    public async Task DeliverAsync_RefusesWhenConsentIsRevoked_AndNothingLeaves()
+    {
+        var (orgId, userId, _, conversation) = GivenAThread();
+        _consentGate.ShouldProcess = false;
+        _consentGate.Status = "revoked";
+
+        var outcome = await _sut.DeliverAsync(orgId, userId, conversation.Id, "Silk Slip Dress");
+
+        Assert.False(outcome.Delivered);
+        Assert.Equal(DeliveryRefusal.ConsentRevoked, outcome.Refusal);
+        Assert.Contains("opted out", outcome.Detail);
+        // The customer's phone never sees it, and the thread never claims it went out.
+        Assert.Empty(_whatsApp.Sent);
+        Assert.Empty(_messages.All);
+    }
+
+    [Fact]
+    public async Task DeliverAsync_RefusesWhenConsentCannotBeRead()
+    {
+        // The gate fails closed: an unreadable store is not an implicit grant.
+        var (orgId, userId, _, conversation) = GivenAThread();
+        _consentGate.ShouldProcess = false;
+        _consentGate.Status = ConsentDecision.UnavailableStatus;
+
+        var outcome = await _sut.DeliverAsync(orgId, userId, conversation.Id, "Silk Slip Dress");
+
+        Assert.False(outcome.Delivered);
+        Assert.Equal(DeliveryRefusal.ConsentRevoked, outcome.Refusal);
+        Assert.Contains("could not be checked", outcome.Detail);
+        Assert.Empty(_whatsApp.Sent);
+        Assert.Empty(_messages.All);
+    }
+
+    [Fact]
+    public async Task DeliverAsync_ChecksConsentBeforeResolvingTheChannel()
+    {
+        // The refusal must name consent, not "WhatsApp is not connected": if the channel lookup ran
+        // first, a revoked customer on an unconfigured boutique would be told the wrong reason.
+        var (orgId, userId, _, conversation) = GivenAThread();
+        _integrations.Configured.Clear();
+        _consentGate.ShouldProcess = false;
+        _consentGate.Status = "revoked";
+
+        var outcome = await _sut.DeliverAsync(orgId, userId, conversation.Id, "Silk Slip Dress");
+
+        Assert.Equal(DeliveryRefusal.ConsentRevoked, outcome.Refusal);
+    }
+
+    [Fact]
+    public async Task DeliverAsync_SendsWhenConsentIsGranted()
+    {
+        var (orgId, userId, _, conversation) = GivenAThread();
+        _consentGate.ShouldProcess = true;
+        _consentGate.Status = "granted";
+
+        var outcome = await _sut.DeliverAsync(orgId, userId, conversation.Id, "Silk Slip Dress");
+
+        Assert.True(outcome.Delivered);
+        Assert.Single(_whatsApp.Sent);
     }
 
     [Fact]

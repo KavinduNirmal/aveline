@@ -15,7 +15,7 @@
 Confirmed by execution and file inspection:
 
 - The engineering evidence base is real and large: **1240 .NET tests pass** (`dotnet test`, 4 m 31 s, exit 0), **381 Python tests** are collected with **378 passing / 1 failing**, and **158 web tests pass**. Coverage is enforced in CI for .NET, Python and web.
-- The single blocking factual problem in the test suites is a **reproduced failure**: `agnet-service/tests/test_config.py::test_defaults_are_sane` fails because the default LLM provider is now `deepseek` but the test asserts `openai`. This fails the CI `test-python` job.
+- The single blocking factual problem in the test suites is a **reproduced failure**: `agent-service/tests/test_config.py::test_defaults_are_sane` fails because the default LLM provider is now `deepseek` but the test asserts `openai`. This fails the CI `test-python` job.
 - **The mandatory non-functional requirement is not met.** The assignment states "Performance and security testing are required". Security testing exists (Trivy, ZAP baseline, `dotnet list --vulnerable`, `bun audit`), but there is **no performance or load testing anywhere in the tracked repository** — no k6, JMeter, artillery, NBomber or BenchmarkDotNet. The repo's own docs concede the harness "is deferred. There is no load runner in CI" (`docs/backend/README.md:297`). This is the highest-value gap to close and it is exactly what K6 addresses.
 - **At least one complete integrated workflow test across components is required and does not exist.** Every web and mobile test is isolated; no test drives React UI → API → agent service → DB → back to a client. The strongest existing workflow test (`FullAuthFlowIntegrationTests`) is backend-only with stub servers.
 - **The web coverage number is misleading**, not merely good. `frontend/web/vite.config.ts:20-29` excludes `src/components/**`, `src/contexts/**` and `src/routes/**` from the coverage denominator. The enforced 80% gate therefore measures **238 lines across 16 `lib`/`types` files**, while **111 excluded UI files holding ~16,946 lines** are unmeasured. `docs/tests/README.md:219-224` presents "91.59% lines" as a strength.
@@ -39,7 +39,7 @@ Confirmed by execution and file inspection:
 | Cobertura parse of the above | `line-rate=0.9256 branch-rate=0.6616 lines=81723/88288 = 92.6%` |
 | `frontend/web` → `vitest run --coverage` | `Test Files 25 passed (25) / Tests 158 passed (158)`; All files 89.24% stmts / 91.59% lines / 72.94% branch |
 | `frontend/web` → JSON reporter | `numTotalTestSuites: 60, numTotalTests: 158, numPassedTests: 158, success: true` |
-| `agnet-service/.venv/bin/python -m pytest tests/ -q` (delegated) | `1 failed, 378 passed, 2 skipped` in 45.07 s |
+| `agent-service/.venv/bin/python -m pytest tests/ -q` (delegated) | `1 failed, 378 passed, 2 skipped` in 45.07 s |
 | Flutter probe (`flutter test`) | **Blocked** — Flutter SDK cache at `/home/kavindu/Development/Flutter/flutter/bin/cache` is read-only under this sandbox |
 | Prometheus scrape probe (throwaway app mirroring `ObservabilityConfiguration.cs`) | `/metrics` served `HTTP 200`; **no `aveline_events_*` series exported** |
 
@@ -113,7 +113,7 @@ Software Testing Report (PDF) · Test Case Document · Defect Report with retest
 | Layer | Stack | Test tooling actually installed | Executed result (this session) |
 |---|---|---|---|
 | Backend API | ASP.NET Core 10, minimal-API endpoints (30 `*Endpoints.cs`, 15 modules; **0 controllers**) | xUnit, Moq, FluentAssertions, `Microsoft.AspNetCore.Mvc.Testing`, `Testcontainers.PostgreSql 4.15.0`, coverlet | **1240 passed / 0 failed**, 92.6% line, 66.2% branch |
-| Agent service (`agnet-service/`) | Python 3.12, FastAPI, LangGraph | pytest, pytest-asyncio, pytest-cov, respx, fakeredis, pytest-httpx, ruff | **378 passed / 1 failed / 2 skipped** |
+| Agent service (`agent-service/`) | Python 3.12, FastAPI, LangGraph | pytest, pytest-asyncio, pytest-cov, respx, fakeredis, pytest-httpx, ruff | **378 passed / 1 failed / 2 skipped** |
 | Web dashboard | React 19, Vite 8, TS, React Router 7, Clerk, axios, SignalR | Vitest 4.1.11 + `@vitest/coverage-v8` **only** | **158 passed / 0 failed** over a 238-line measured surface |
 | Mobile app | Flutter, Dart 3.13.1, Provider, go_router 16, Dio, `clerk_flutter` | `flutter_test`, `flutter_lints` **only** | **Not executed** (sandbox blocked); 88 test files / ~800 static cases |
 
@@ -150,7 +150,7 @@ Software Testing Report (PDF) · Test Case Document · Defect Report with retest
 
 | # | Severity | Finding | Evidence | Impact |
 |---|---|---|---|---|
-| **D-1** | **Critical** | Default LLM provider changed to `deepseek`; test asserts `openai`. Reproduced: `1 failed, 378 passed` | `agnet-service/tests/test_config.py:16`; run output | **Fails CI `test-python`.** Blocks every PR. Also a ready-made "Defect ID → fix → retest" artefact for the assignment |
+| **D-1** | **Critical** | Default LLM provider changed to `deepseek`; test asserts `openai`. Reproduced: `1 failed, 378 passed` | `agent-service/tests/test_config.py:16`; run output | **Fails CI `test-python`.** Blocks every PR. Also a ready-made "Defect ID → fix → retest" artefact for the assignment |
 | **D-2** | **Critical** | Web coverage gate excludes all UI source, so the enforced 80% measures 238 lines while ~16,946 UI lines are unmeasured | `frontend/web/vite.config.ts:20-29`; measured: 16 files / 238 lines; excluded: 111 files / 16,946 lines | Group Strategy & Coverage (10) and Results/Documentation (15) are exposed. Any examiner who opens `vite.config.ts` sees the exclusion |
 | **D-3** | **High** | Mandatory performance/load testing absent repo-wide | `grep -riE "k6|jmeter|artillery|NBomber|BenchmarkDotNet"` → only untracked `.merge-work-262/` scratch; `docs/backend/README.md:297` | **Group Integrated & Non-Functional (15)** partially unreachable. Mandatory requirement failed |
 | **D-4** | **High** | No cross-component / cross-platform E2E test | No web or mobile test imports a router, `App`, or the real API; `integration_test/` does not exist | **Group Integrated & Non-Functional (15)** and the explicit PDF requirement |
@@ -478,7 +478,7 @@ Already available: Cobertura XML + ReportGenerator HTML, `coverage/lcov.info`, T
 
 | P | Action | Where | Effort | Rubric impact |
 |---|---|---|---|---|
-| **P0** | **Fix D-1** (`test_config.py` default provider) and record it as defect + retest evidence | `agnet-service/tests/test_config.py:16` | 15 min | Unblocks CI; seeds the defect cycle |
+| **P0** | **Fix D-1** (`test_config.py` default provider) and record it as defect + retest evidence | `agent-service/tests/test_config.py:16` | 15 min | Unblocks CI; seeds the defect cycle |
 | **P0** | Add **K6** smoke + load scripts and the CI job with thresholds | new `tests/load/`, `ci.yml` | 1–2 days | Mandatory perf requirement; Group Non-Functional (15) |
 | **P0** | Fix the **web coverage exclusion** (D-2) or explicitly document and defend it | `vite.config.ts:20-29` | hours–1 day | Group Coverage (10) / Documentation (15) |
 | **P1** | Add **Grafana + Prometheus** to compose with dashboards-as-code; set `Metrics:ScrapeToken` | `docker-compose.yml`, new `observability/` | 1 day | Evidence surface for perf + viva |
@@ -486,7 +486,7 @@ Already available: Cobertura XML + ReportGenerator HTML, `coverage/lcov.info`, T
 | **P1** | Write the three documents (Test Plan, Test Case Doc, Defect Report) | `docs/reports/` | 1–2 days | Group Documentation (15) directly |
 | **P2** | Refresh `docs/tests/README.md` counts (D-5) or delete the stale numbers | `docs/tests/README.md:24,45-48,151` | 30 min | Credibility in viva |
 | **P2** | Add accessibility testing (axe via Selenium or Playwright) | as part of Selenium work | 0.5 day | NFR coverage breadth |
-| **P2** | Add AI-safety tests: prompt-injection + approval-enforcement | `agnet-service/tests/` | 1 day | AI Testing area |
+| **P2** | Add AI-safety tests: prompt-injection + approval-enforcement | `agent-service/tests/` | 1 day | AI Testing area |
 | **P2** | Verify/fix the eventing meter registration (D-12) | `ObservabilityConfiguration.cs:28` | 30 min | Unlocks the business dashboard |
 | **P3** | Add Testcontainers skip guard (D-7); collect `golden_cases_visual.py` (D-11); resolve D-9/D-10 hygiene | test project, `.gitignore` | 2 hours | Demo robustness |
 
@@ -579,8 +579,8 @@ These need a human decision; research cannot settle them.
 dotnet test Aveline.Api/Aveline.Api.sln -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
 
 # Python agent service (currently 1 failure = D-1)
-cd agnet-service && ./.venv/bin/python -m pytest tests/ -q
-cd agnet-service && ./.venv/bin/python -m pytest tests/ --cov=app --cov-report=term --cov-fail-under=90
+cd agent-service && ./.venv/bin/python -m pytest tests/ -q
+cd agent-service && ./.venv/bin/python -m pytest tests/ --cov=app --cov-report=term --cov-fail-under=90
 
 # Web (158 tests) and coverage
 cd frontend/web && bun run test

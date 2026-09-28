@@ -552,18 +552,97 @@ public class VisualService : IVisualService
         CancellationToken cancellationToken = default)
     {
         var suppliers = await _supplierRepository.GetByOrgIdAsync(orgId, cancellationToken);
-        return suppliers.Select(s => new SupplierDto
+        return suppliers.Select(s =>
         {
-            Id = s.Id,
-            OrganizationId = s.OrgId,
-            SupplierName = s.SupplierName,
-            ContactEmail = s.ContactEmail,
-            ContactPhone = s.ContactPhone,
-            MinimumOrder = s.MinimumOrder,
-            DeliveryTimeDays = s.DeliveryTimeDays,
-            IsActive = s.IsActive,
-            CreatedAtUtc = s.CreatedAtUtc
+            string? specialty = null;
+            string? location = null;
+            if (s.ContactInfo != null)
+            {
+                if (s.ContactInfo.TryGetValue("specialty", out var specObj) && specObj != null)
+                {
+                    specialty = specObj.ToString();
+                }
+                if (s.ContactInfo.TryGetValue("location", out var locObj) && locObj != null)
+                {
+                    location = locObj.ToString();
+                }
+            }
+
+            return new SupplierDto
+            {
+                Id = s.Id,
+                OrganizationId = s.OrgId,
+                SupplierName = s.SupplierName,
+                Specialty = specialty,
+                Location = location,
+                ContactEmail = s.ContactEmail,
+                ContactPhone = s.ContactPhone,
+                WebsiteUrl = s.ApiEndpoint,
+                ApiEndpoint = s.ApiEndpoint,
+                MinimumOrder = s.MinimumOrder,
+                DeliveryTimeDays = s.DeliveryTimeDays,
+                IsActive = s.IsActive,
+                CreatedAtUtc = s.CreatedAtUtc
+            };
         }).ToList();
+    }
+
+    public async Task<SupplierDto> CreateSupplierAsync(
+        Guid orgId,
+        CreateSupplierDto dto,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+        if (string.IsNullOrWhiteSpace(dto.SupplierName))
+        {
+            throw new ArgumentException("SupplierName is required.", nameof(dto));
+        }
+
+        var contactInfo = new Dictionary<string, object>();
+        if (!string.IsNullOrWhiteSpace(dto.Specialty))
+        {
+            contactInfo["specialty"] = dto.Specialty.Trim();
+        }
+        if (!string.IsNullOrWhiteSpace(dto.Location))
+        {
+            contactInfo["location"] = dto.Location.Trim();
+        }
+
+        var websiteOrEndpoint = (dto.WebsiteUrl ?? dto.ApiEndpoint)?.Trim();
+
+        var supplier = new Supplier
+        {
+            Id = Guid.NewGuid(),
+            OrgId = orgId,
+            SupplierName = dto.SupplierName.Trim(),
+            ContactInfo = contactInfo.Count > 0 ? contactInfo : null,
+            ContactEmail = string.IsNullOrWhiteSpace(dto.ContactEmail) ? null : dto.ContactEmail.Trim(),
+            ContactPhone = string.IsNullOrWhiteSpace(dto.ContactPhone) ? null : dto.ContactPhone.Trim(),
+            ApiEndpoint = string.IsNullOrWhiteSpace(websiteOrEndpoint) ? null : websiteOrEndpoint,
+            MinimumOrder = dto.MinimumOrder,
+            DeliveryTimeDays = dto.DeliveryTimeDays,
+            IsActive = dto.IsActive,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        await _supplierRepository.AddAsync(supplier, cancellationToken);
+
+        return new SupplierDto
+        {
+            Id = supplier.Id,
+            OrganizationId = supplier.OrgId,
+            SupplierName = supplier.SupplierName,
+            Specialty = dto.Specialty?.Trim(),
+            Location = dto.Location?.Trim(),
+            ContactEmail = supplier.ContactEmail,
+            ContactPhone = supplier.ContactPhone,
+            WebsiteUrl = supplier.ApiEndpoint,
+            ApiEndpoint = supplier.ApiEndpoint,
+            MinimumOrder = supplier.MinimumOrder,
+            DeliveryTimeDays = supplier.DeliveryTimeDays,
+            IsActive = supplier.IsActive,
+            CreatedAtUtc = supplier.CreatedAtUtc
+        };
     }
 
     public async Task<IReadOnlyList<SupplierCatalogItemDto>> GetSupplierCatalogAsync(

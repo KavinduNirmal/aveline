@@ -26,6 +26,15 @@ public class CustomerConfiguration : IEntityTypeConfiguration<Customer>
         builder.Property(c => c.FullName)
             .HasMaxLength(200);
 
+        builder.Property(c => c.Nickname)
+            .HasMaxLength(200);
+
+        // The one prose field an associate writes about a client. Nullable with no default, so a
+        // client created before the column existed reads as "no description yet" rather than as an
+        // empty sentence.
+        builder.Property(c => c.Description)
+            .HasMaxLength(1000);
+
         builder.Property(c => c.Status)
             .IsRequired()
             .HasMaxLength(32)

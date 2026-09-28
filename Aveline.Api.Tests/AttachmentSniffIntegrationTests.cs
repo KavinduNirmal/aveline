@@ -74,6 +74,7 @@ public class AttachmentSniffIntegrationTests : IAsyncLifetime
             .WithWebHostBuilder(builder =>
             {
                 builder.UseSetting("Clerk:Authority", _authServer.BaseUrl);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl);
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
@@ -183,7 +184,7 @@ public class AttachmentSniffIntegrationTests : IAsyncLifetime
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options;
         return new AppDbContext(options);
     }
@@ -381,7 +382,17 @@ public class AttachmentSniffIntegrationTests : IAsyncLifetime
             string languageCode, IReadOnlyList<object>? components,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException("This test double does not send templates.");
-    }
+    
+        public Task<WhatsAppSendResult> SendImageAsync(
+            string accessToken,
+            string phoneNumberId,
+            string to,
+            string imageUrl,
+            string caption,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new WhatsAppSendResult(
+                IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
+}
 
     private sealed class AllowRateLimiter : IRateLimiter
     {

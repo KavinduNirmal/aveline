@@ -1908,6 +1908,10 @@ namespace Aveline.Api.Migrations
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
                     b.Property<string>("Email")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
@@ -1922,6 +1926,10 @@ namespace Aveline.Api.Migrations
                     b.Property<string>("Level")
                         .HasMaxLength(16)
                         .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Nickname")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.Property<Guid>("OrganizationId")
                         .HasColumnType("uuid");
@@ -2155,6 +2163,11 @@ namespace Aveline.Api.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<string>("ContentKey")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -2162,6 +2175,9 @@ namespace Aveline.Api.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsExplicit")
@@ -2195,6 +2211,12 @@ namespace Aveline.Api.Migrations
                     b.HasIndex("CustomerId");
 
                     b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OrganizationId", "CustomerId", "ContentKey")
+                        .IsUnique()
+                        .HasFilter("\"DeletedAt\" IS NULL");
+
+                    b.HasIndex("OrganizationId", "CustomerId", "ExpiresAt");
 
                     b.ToTable("CustomerMemory", (string)null);
                 });

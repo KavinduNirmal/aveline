@@ -44,7 +44,7 @@ module inside `Aveline.Api/Modules/`, following the existing
     │ EF Core / Npgsql          │ X-Internal-Token      │ Redis
     ▼                           ▼                       ▼
 ┌──────────────┐   ┌────────────────────────┐   ┌──────────────────────┐
-│ PostgreSQL16 │   │ agnet-service (FastAPI) │   │ Redis                │
+│ PostgreSQL16 │   │ agent-service (FastAPI) │   │ Redis                │
 │ + pgvector   │◄──┤ LangGraph workflows     │   │ event bus, cache,    │
 │ + btree_gist │   │ + new run/step telemetry│   │ rate limits, quotas  │
 └──────────────┘   └────────────────────────┘   └──────────────────────┘
@@ -511,9 +511,9 @@ ids only.
 - **Correlation across services:** the internal `AgentServiceClient` propagates
   `traceparent` (W3C) and `X-Request-Id`. The Python service must accept
   `traceparent`; the `opentelemetry-instrumentation-httpx` package is already
-  installed (`agnet-service/requirements.txt:38`) but no exporter is configured
+  installed (`agent-service/requirements.txt:38`) but no exporter is configured
   because `OTEL_EXPORTER_OTLP_ENDPOINT` defaults to empty
-  (`agnet-service/app/core/config.py:47`). Setting that variable is a Phase-2
+  (`agent-service/app/core/config.py:47`). Setting that variable is a Phase-2
   deliverable, not new code.
 - The `Message.TraceId` column already exists
   (`Modules/Conversations/Models/Message.cs:42`) and `EventEnvelope` already
@@ -673,7 +673,7 @@ and adds one new layer.
 | Backend unit | xUnit + Moq | `Aveline.Api.Tests/` | — | — |
 | Backend integration | xUnit + `WebApplicationFactory<Program>` + in-memory EF | `Aveline.Api.Tests/` | — | — |
 | Backend Postgres | xUnit + `Testcontainers.PostgreSql` | `Aveline.Api.Tests/` | two pgvector classes | all constraint/concurrency/partition tests |
-| Agent service | pytest + respx + fakeredis | `agnet-service/tests/` | 90 % coverage | new telemetry cases |
+| Agent service | pytest + respx + fakeredis | `agent-service/tests/` | 90 % coverage | new telemetry cases |
 | **Contract** | **NEW** — OpenAPI schema assertions | `Aveline.Api.Tests/Contract/` | — | must pass |
 | Load | **NEW** — NBomber or k6 script | `tests/load/` | — | report only in Phase 1–3; gate in Phase 4 |
 

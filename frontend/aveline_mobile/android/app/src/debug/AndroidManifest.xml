@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Cleartext HTTP is a development affordance: a debug build talks to an API on
+         http://10.0.2.2 (the emulator's host) or a LAN address, neither of which has a certificate.
+
+         It lives in the debug source set rather than the main manifest, because a main-manifest
+         flag is merged into every variant - including the release APK that ships to boutiques,
+         where permitting plain HTTP weakens transport security for no benefit and invites a Play
+         review question. Nothing in a release build needs it: the API base URL is https.
+
+         No `tools:replace` is needed because main no longer declares the attribute.
+    -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

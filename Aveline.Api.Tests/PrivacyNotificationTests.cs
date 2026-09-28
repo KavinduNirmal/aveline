@@ -546,6 +546,11 @@ public class PrivacyDeliveryFailureNotificationTests
             CancellationToken cancellationToken = default)
             => Task.FromResult(outcome);
 
+        public Task<OutboundMessageResult> SendWhatsAppImageAsync(
+            Guid organizationId, string toE164, string imageUrl, string caption,
+            string idempotencyKey, CancellationToken cancellationToken = default)
+            => Task.FromResult(outcome);
+
         public Task<OutboundMessageResult> SendWhatsAppTemplateAsync(
             Guid organizationId, string toE164, string templateName, string languageCode,
             IReadOnlyList<object>? components, string idempotencyKey,

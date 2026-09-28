@@ -55,11 +55,11 @@ The 2517 "additions" GitHub reports are those Slice 3 files being added **relati
 dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~Commerce"
   → Passed! - Failed: 0, Passed: 76, Skipped: 0, Total: 76, Duration: 1 s
 
-<repo>/.venv/bin/python -m pytest tests/ -q --cov=app          (from agnet-service/)
+<repo>/.venv/bin/python -m pytest tests/ -q --cov=app          (from agent-service/)
   → 1 failed, 412 passed, 2 skipped in 37.25s ; TOTAL coverage 2772 stmts, 225 miss, 92%
   → the 1 failure is tests/test_config.py::test_defaults_are_sane, an environment artifact
     of the *workspace* venv (config default is "deepseek-chat", the workspace .env overrides
-    LLM_MODEL); `git diff pr-290-review^1 pr-290-review -- agnet-service/tests/test_config.py`
+    LLM_MODEL); `git diff pr-290-review^1 pr-290-review -- agent-service/tests/test_config.py`
     is empty and PR-head's app/core/config.py still defaults to "deepseek-chat"
 ```
 
@@ -134,14 +134,14 @@ app/agents/commerce/graph.py:25,38     llm: BaseChatModel | None = None ; Commer
 app/workflows/concierge_workflow.py:239  build_commerce_graph(registry, org_context=org_context)   ← no llm argument
 ```
 
-`git grep -n "self\.llm" pr-290-review -- agnet-service/app` returns exactly three classes: `commerce/nodes.py:53` (assignment only), `customer_memory/nodes.py:386,404` (`if self.llm is None` / `await self.llm.ainvoke(...)`), `visual_insight/nodes.py:303,310` (`if self.llm is not None` / `await self.llm.ainvoke(...)`). There is **no `self.llm` use in the Commerce agent**. `app/llm/runtime.py` offers `memory_llm_or_none` and `visual_llm_or_none`; there is no `commerce_llm_or_none`.
+`git grep -n "self\.llm" pr-290-review -- agent-service/app` returns exactly three classes: `commerce/nodes.py:53` (assignment only), `customer_memory/nodes.py:386,404` (`if self.llm is None` / `await self.llm.ainvoke(...)`), `visual_insight/nodes.py:303,310` (`if self.llm is not None` / `await self.llm.ainvoke(...)`). There is **no `self.llm` use in the Commerce agent**. `app/llm/runtime.py` offers `memory_llm_or_none` and `visual_llm_or_none`; there is no `commerce_llm_or_none`.
 
 The agent's own README claims the opposite mechanism, and is stale on two counts:
 
 - `app/agents/commerce/README.md:31-35`: *"the graph must call `pause_for_approval`, which issues a LangGraph `interrupt()`. The ASP.NET Core backend stores the checkpoint thread ID. The React dashboard calls the resume endpoint."*
 - `app/agents/commerce/README.md:42-44`: *"**Current stub state (Issue #151)** — No `graph.py` exists yet"* — `graph.py` exists (83 lines).
 
-`git grep -rn "interrupt(" pr-290-review -- agnet-service/app` matches **only those README lines**. There is no `interrupt()` call and no `from langgraph.types import interrupt` anywhere in the service. The graph's "pause" is `graph.add_edge("pause_for_approval", END)` (`graph.py:60`) — the run simply ends.
+`git grep -rn "interrupt(" pr-290-review -- agent-service/app` matches **only those README lines**. There is no `interrupt()` call and no `from langgraph.types import interrupt` anywhere in the service. The graph's "pause" is `graph.add_edge("pause_for_approval", END)` (`graph.py:60`) — the run simply ends.
 
 ### 4.3 There is no code path that resumes the paused workflow
 
@@ -174,7 +174,7 @@ The one route that *does* line up is business rules: `rules_tools.validate_busin
 - `delivery_tools.book_courier` (`:38,46`) never calls a courier API — the fee is `650.0 if "colombo" in delivery_address.lower() else 850.0` and the tracking number is `f"TRK-{carrier[:2]}-{ref_id}"`.
 - `pricing_tools.calculate_margin` / `apply_discount` are pure arithmetic, and the graph calls them directly rather than through the registry.
 
-This is *correct* per the deliberate design noted in the thesis chapter (`docs/final_document/chapters/09-slice-commerce.tex:44-66`: *"The model never decides this. A rule refusal is a hard stop."*) and fair for a coursework slice — but the PR description's claim *"Integrated the Commerce Agent graph and nodes with dedicated tool suites (approval_tools, delivery_tools, payment_tools, rules_tools, loyalty_tools)"* is inaccurate in two ways: **there is no `approval_tools.py`** (`ls agnet-service/app/tools/commerce/` → `__init__.py, README.md, delivery_tools.py, loyalty_tools.py, payment_tools.py, pricing_tools.py, rules_tools.py`), and `pause_for_approval` is a graph node (`nodes.py:140`), not a tool.
+This is *correct* per the deliberate design noted in the thesis chapter (`docs/final_document/chapters/09-slice-commerce.tex:44-66`: *"The model never decides this. A rule refusal is a hard stop."*) and fair for a coursework slice — but the PR description's claim *"Integrated the Commerce Agent graph and nodes with dedicated tool suites (approval_tools, delivery_tools, payment_tools, rules_tools, loyalty_tools)"* is inaccurate in two ways: **there is no `approval_tools.py`** (`ls agent-service/app/tools/commerce/` → `__init__.py, README.md, delivery_tools.py, loyalty_tools.py, payment_tools.py, pricing_tools.py, rules_tools.py`), and `pause_for_approval` is a graph node (`nodes.py:140`), not a tool.
 
 ### 4.5 The agent computes a zero-value deal on every real request
 
@@ -220,7 +220,7 @@ Also note the tools are **plain Python functions, not LangChain `@tool`s** (`git
 
 **What is missing.** The agent sets `needs_approval=True` (`nodes.py:165`, schema `app/schemas/commerce.py:104`) and `status="pending_approval"`, but:
 
-- `git grep -rn "needs_approval"` across `agnet-service/app` and `Aveline.Api` matches only the producer sites and the schema — **no consumer**.
+- `git grep -rn "needs_approval"` across `agent-service/app` and `Aveline.Api` matches only the producer sites and the schema — **no consumer**.
 - `git grep -rn "approval" Aveline.Api/Modules/Conversations` finds SignOff machinery (`MessageKind.SignOff`, `SignOffDecision`, `ContentHash`) but no bridge from a Commerce agent output to an `ApprovalQueueEntry` or a SignOff message.
 - The **only** code that creates an approval queue entry is `OrderService.CreateOrderAsync` (`OrderService.cs`, `if (initialStatus == "pending_approval" && _approvalRepository != null)`), i.e. the REST orders path, not the agent path.
 
@@ -277,7 +277,7 @@ So any boutique staff member can approve a high-value order and trigger a refund
 ### 6.2 Does it work?
 
 - **Backend slices: yes, in-process.** `dotnet test … --filter "FullyQualifiedName~Commerce"` → **76 passed / 0 failed** on the PR branch tip (run here). The full API job passes in CI on this PR (`Build, Test & Publish API` → pass, 9m13s, [run 35391789956](https://github.com/KavinduNirmal/aveline/actions/runs/35391789956)).
-- **Agent service: mostly yes.** 68/68 in the commerce-focused set (`test_commerce_{graph,agent,tools,schemas,state}.py`, `test_concierge_workflow.py`, `test_tool_registry.py`); 412 passed / 2 skipped in the full suite. The single failure (`test_config.py::test_defaults_are_sane`) is an artifact of the *workspace* venv's `.env` overriding `LLM_MODEL`; the file is unchanged by this PR (`git diff pr-290-review^1 pr-290-review -- agnet-service/tests/test_config.py` → empty) and my direct check of the PR-head `app/core/config.py` default (`"deepseek-chat"`) passes the assertion. Worth naming because it means `pytest --cov-fail-under=90` in `.github/workflows/ci.yml:150` will fail on any machine whose `.env` sets `LLM_MODEL`.
+- **Agent service: mostly yes.** 68/68 in the commerce-focused set (`test_commerce_{graph,agent,tools,schemas,state}.py`, `test_concierge_workflow.py`, `test_tool_registry.py`); 412 passed / 2 skipped in the full suite. The single failure (`test_config.py::test_defaults_are_sane`) is an artifact of the *workspace* venv's `.env` overriding `LLM_MODEL`; the file is unchanged by this PR (`git diff pr-290-review^1 pr-290-review -- agent-service/tests/test_config.py` → empty) and my direct check of the PR-head `app/core/config.py` default (`"deepseek-chat"`) passes the assertion. Worth naming because it means `pytest --cov-fail-under=90` in `.github/workflows/ci.yml:150` will fail on any machine whose `.env` sets `LLM_MODEL`.
 - **End-to-end: not demonstrated, and structurally blocked.** The assessed workflow (`PROJECT_CONTEXT.md:285-297`) requires the owner's decision to resume the agent and reach the customer. Steps 5-6 have no implementation (§4.3), and the agent's input is empty for real traffic (§4.5). No test, log, or CI artifact demonstrates the round trip.
 - **CI:** `gh pr checks 290` → API pass, Python agent pass, Web pass, Flutter analyze pass, Repository hygiene pass, Trivy pass, ZAP pass; **`Security & Dependency Scan` → fail**; `Build Flutter APK` pending; `mergeStateStatus: UNSTABLE`.
 
@@ -372,15 +372,15 @@ cd .review/pr290
 dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~Commerce"
 
 # 3. Agent suite + coverage (412 passed, 2 skipped, 1 env-related failure; TOTAL 92%)
-cd agnet-service
-/run/media/kavindu/Development/Development/3-1/SEF/aveline/agnet-service/.venv/bin/python \
+cd agent-service
+/run/media/kavindu/Development/Development/3-1/SEF/aveline/agent-service/.venv/bin/python \
   -m pytest tests/ -q --cov=app --cov-report=term
 
 # 4. The three claims that fail, re-checked
-git grep -n "self\.llm" pr-290-review -- agnet-service/app      # no Commerce use
-git grep -rn "interrupt("   pr-290-review -- agnet-service/app  # README prose only
+git grep -n "self\.llm" pr-290-review -- agent-service/app      # no Commerce use
+git grep -rn "interrupt("   pr-290-review -- agent-service/app  # README prose only
 git grep -rn "api/internal/orders" pr-290-review                # registry + a mocked test only
-git grep -rn "approval_decision" pr-290-review -- agnet-service # tests and demo only
+git grep -rn "approval_decision" pr-290-review -- agent-service # tests and demo only
 
 # 5. PR content vs its target branch
 git diff --name-status 28c2e40 pr-290-review | grep -v commerce-coverage

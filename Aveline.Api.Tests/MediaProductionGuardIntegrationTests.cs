@@ -85,6 +85,10 @@ public class MediaProductionGuardIntegrationTests
                 builder.UseSetting("Telemetry:IpHashSalt", "test-production-ip-salt");
                 // Required by the Production scrape-token guard (S-1).
                 builder.UseSetting("Metrics:ScrapeToken", "test-production-scrape-token");
+                // Required by the Production database guard: this host deliberately runs on the
+                // in-memory provider, so the database guard must be satisfied here for the media
+                // guard below to remain the failure under test.
+                builder.UseSetting("Database:AllowInMemoryInProduction", "true");
                 builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:59999");
                 builder.UseSetting("AgentService:InternalToken", "test-internal-token");
                 builder.UseSetting("Observability:AgentIsCritical", "false");

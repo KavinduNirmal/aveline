@@ -6,10 +6,12 @@ import {
   CreditCard,
   LayoutDashboard,
   LogOut,
+  Menu,
   MessageSquare,
   Plus,
   Settings,
   Share2,
+  Shield,
   Shirt,
   ShoppingBag,
   Sparkles,
@@ -22,6 +24,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import { Blossom } from '@/components/auth/Blossom'
+import { useUserContext } from '@/contexts/UserContext'
+import { hasConsoleRole } from '@/lib/admin-signup'
 import { AvelineChatDrawer } from '@/components/conversation/AvelineChatDrawer'
 import { AvelineChatLauncher } from '@/components/conversation/AvelineChatLauncher'
 import { SalonPanel } from '@/components/conversation/SalonPanel'
@@ -151,12 +155,18 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const navigate = useNavigate()
   const { user } = useUser()
+  const { user: appUser } = useUserContext()
   const { signOut } = useClerk()
   // The section is part of the URL (`/app/b/:slug/:section`), not component state, so a section
   // is linkable and survives a refresh. The bare slug route redirects here with `overview`.
-  const { section: sectionParam, itemId: catalogItemId } = useParams<{
+  const {
+    section: sectionParam,
+    itemId: catalogItemId,
+    customerId,
+  } = useParams<{
     section?: string
     itemId?: string
+    customerId?: string
   }>()
   // One window for the whole shell: every KPI panel reads this value, so two panels on the same
   // screen cannot describe different periods.
@@ -164,6 +174,16 @@ export function DashboardShell({
   const [boutiques, setBoutiques] = useState<OrganizationMembership[]>([])
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
+  /**
+   * The sidebar is off-canvas below `lg`.
+   *
+   * It was a fixed `w-64` with no breakpoint anywhere in this file, so on a 390 px phone it left
+   * roughly 134 px for the content column — every dashboard section rendered wrong, not merely
+   * slowly. Below `lg` it now slides over the content from a button in the header, which is the
+   * conventional phone pattern and returns the full width to the page.
+   */
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const sidebarId = 'dashboard-sidebar'
 
   const allowedSections = SECTIONS.filter(
     (item) => !item.permission || hasPermission(role, item.permission),
@@ -173,21 +193,29 @@ export function DashboardShell({
   // role may not open is refused by the same `allowedSections` filter the nav uses — so a
   // hand-typed URL cannot render a panel the nav hides.
   //
-  // The piece route (`/app/b/:slug/catalog/:itemId`) spells `catalog` as a literal, so it carries an
-  // `itemId` param and **no** `section` param. Reading only `section` therefore sent a piece URL to
-  // `overview`; an `itemId` is what says the catalog is the section being viewed.
+  // Two routes spell their section as a literal and carry a second param instead of `:section`: a
+  // catalogue piece (`…/catalog/:itemId`) and a client record (`…/customers/:customerId`). Reading
+  // only `section` sent both to `overview`; the presence of the second param is what says which
+  // section is being viewed.
   const section: SectionId = catalogItemId
     ? 'catalog'
-    : SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
-      ? (sectionParam as SectionId)
-      : 'overview'
+    : customerId
+      ? 'customers'
+      : SECTIONS.some((item) => item.id === sectionParam) || sectionParam === 'upgrade'
+        ? (sectionParam as SectionId)
+        : 'overview'
 
   const activeSection =
     section !== 'overview' && !allowedSections.some((s) => s.id === section)
       ? 'overview'
       : section
 
-  const goToSection = (next: SectionId) => navigate(`/app/b/${organization.slug}/${next}`)
+  const goToSection = (next: SectionId) => {
+    // A section change from the off-canvas drawer should reveal the section, not leave the
+    // drawer covering it.
+    setSidebarOpen(false)
+    navigate(`/app/b/${organization.slug}/${next}`)
+  }
 
   // Fetch the caller's other active boutiques so an owner/manager with several can switch
   // tenants from the top bar. The same response carries the caller's own membership id, which the
@@ -225,13 +253,37 @@ export function DashboardShell({
 
   return (
     <ConversationsProvider organizationId={organization.id}>
-      <div className="flex min-h-screen bg-background">
-        <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r bg-background/60 backdrop-blur-sm">
+      <div className="flex min-h-dvh bg-background">
+        {/* Phone-only scrim. Tapping it closes the drawer, which is the expected escape hatch
+            from an overlay navigation on touch. Built from the `Button` primitive rather than a
+            raw button element: the tenant conformance gate forbids raw controls in this tree, and
+            the primitive renders the same element underneath. */}
+        {sidebarOpen && (
+          <Button
+            type="button"
+            variant="ghost"
+            aria-label="Close navigation"
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 z-30 size-auto rounded-none bg-foreground/40 p-0 backdrop-blur-xs hover:bg-foreground/40 lg:hidden"
+          />
+        )}
+        <aside
+          id={sidebarId}
+          className={cn(
+            // Below `lg`: an off-canvas drawer over the content, revealed by the header button.
+            'fixed inset-y-0 left-0 z-40 flex h-dvh w-64 shrink-0 flex-col border-r bg-background transition-transform duration-200',
+            // `lg` and up: the original in-flow sticky column.
+            'lg:sticky lg:top-0 lg:z-auto lg:translate-x-0',
+            sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full',
+          )}
+        >
         {/* Boutique identity */}
         <div className="flex h-16 items-center gap-3 border-b px-4">
           <div className="relative size-10 shrink-0 overflow-hidden rounded-full ring-1 ring-primary/20">
             {organization.logoUrl ? (
               <img
+                loading="lazy"
+                decoding="async"
                 src={organization.logoUrl}
                 alt=""
                 className="size-full object-cover"
@@ -290,7 +342,7 @@ export function DashboardShell({
               >
                 <div className="relative size-8 shrink-0 overflow-hidden rounded-full ring-1 ring-border">
                   {userImage ? (
-                    <img src={userImage} alt="" className="size-full object-cover" />
+                    <img loading="lazy" decoding="async" src={userImage} alt="" className="size-full object-cover" />
                   ) : (
                     <span className="flex size-full items-center justify-center bg-primary/10 text-xs font-semibold text-primary">
                       {initialsOf(user?.firstName, user?.lastName)}
@@ -315,7 +367,7 @@ export function DashboardShell({
                 <div className="flex items-center gap-2.5">
                   <div className="relative size-9 shrink-0 overflow-hidden rounded-full ring-1 ring-border">
                     {userImage ? (
-                      <img src={userImage} alt="" className="size-full object-cover" />
+                      <img loading="lazy" decoding="async" src={userImage} alt="" className="size-full object-cover" />
                     ) : (
                       <span className="flex size-full items-center justify-center bg-primary/10 text-sm font-semibold text-primary">
                         {initialsOf(user?.firstName, user?.lastName)}
@@ -344,6 +396,15 @@ export function DashboardShell({
                 Billing &amp; plan
               </DropdownMenuItem>
 
+              {/* A boutique owner can also hold a console role. The dashboard redirect no longer
+                  sends them to the console automatically, so give them an explicit way in. */}
+              {hasConsoleRole(appUser?.userRole ? [appUser.userRole] : []) && (
+                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                  <Shield className="size-4" aria-hidden />
+                  Platform Admin Console
+                </DropdownMenuItem>
+              )}
+
               <DropdownMenuSeparator />
 
               <DropdownMenuItem variant="destructive" onClick={handleSignOut}>
@@ -356,8 +417,22 @@ export function DashboardShell({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-4 border-b bg-background/80 px-6 backdrop-blur-sm">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-2 border-b bg-background/80 px-4 backdrop-blur-sm sm:gap-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            {/* The sidebar is off-canvas below `lg`, so this is the only way to reach navigation
+                on a phone. `lg:hidden` keeps it out of the desktop layout entirely. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Open navigation"
+              aria-controls={sidebarId}
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen(true)}
+              className="shrink-0 lg:hidden"
+            >
+              <Menu className="size-5" aria-hidden />
+            </Button>
             {boutiques.length > 0 && (
               <Select
                 value=""
@@ -451,7 +526,7 @@ export function DashboardShell({
           </div>
         </header>
 
-        <main className="flex-1 px-6 py-8">
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 sm:py-8">
           {activeSection === 'overview' ? (
             <Overview
               organization={organization}
@@ -463,7 +538,15 @@ export function DashboardShell({
           ) : activeSection === 'salon' ? (
             <SalonPanel />
           ) : activeSection === 'customers' ? (
-            <CustomersPanel organization={organization} role={role} />
+            <CustomersPanel
+              organization={organization}
+              role={role}
+              openCustomerId={customerId ?? null}
+              onOpenCustomer={(customer) =>
+                navigate(`/app/b/${organization.slug}/customers/${customer.customerId}`)
+              }
+              onCloseCustomer={() => navigate(`/app/b/${organization.slug}/customers`)}
+            />
           ) : activeSection === 'income' ? (
             <IncomePanel organizationId={organization.id} organizationName={organization.name} />
           ) : activeSection === 'catalog' ? (

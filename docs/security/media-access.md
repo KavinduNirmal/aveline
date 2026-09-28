@@ -125,7 +125,7 @@ closed in every failure mode:
   token.
 
 **This is deliberately the opposite direction from the agent service's rate limiter, which fails
-open** (`agnet-service/app/middleware/rate_limit.py`: an unreachable Redis logs a warning and the
+open** (`agent-service/app/middleware/rate_limit.py`: an unreachable Redis logs a warning and the
 request is allowed through). The distinction is intentional: a rate limiter that fails open
 degrades a protection; a single-use store that failed open would turn a one-shot credential into a
 replayable one, which is a grant, not a degradation.

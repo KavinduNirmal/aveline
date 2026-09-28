@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Modules.CustomerConcierge.Models;
 using Microsoft.EntityFrameworkCore;
@@ -13,14 +12,46 @@ public class CustomerMemoryRepository : ICustomerMemoryRepository
 
     public async Task<CustomerMemory> AddAsync(CustomerMemory memory, CancellationToken cancellationToken = default)
     {
+        EnsureContentKey(memory);
         _context.CustomerMemories.Add(memory);
         await _context.SaveChangesAsync(cancellationToken);
         return memory;
     }
 
+    /// <summary>
+    /// Derives the statement key from the content when a caller has not set it.
+    /// </summary>
+    /// <remarks>
+    /// The key is derived data, so the store owns it rather than trusting each caller to remember
+    /// it. Without this, a writer that bypasses <c>CustomerMemoryService</c> would insert the
+    /// column default (an empty string) and the unique index would then refuse a second note whose
+    /// content differs but whose key is also empty - a constraint failure with no relationship to
+    /// what the caller actually wrote. The service still sets the key itself, because it must read
+    /// the key *before* inserting to answer a restatement with the existing row.
+    /// </remarks>
+    private static void EnsureContentKey(CustomerMemory memory)
+    {
+        if (string.IsNullOrEmpty(memory.ContentKey))
+        {
+            memory.ContentKey = MemoryContentKey.From(memory.Content);
+        }
+    }
+
     public async Task<CustomerMemory?> GetAsync(Guid orgId, Guid id, CancellationToken cancellationToken = default)
         => await _context.CustomerMemories
             .FirstOrDefaultAsync(m => m.OrganizationId == orgId && m.Id == id, cancellationToken);
+
+    public async Task<CustomerMemory?> GetByContentKeyAsync(
+        Guid orgId,
+        Guid customerId,
+        string contentKey,
+        CancellationToken cancellationToken = default)
+        => await _context.CustomerMemories
+            .FirstOrDefaultAsync(
+                m => m.OrganizationId == orgId
+                     && m.CustomerId == customerId
+                     && m.ContentKey == contentKey,
+                cancellationToken);
 
     public async Task<IReadOnlyList<CustomerMemory>> ListByCustomerAsync(
         Guid orgId,
@@ -58,6 +89,7 @@ public class CustomerMemoryRepository : ICustomerMemoryRepository
         Guid customerId,
         float[] queryEmbedding,
         int topK = 5,
+        double minSimilarity = 0.0,
         CancellationToken cancellationToken = default)
     {
         if (!_context.Database.IsRelational())
@@ -67,30 +99,36 @@ public class CustomerMemoryRepository : ICustomerMemoryRepository
         }
 
         var literal = "[" + string.Join(",", queryEmbedding) + "]";
+        // The floor is a predicate rather than a post-filter in memory: the index orders by distance,
+        // so a row below the floor is never read and `topK` stays a bound on what is returned.
+        // `Source` is selected so the caller can tell a stated fact from an inference (gap E3).
         var sql = """
-                  SELECT "Id", "CustomerId", "Content", "Category", "Confidence", "IsExplicit",
+                  SELECT "Id", "CustomerId", "Content", "Category", "Source", "Confidence", "IsExplicit",
                          1 - (embedding <=> CAST({0} AS vector)) AS "Similarity"
                   FROM "CustomerMemory"
                   WHERE "OrganizationId" = {1}
                     AND "CustomerId" = {2}
                     AND "DeletedAt" IS NULL
                     AND embedding IS NOT NULL
+                    AND ("ExpiresAt" IS NULL OR "ExpiresAt" > now())
+                    AND 1 - (embedding <=> CAST({0} AS vector)) >= {4}
                   ORDER BY embedding <=> CAST({0} AS vector)
                   LIMIT {3}
                   """;
 
         var rows = await _context.Database
-            .SqlQueryRaw<MemorySearchRow>(sql, literal, orgId, customerId, topK)
+            .SqlQueryRaw<MemorySearchRow>(sql, literal, orgId, customerId, topK, minSimilarity)
             .ToListAsync(cancellationToken);
 
         return rows
             .Select(r => new CustomerMemorySearchResult(
-                r.Id, r.CustomerId, r.Content, r.Category, r.Confidence, r.IsExplicit, r.Similarity))
+                r.Id, r.CustomerId, r.Content, r.Category, r.Source, r.Confidence, r.IsExplicit, r.Similarity))
             .ToList();
     }
 
     public async Task SaveAsync(CustomerMemory memory, CancellationToken cancellationToken = default)
     {
+        EnsureContentKey(memory);
         memory.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync(cancellationToken);
     }
@@ -102,6 +140,7 @@ public class CustomerMemoryRepository : ICustomerMemoryRepository
         public Guid CustomerId { get; set; }
         public string Content { get; set; } = string.Empty;
         public string Category { get; set; } = "fact";
+        public string Source { get; set; } = "conversation";
         public decimal Confidence { get; set; }
         public bool IsExplicit { get; set; }
         public double Similarity { get; set; }

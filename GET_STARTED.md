@@ -10,7 +10,7 @@ Ensure you have the following installed on your machine:
 
 - **Package Manager**: [Bun](https://bun.sh/) _(Recommended)_, [pnpm](https://pnpm.io/), or `npm`
 - **.NET SDK**: .NET 10 SDK (for `Aveline.Api/`)
-- **Python**: Python 3.12+ (for `agnet-service/`)
+- **Python**: Python 3.12+ (for `agent-service/`)
 - **Flutter**: Latest stable Flutter / Dart SDK 3.13+ (for `frontend/aveline_mobile/`)
 - **Docker & Docker Compose**: For local PostgreSQL (pgvector), Redis, and the other containers
 - **Git**: Configured with your university/GitHub credentials
@@ -132,12 +132,12 @@ dotnet run
 > [!NOTE]
 > The API does not read an `.env` file itself — `Aveline.Api/.env.example` documents the keys, but the values must reach the process as real environment variables (`Clerk__Authority`, `ConnectionStrings__DefaultConnection`, `AgentService__InternalToken`, `Cors__AllowedOrigins__0`).
 
-### Python Agentic AI Service (`agnet-service/`)
+### Python Agentic AI Service (`agent-service/`)
 
 The service reads a `.env` file in its own directory, and refuses to start on a missing or placeholder `INTERNAL_API_TOKEN`:
 
 ```bash
-cd agnet-service
+cd agent-service
 cp .env.example .env          # set INTERNAL_API_TOKEN to the same value the API sends
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
@@ -269,8 +269,8 @@ never be committed — not even in `.env.example`.
 | Task                             | Command                                                |
 | -------------------------------- | ------------------------------------------------------ |
 | Run all backend tests            | `dotnet test Aveline.Api/Aveline.Api.sln`              |
-| Run Python agent tests           | `cd agnet-service && pytest tests/ -v`                 |
-| Lint the agent service           | `ruff check agnet-service/app/`                        |
+| Run Python agent tests           | `cd agent-service && pytest tests/ -v`                 |
+| Lint the agent service           | `ruff check agent-service/app/`                        |
 | Run Flutter tests                | `cd frontend/aveline_mobile && flutter test`           |
 | Check Flutter formatting & lints | `cd frontend/aveline_mobile && flutter analyze`        |
 | Lint the web app                 | `cd frontend/web && bun run lint`                      |
@@ -286,7 +286,7 @@ never be committed — not even in `.env.example`.
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | Sign in locally with Clerk and see the full stack run  | [docs/guides/local-auth-development.md](docs/guides/local-auth-development.md)                   |
 | Grant myself the Owner role in a local database        | [docs/guides/grant-team-owner-local.md](docs/guides/grant-team-owner-local.md)                   |
-| Understand a service's environment variables           | [Aveline.Api/README.md](Aveline.Api/README.md), [agnet-service/README.md](agnet-service/README.md) |
+| Understand a service's environment variables           | [Aveline.Api/README.md](Aveline.Api/README.md), [agent-service/README.md](agent-service/README.md) |
 | Run and extend the test suites                         | [docs/tests/README.md](docs/tests/README.md)                                                     |
 | Call the API from a client                             | [docs/api/README.md](docs/api/README.md)                                                         |
 | Understand why a decision was made                     | [docs/ADR/README.md](docs/ADR/README.md)                                                         |

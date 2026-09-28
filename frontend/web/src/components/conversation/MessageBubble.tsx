@@ -13,6 +13,7 @@ interface MessageBubbleProps {
   /** Whether this message is from the current staff user (right-aligned). */
   isOwn: boolean
   onSignOff?: (approved: boolean) => void
+  onRequestPayment?: (orderId: string) => void
   /** Called when the staff picks a customer from a resolution `choice` block. */
   onSelectCustomer?: (customerId: string) => void
   /** Called with the attachment id when a thread attachment is opened for viewing. */
@@ -97,6 +98,7 @@ export function MessageBubble({
   message,
   isOwn,
   onSignOff,
+  onRequestPayment,
   onSelectCustomer,
   onOpenAttachment,
   onStreamProgress,
@@ -144,6 +146,7 @@ export function MessageBubble({
               messageId={message.id}
               bridge={blockActions}
               onSignOff={onSignOff}
+              onRequestPayment={onRequestPayment}
               onSelectCustomer={onSelectCustomer}
               onOpenAttachment={onOpenAttachment}
               persona={persona}

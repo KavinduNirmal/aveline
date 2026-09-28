@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
   Pencil,
@@ -11,6 +12,7 @@ import {
   PackageX,
   SlidersHorizontal,
   Calendar,
+  Tag,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -18,13 +20,19 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { formatMoney } from '@/lib/format-money'
 import { cn } from '@/lib/utils'
+import {
+  type PieceDiscountResponseDto,
+  fetchPieceDiscountByItemId,
+} from '@/lib/piece-discount-api'
 
 import { VisualAttributesBadge } from './VisualAttributesBadge'
+import { PieceDiscountModal } from './PieceDiscountModal'
 import type { InventoryItemMock } from './mockData'
 
 interface CatalogItemDetailProps {
   /** The piece, or `null` when the id in the URL names nothing the list carries. */
   item: InventoryItemMock | null
+  organizationId?: string
   isLoading: boolean
   onBack: () => void
   onEdit: (item: InventoryItemMock) => void
@@ -68,6 +76,7 @@ function formatDate(value?: string): string {
  */
 export function CatalogItemDetail({
   item,
+  organizationId,
   isLoading,
   onBack,
   onEdit,
@@ -79,6 +88,36 @@ export function CatalogItemDetail({
   onReduceStock,
   onMarkOutOfStock,
 }: CatalogItemDetailProps) {
+  const [pieceDiscount, setPieceDiscount] = useState<PieceDiscountResponseDto | null>(null)
+  const [isDiscountModalOpen, setIsDiscountModalOpen] = useState<boolean>(false)
+
+  useEffect(() => {
+    if (!organizationId || !item?.id) {
+      setPieceDiscount(null)
+      return
+    }
+
+    let isMounted = true
+    const abortController = new AbortController()
+
+    fetchPieceDiscountByItemId(organizationId, item.id, abortController.signal)
+      .then((discount) => {
+        if (isMounted) {
+          setPieceDiscount(discount)
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setPieceDiscount(null)
+        }
+      })
+
+    return () => {
+      isMounted = false
+      abortController.abort()
+    }
+  }, [organizationId, item?.id])
+
   if (!item) {
     return (
       <div className="flex flex-col gap-4">
@@ -104,6 +143,12 @@ export function CatalogItemDetail({
   const state = stockState(item)
   const margin = item.price - item.cost
   const marginPercent = item.price > 0 ? Math.round((margin / item.price) * 100) : null
+
+  const hasActiveDiscount = Boolean(pieceDiscount?.isActive && pieceDiscount.discountPercentage > 0)
+  const discountRate = hasActiveDiscount ? pieceDiscount!.discountPercentage : 0
+  const promoPrice = hasActiveDiscount ? Math.max(0, item.price * (1 - discountRate)) : item.price
+  const promoMargin = promoPrice - item.cost
+  const promoMarginPercent = promoPrice > 0 ? Math.round((promoMargin / promoPrice) * 100) : null
 
   return (
     <div className="flex flex-col gap-6">
@@ -159,16 +204,25 @@ export function CatalogItemDetail({
         <Card className="overflow-hidden border-border/80 bg-card p-0">
           <div className="relative aspect-4/3 w-full overflow-hidden bg-muted">
             {item.imageUrl ? (
-              <img src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" />
+              <img loading="lazy" decoding="async" src={item.imageUrl} alt={item.name} className="h-full w-full object-cover" />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
                 No photograph
               </div>
             )}
-            <div className="absolute left-3 top-3">
+            <div className="absolute left-3 top-3 flex flex-col items-start gap-1.5">
               <Badge variant={state.variant} className="text-[10px]">
                 {state.label}
               </Badge>
+              {hasActiveDiscount ? (
+                <Badge
+                  variant="secondary"
+                  className="gap-1 border-primary/30 bg-primary/10 text-[10px] font-semibold text-primary"
+                >
+                  <Tag className="size-2.5" aria-hidden />
+                  {Math.round(discountRate * 100)}% Piece Promo
+                </Badge>
+              ) : null}
             </div>
           </div>
 
@@ -251,12 +305,34 @@ export function CatalogItemDetail({
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <DetailStat label="Retail price" value={formatMoney(item.price)} />
+            {hasActiveDiscount ? (
+              <Card className="flex flex-col items-center gap-1 border-primary/20 bg-primary/5 p-3 text-center">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-primary">
+                  Promo Price
+                </span>
+                <span className="text-sm font-semibold tabular-nums text-primary">
+                  {formatMoney(promoPrice)}
+                </span>
+                <span className="text-[10px] text-muted-foreground line-through">
+                  {formatMoney(item.price)}
+                </span>
+              </Card>
+            ) : (
+              <DetailStat label="Retail price" value={formatMoney(item.price)} />
+            )}
             <DetailStat label="Atelier cost" value={formatMoney(item.cost)} />
             <DetailStat
-              label="Margin"
-              value={marginPercent === null ? formatMoney(margin) : `${formatMoney(margin)} · ${marginPercent}%`}
-              tone={margin < 0 ? 'warning' : undefined}
+              label={hasActiveDiscount ? "Promo margin" : "Margin"}
+              value={
+                hasActiveDiscount
+                  ? promoMarginPercent === null
+                    ? formatMoney(promoMargin)
+                    : `${formatMoney(promoMargin)} · ${promoMarginPercent}%`
+                  : marginPercent === null
+                    ? formatMoney(margin)
+                    : `${formatMoney(margin)} · ${marginPercent}%`
+              }
+              tone={(hasActiveDiscount ? promoMargin : margin) < 0 ? 'warning' : undefined}
             />
             <DetailStat
               label="In stock"
@@ -278,6 +354,20 @@ export function CatalogItemDetail({
 
           {/* Stock edits. Neither is a sale: no money moves, so the takings journal is untouched. */}
           <div className="flex flex-wrap items-center gap-2">
+            {organizationId ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+                onClick={() => setIsDiscountModalOpen(true)}
+              >
+                <Tag className="size-3.5" aria-hidden />
+                {hasActiveDiscount
+                  ? `Edit Discount (${Math.round(discountRate * 100)}%)`
+                  : 'Allocate Discount'}
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
@@ -340,6 +430,20 @@ export function CatalogItemDetail({
           </Card>
         </div>
       </div>
+
+      {organizationId ? (
+        <PieceDiscountModal
+          isOpen={isDiscountModalOpen}
+          onClose={() => setIsDiscountModalOpen(false)}
+          organizationId={organizationId}
+          itemId={item.id}
+          itemName={item.name}
+          retailPrice={item.price}
+          wholesaleCost={item.cost}
+          currentDiscount={pieceDiscount}
+          onDiscountSaved={(saved) => setPieceDiscount(saved)}
+        />
+      ) : null}
     </div>
   )
 }

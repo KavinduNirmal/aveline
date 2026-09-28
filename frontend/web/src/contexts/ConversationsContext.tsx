@@ -26,6 +26,7 @@ import {
   sendMessage,
   uploadConversationAttachment,
 } from '@/lib/conversations-api'
+import { updateOrderStatus } from '@/lib/orders-api'
 import {
   checkAttachmentCap,
   isAnalysableContentType,
@@ -191,6 +192,8 @@ interface ConversationsContextValue {
   attachmentsReady: (conversationId: string) => boolean
   /** Approves or rejects a SignOff message. */
   decide: (messageId: string, approved: boolean) => Promise<void>
+  /** Requests payment for an order and notifies the client Salon thread. */
+  requestPayment: (orderId: string) => Promise<void>
   /**
    * Binds the active Salon to a customer chosen from a resolution `choice` block and
    * re-triggers the agent with that customer in context.
@@ -865,6 +868,13 @@ export function ConversationsProvider({
     [activeConversationId, organizationId],
   )
 
+  const requestPayment = useCallback(
+    async (orderId: string) => {
+      await updateOrderStatus(organizationId, orderId, 'payment_requested')
+    },
+    [organizationId],
+  )
+
   const selectCustomer = useCallback(
     async (customerId: string) => {
       if (!activeConversationId) return
@@ -977,6 +987,7 @@ export function ConversationsProvider({
         removeAttachment,
         attachmentsReady,
         decide,
+        requestPayment,
         selectCustomer,
         deliverToClient,
         regenerate,

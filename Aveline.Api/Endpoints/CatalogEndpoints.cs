@@ -852,6 +852,28 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden);
 
+        group.MapPost("/suppliers", async (
+            [FromRoute] Guid organizationId,
+            [FromBody] CreateSupplierDto dto,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(dto.SupplierName))
+            {
+                return Results.BadRequest(new { message = "SupplierName is required." });
+            }
+
+            var created = await visualService.CreateSupplierAsync(organizationId, dto, cancellationToken);
+            return Results.Created($"/api/v1/orgs/{organizationId}/catalog/suppliers/{created.Id}", created);
+        })
+        .WithName("CatalogCreateSupplier")
+        .WithSummary("Register a new partner atelier or supplier.")
+        .Produces<SupplierDto>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
         group.MapGet("/suppliers/{supplierId:guid}/catalog", async (
             [FromRoute] Guid organizationId,
             [FromRoute] Guid supplierId,

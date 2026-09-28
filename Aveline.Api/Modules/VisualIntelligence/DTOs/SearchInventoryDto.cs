@@ -8,6 +8,12 @@ public class SearchInventoryDto
         get => OrganizationId;
         set => OrganizationId = value;
     }
+    public string? Query { get; set; }
+    public string? Search
+    {
+        get => Query;
+        set => Query = value;
+    }
     public string? Category { get; set; }
     public string? Color { get; set; }
     public string? Size { get; set; }

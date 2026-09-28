@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Commerce.DTOs;
 using Aveline.Api.Modules.Commerce.Services;
 using Aveline.Api.Modules.VisualIntelligence.DTOs;
 using Aveline.Api.Modules.VisualIntelligence.Services;
@@ -57,14 +58,17 @@ public class OrderContextBuilderTests
         IsAvailable = true
     };
 
-    private static OrderContextBuilder Builder(params InventoryItemDto[] catalog)
+    private static OrderContextBuilder Builder(params InventoryItemDto[] catalog) =>
+        Builder(null, catalog);
+
+    private static OrderContextBuilder Builder(IBusinessRulesService? businessRules, params InventoryItemDto[] catalog)
     {
         var inventory = new Mock<IInventoryService>();
         inventory
             .Setup(service => service.QueryCatalogAsync(
                 It.IsAny<Guid>(), It.IsAny<CatalogQueryRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CatalogPagedResponse { Items = catalog.ToList(), Total = catalog.Length });
-        return new OrderContextBuilder(inventory.Object);
+        return new OrderContextBuilder(inventory.Object, businessRules);
     }
 
     [Fact]
@@ -209,11 +213,43 @@ public class OrderContextBuilderTests
     [InlineData("buy the emerald saree", 1)]
     // A number after "size" is a measurement, not a count.
     [InlineData("I want to buy the emerald saree in size 4", 1)]
+    // Percentage or discount tokens must not be stolen as item quantities.
+    [InlineData("Calculate the discount if we give a 10% off for the emerald saree", 1)]
+    [InlineData("Give 15% discount for 2 emerald sarees", 2)]
+    [InlineData("What if we give 10 percent off for the emerald saree in size 4", 1)]
     public async Task TheStatedQuantity_IsUsed(string message, int expected)
     {
         var context = await Builder(EmeraldSaree).BuildAsync(Guid.NewGuid(), message);
 
         Assert.Equal(expected, Assert.Single(context.Items).Quantity);
+    }
+
+    [Fact]
+    public async Task APricingQuestionWithRequestedDiscount_ExtractsDiscountRateAndDoesNotPolluteQuantity()
+    {
+        var context = await Builder(EmeraldSaree)
+            .BuildAsync(Guid.NewGuid(), "Calculate the discount if we give a 10% off for the emerald saree");
+
+        Assert.True(context.IsQuote);
+        Assert.Equal(0.10m, context.ProposedDiscount);
+        var item = Assert.Single(context.Items);
+        Assert.Equal(1, item.Quantity);
+        Assert.Equal(EmeraldSaree.Price, item.UnitPrice);
+        Assert.Equal(EmeraldSaree.Price, item.TotalPrice);
+    }
+
+    [Fact]
+    public async Task AnOrderWithDiscountPercentageAndQuantity_ExtractsBothCorrectly()
+    {
+        var context = await Builder(EmeraldSaree)
+            .BuildAsync(Guid.NewGuid(), "I want to buy 2 emerald sarees with 10% off");
+
+        Assert.False(context.IsQuote);
+        Assert.Equal(0.10m, context.ProposedDiscount);
+        var item = Assert.Single(context.Items);
+        Assert.Equal(2, item.Quantity);
+        Assert.Equal(EmeraldSaree.Price, item.UnitPrice);
+        Assert.Equal(EmeraldSaree.Price * 2, item.TotalPrice);
     }
 
     [Fact]
@@ -252,5 +288,66 @@ public class OrderContextBuilderTests
         var context = await Builder(EmeraldSaree).BuildAsync(Guid.Empty, "I want to buy the emerald saree");
 
         Assert.Empty(context.Items);
+    }
+
+    [Theory]
+    [InlineData("Order confirm for Kaveesha", "Kaveesha")]
+    [InlineData("Create order for Tharindi", "Tharindi")]
+    [InlineData("Place order for client Kaveesha Tharindi", "Kaveesha Tharindi")]
+    [InlineData("Order for 0779037760", "0779037760")]
+    [InlineData("customer is Tharindi Mahindarathne", "Tharindi Mahindarathne")]
+    [InlineData("Calculate the discount if we give a 15% off for the Emerald Garden Floral Silk Midi", null)]
+    [InlineData("Calculate the discount if we give a 10% off for the Crimson Georgette Zari Saree", null)]
+    [InlineData("What is the price for the emerald saree", null)]
+    public void CustomerHintFrom_ExtractsCustomerNameOrPhone(string message, string? expected)
+    {
+        var hint = OrderContextBuilder.CustomerHintFrom(message);
+        Assert.Equal(expected, hint);
+    }
+
+    [Fact]
+    public async Task OrderConfirmWithoutItemName_ResolvesItemFromPrecedingTurn()
+    {
+        var recentHistory = new List<string>
+        {
+            "Here is the Crimson piece you asked about: Emerald Green Georgette Saree priced at LKR 75,000.",
+            "Can you show me what green sarees you have?"
+        };
+
+        var context = await Builder(EmeraldSaree, FuchsiaDress)
+            .BuildAsync(Guid.NewGuid(), "Order confirm for Kaveesha", recentHistory);
+
+        var item = Assert.Single(context.Items);
+        Assert.Equal(EmeraldSaree.Id, item.ItemId);
+        Assert.Equal("Emerald Green Georgette Saree", item.ItemName);
+        Assert.Equal("Kaveesha", context.CustomerHint);
+        Assert.False(context.IsQuote);
+    }
+
+    [Fact]
+    public async Task AMessageNamingAPiece_WithActivePieceDiscount_AttachesPieceDiscountRate()
+    {
+        var businessRules = new Mock<IBusinessRulesService>();
+        businessRules
+            .Setup(r => r.GetPieceDiscountsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PieceDiscountResponseDto>
+            {
+                new(
+                    Guid.NewGuid(),
+                    EmeraldSaree.Id,
+                    EmeraldSaree.ItemName,
+                    0.10m,
+                    true,
+                    "Mid-season 10% promo",
+                    DateTime.UtcNow,
+                    null)
+            });
+
+        var context = await Builder(businessRules.Object, EmeraldSaree, FuchsiaDress)
+            .BuildAsync(Guid.NewGuid(), "I want to buy the emerald green saree");
+
+        var item = Assert.Single(context.Items);
+        Assert.Equal(EmeraldSaree.Id, item.ItemId);
+        Assert.Equal(0.10m, item.PieceDiscountRate);
     }
 }

@@ -65,6 +65,7 @@ public class InventoryService : IInventoryService
             inStockOnly: request.InStockOnly,
             page: page,
             pageSize: pageSize,
+            query: request.Query?.Trim(),
             cancellationToken: cancellationToken
         );
 

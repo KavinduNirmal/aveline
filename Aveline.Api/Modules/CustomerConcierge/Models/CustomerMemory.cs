@@ -25,6 +25,19 @@ public class CustomerMemory : ITenantEntity
     /// <summary>The human-readable memory statement.</summary>
     public string Content { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The normalised form of <see cref="Content"/> that decides whether two statements are the
+    /// same note (gap A3).
+    /// </summary>
+    /// <remarks>
+    /// Set by <c>CustomerMemoryService</c> from <see cref="Content"/> on every write and never by a
+    /// caller: it is derived data, and the whole point of storing it is that the database can carry
+    /// a unique index over it, so two concurrent writes cannot both insert the same note. The
+    /// normalisation itself lives in <c>Repositories.MemoryContentKey</c>, and mirrors the agent's
+    /// <c>normalise_memory_content</c> so the read-path collapse and the write-path index agree.
+    /// </remarks>
+    public string ContentKey { get; set; } = string.Empty;
+
     /// <summary>preference | event | complaint | fact | sentiment</summary>
     public string Category { get; set; } = "fact";
 
@@ -40,10 +53,24 @@ public class CustomerMemory : ITenantEntity
     /// <summary>Free-form metadata (JSONB), e.g. the originating interaction id.</summary>
     public string MetadataJson { get; set; } = "{}";
 
+    /// <summary>
+    /// When the note stops being true, or null for a note that stays true (gap A4).
+    /// </summary>
+    /// <remarks>
+    /// A dated event memory ("has a wedding on 2026-12-01") is stale the day after; a stated
+    /// preference is not. The column is what lets the query filter age a note out without deleting
+    /// the row an associate might still want to see in the history.
+    /// </remarks>
+    public DateTime? ExpiresAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// When the note was withdrawn. Read through the configured query filter, so a soft-deleted
+    /// memory never reaches a caller (gap A6).
+    /// </summary>
     public DateTime? DeletedAt { get; set; }
 
     public Customer? Customer { get; set; }

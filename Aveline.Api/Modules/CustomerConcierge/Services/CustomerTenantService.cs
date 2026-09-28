@@ -55,6 +55,23 @@ public interface ICustomerTenantService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The pre-contact brief for one client: who they are, what is known, and what is coming up.
+    /// Returns <c>null</c> when the client is not in this organization (or is deleted).
+    /// </summary>
+    /// <remarks>
+    /// This is the staff-facing read that makes the brief a screen rather than a by-product of a
+    /// conversation. It is deliberately ungated by consent in the sense of refusing outright: a
+    /// boutique must be able to see that a client exists and what staff wrote about them. What
+    /// consent *does* control is the personalization the agent derived - the stored memories - which
+    /// are returned only when consent is granted, and <see cref="TenantCustomerBriefDto.ConsentStatus"/>
+    /// carries the reason so the client can say why the section is empty.
+    /// </remarks>
+    Task<TenantCustomerBriefDto?> GetBriefAsync(
+        Guid organizationId,
+        Guid customerId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Applies the writable subset of a client's record. Returns <c>null</c> when the client is not
     /// in this organization, and throws <see cref="CustomerPhoneConflictException"/> when the new
     /// phone number is already another client's identity key in the same organization.
@@ -328,6 +345,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
         {
             OrganizationId = organizationId,
             FullName = name,
+            Nickname = string.IsNullOrWhiteSpace(request.Nickname) ? null : request.Nickname.Trim(),
             PhoneNumber = phone,
             Status = "new",
             Level = null,
@@ -405,6 +423,83 @@ public sealed class CustomerTenantService : ICustomerTenantService
                 cancellationToken);
 
         return ToDetail(customer, interactionCount);
+    }
+
+    public async Task<TenantCustomerBriefDto?> GetBriefAsync(
+        Guid organizationId,
+        Guid customerId,
+        CancellationToken cancellationToken = default)
+    {
+        var customer = await _context.Customers
+            .AsNoTracking()
+            .Include(candidate => candidate.Preferences)
+            .Include(candidate => candidate.Tags)
+            .FirstOrDefaultAsync(
+                candidate => candidate.Id == customerId
+                             && candidate.OrganizationId == organizationId
+                             && candidate.DeletedAt == null,
+                cancellationToken);
+
+        if (customer is null)
+        {
+            return null;
+        }
+
+        var consentStatus = await _context.CustomerConsents
+            .AsNoTracking()
+            .Where(row => row.OrganizationId == organizationId && row.CustomerId == customerId)
+            .Select(row => row.ConsentStatus)
+            .FirstOrDefaultAsync(cancellationToken) ?? ConsentStatuses.AbsentRow;
+
+        // The memories are what consent governs: they are the personalization the agent derived,
+        // and a revoked client has none. The rest of the brief (description, tags, preferences,
+        // events) is the boutique's own record of its client and stays readable.
+        var memories = string.Equals(consentStatus, ConsentStatuses.Granted, StringComparison.Ordinal)
+            ? (await _context.CustomerMemories
+                    .AsNoTracking()
+                    .Where(memory => memory.OrganizationId == organizationId
+                                     && memory.CustomerId == customerId)
+                    .OrderByDescending(memory => memory.CreatedAt)
+                    .ToListAsync(cancellationToken))
+                .Select(memory => new TenantCustomerMemoryDto(
+                    memory.Id, memory.CustomerId, memory.Content, memory.Category, memory.Source,
+                    memory.IsExplicit, memory.Confidence, memory.CreatedAt))
+                .ToList()
+            : [];
+
+        // `IsActive` alone includes an occasion that has already happened, so the date is applied
+        // here. The field is named UpcomingEvents and must mean it.
+        var today = DateTime.UtcNow.Date;
+        var upcomingEvents = (await _context.CustomerEvents
+                .AsNoTracking()
+                .Where(customerEvent => customerEvent.OrganizationId == organizationId
+                                        && customerEvent.CustomerId == customerId
+                                        && customerEvent.IsActive
+                                        && customerEvent.EventDate >= today)
+                .OrderBy(customerEvent => customerEvent.EventDate)
+                .ToListAsync(cancellationToken))
+            .Select(customerEvent => new TenantCustomerBriefEventDto(
+                customerEvent.Id, customerEvent.EventType, customerEvent.EventDate,
+                customerEvent.Description))
+            .ToList();
+
+        var preferences = customer.Preferences
+            .Where(preference => preference.PreferenceKey != NicknameKey)
+            .ToList();
+
+        return new TenantCustomerBriefDto(
+            customer.Id,
+            customer.FullName ?? "Unknown customer",
+            customer.Description,
+            customer.Status,
+            consentStatus,
+            preferences.Count == 0
+                ? null
+                : string.Join("; ", preferences.Select(p => $"{p.PreferenceKey}: {p.PreferenceValue}")),
+            customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList(),
+            upcomingEvents,
+            memories,
+            DateTime.UtcNow);
     }
 
     public async Task<TenantCustomerDetailDto?> UpdateAsync(
@@ -494,9 +589,25 @@ public sealed class CustomerTenantService : ICustomerTenantService
             customer.PhoneNumber = normalised;
         }
 
+        if (request.Description is not null)
+        {
+            // Description is the one free-text field staff write about a client, so it is length-
+            // bounded rather than trusted: the brief renders it verbatim, and an unbounded field is
+            // a place to paste anything. An empty value clears it, which is the only way to undo one.
+            var description = request.Description.Trim();
+            if (description.Length > 1000)
+            {
+                throw new ArgumentException(
+                    "A description of at most 1000 characters is required.", nameof(request));
+            }
+
+            customer.Description = description.Length == 0 ? null : description;
+        }
+
         if (request.Nickname is not null)
         {
             var nickname = request.Nickname.Trim();
+            customer.Nickname = nickname.Length == 0 ? null : nickname;
             var preference = customer.Preferences
                 .FirstOrDefault(candidate => candidate.PreferenceKey == NicknameKey);
             if (preference is null)
@@ -637,7 +748,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
     private static TenantCustomerDetailDto ToDetail(Customer customer, int interactionCount) => new(
         customer.Id,
         customer.FullName,
-        customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
         customer.PhoneNumber,
         customer.Email,
         customer.Level,
@@ -651,12 +762,14 @@ public sealed class CustomerTenantService : ICustomerTenantService
         customer.CreatedAt,
         customer.UpdatedAt,
         interactionCount,
-        customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList());
+        customer.Tags.Select(tag => tag.Tag).OrderBy(tag => tag).ToList(),
+        customer.Preferences.Where(p => p.PreferenceKey != NicknameKey).Select(CustomerPreferenceDto.From).ToList(),
+        customer.Description);
 
     private static CustomerBookItemDto ToBookItem(Customer customer) => new(
         customer.Id,
         customer.FullName,
-        customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
+        customer.Nickname ?? customer.Preferences.FirstOrDefault(preference => preference.PreferenceKey == NicknameKey)?.PreferenceValue,
         customer.Level,
         customer.Status,
         customer.PhoneNumber,
@@ -666,6 +779,7 @@ public sealed class CustomerTenantService : ICustomerTenantService
 
     private static string DisplayName(Customer customer) =>
         FirstPresent(customer.FullName)
+        ?? FirstPresent(customer.Nickname)
         ?? FirstPresent(customer.Preferences.FirstOrDefault(p => p.PreferenceKey == NicknameKey)?.PreferenceValue)
         ?? FirstPresent(customer.PhoneNumber)
         ?? "A client";

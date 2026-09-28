@@ -103,6 +103,8 @@ export interface Supplier {
   contactEmail: string
   contactPhone: string
   location: string
+  websiteUrl?: string
+  apiEndpoint?: string
   minimumOrder: number
   deliveryTimeDays: number
   isActive: boolean
@@ -111,12 +113,42 @@ export interface Supplier {
   organizationId?: string
 }
 
+export interface CreateSupplierPayload {
+  name: string
+  specialty?: string
+  location?: string
+  contactEmail?: string
+  contactPhone?: string
+  websiteUrl?: string
+  apiEndpoint?: string
+  minimumOrder?: number
+  deliveryTimeDays?: number
+  isActive?: boolean
+}
+
+export interface DetectedClothingItem {
+  clothingType: string
+  category: string
+  primaryColor: string
+  colorHex?: string
+  secondaryColors?: string[]
+  pattern?: string
+  material?: string
+  style?: string
+  confidence?: number
+  boundingBox?: number[]
+  suggestedItemName?: string
+  description?: string
+  stylingNotes?: string
+}
+
 export interface VisionAnalysisResult {
   category: string
   // The vision provider may not identify a colour, fabric or style at all. Those fields are then
   // absent rather than replaced by a fabricated default, so every consumer must handle `undefined`.
   detectedColor?: string
   colorHex?: string
+  secondaryColors?: string[]
   fabric?: string
   style?: string
   pattern?: string
@@ -124,6 +156,9 @@ export interface VisionAnalysisResult {
   suggestedItemName?: string
   confidenceScore?: number
   isFallback?: boolean
+  success?: boolean
+  error?: string
+  items?: DetectedClothingItem[]
   visualAttributes: string[]
   summary: string
   description?: string

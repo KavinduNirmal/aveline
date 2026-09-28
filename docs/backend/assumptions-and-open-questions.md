@@ -127,9 +127,9 @@ fail-closed quota decision (§8.4 of the implementation plan) becomes unreachabl
 the deployment platform; that document was read but the managed Redis service was
 not confirmed.
 
-### A8 · `agnet-service` is the canonical spelling and will not be renamed
+### A8 · `agent-service` is the canonical spelling and will not be renamed
 
-**Assumption.** The directory is spelled `agnet-service` (not `agent-service`) in
+**Assumption.** The directory is spelled `agent-service` (not `agent-service`) in
 the repository, the Dockerfile, the CI workflow, and every document. This plan
 uses the existing spelling everywhere to avoid breaking paths.
 
@@ -144,7 +144,7 @@ which ignores the response body.
 
 **Grounding.** `usage_reporter.py` posts and checks the status code; it does not
 deserialise the response. Verified by reading
-`agnet-service/app/services/usage_reporter.py:85-105`.
+`agent-service/app/services/usage_reporter.py:85-105`.
 
 **If wrong.** The agent service breaks on ingest. The mitigation is that the
 endpoint keeps its existing `201` shape and the new fields are additive.
@@ -368,7 +368,7 @@ same developer-days.
 
 ### OQ-11 · Who owns the Python instrumentation work?
 
-**Question.** Gaps G-1 through G-14 are changes to `agnet-service`, which belongs
+**Question.** Gaps G-1 through G-14 are changes to `agent-service`, which belongs
 to Slice 1 and Slice 2, not to the billing/statistics slice. Who implements them,
 and on what schedule?
 

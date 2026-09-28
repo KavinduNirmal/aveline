@@ -87,7 +87,7 @@ The bus is registered via `AddAvelineEventing(...)` in `Program.cs`. When a Redi
 connection string is present it uses the shared `IConnectionMultiplexer` (also used by the
 distributed cache); otherwise it falls back to `InMemoryEventBus`.
 
-### 4.2 Python agent service (`agnet-service/app/events`)
+### 4.2 Python agent service (`agent-service/app/events`)
 
 | Component | Responsibility |
 |---|---|

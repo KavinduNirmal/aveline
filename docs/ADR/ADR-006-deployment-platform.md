@@ -13,7 +13,7 @@ Components that must be hosted:
 | Component | Runtime | Notes |
 |---|---|---|
 | `Aveline.Api` | ASP.NET Core 10 Web API | Modular monolith, exposed to Flutter/React/WhatsApp |
-| `agnet-service` | Python 3.12 / FastAPI + LangGraph | Multi-agent orchestration, PostgreSQL checkpointing, human-in-the-loop pauses |
+| `agent-service` | Python 3.12 / FastAPI + LangGraph | Multi-agent orchestration, PostgreSQL checkpointing, human-in-the-loop pauses |
 | Database | PostgreSQL 16 + `pgvector` | Business data + `Customer_Memory` embeddings + LangGraph checkpoints |
 | Web dashboard | React (Vite) | Owner/manager approvals (technology still TBD) |
 | Flutter mobile | N/A (client) | APK built and distributed from CI, not cloud-hosted |
@@ -70,7 +70,7 @@ Adopt **Microsoft Azure** as the single cloud platform for the demo phase:
 | Component | Azure service | Tier / sizing |
 |---|---|---|
 | `Aveline.Api` | **Azure Container Apps** | Consumption, scale-to-zero (min replicas = 0) |
-| `agnet-service` | **Azure Container Apps** (separate app) | Consumption, scale-to-zero |
+| `agent-service` | **Azure Container Apps** (separate app) | Consumption, scale-to-zero |
 | Database | **Azure Database for PostgreSQL Flexible Server** | Burstable **B1ms**, `pgvector` enabled |
 | React dashboard | **Azure Static Web Apps** | Free tier |
 | Container images | **Azure Container Registry** (Standard, 12-mo free) — GHCR as zero-cost fallback | Standard |

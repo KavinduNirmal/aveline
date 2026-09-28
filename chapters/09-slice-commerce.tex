@@ -1,0 +1,322 @@
+\chapter{Vertical Slice 3: Commerce Validation and Optimisation}
+\label{ch:slice-commerce}
+
+\begin{tcolorbox}[colback=purple!5!white,colframe=purple!75!black,title=Slice Owner]
+\textbf{Kaveesha Mahindarathne (IT24103913)} --- Commerce Validation \& Optimisation \\
+\textbf{System:} Aveline Boutique Concierge AI \\
+\textbf{Architectural Scope:} Commercial Strategy, Rules Engine, HITL Approvals, Payments \& Logistics
+\end{tcolorbox}
+
+\section{Domain and Problem}
+\label{sec:c-domain}
+
+In high-end and semi-luxury fashion retail across Sri Lanka, customer relationship management and commercial execution diverge sharply from conventional e-commerce storefronts. In Colombo's premier fashion boutiques---centered in high-street enclaves such as Colombo 07 (Cinnamon Gardens), Colombo 03 (Kollupitiya), and luxury concept ateliers---sales transactions rarely originate from standardized product web pages. Instead, high-net-worth clientele and regular patrons engage primarily through asynchronous conversational channels: direct WhatsApp dialogues, Instagram direct messages (DMs), and bespoke salon appointments. 
+
+In this operational setting, a single boutique order routinely ranges from \textbf{LKR 35,000 to over LKR 180,000} for handcrafted silk sarees, bespoke evening gowns, and curated artisan jewelry. Transactions are intensely personal, characterized by frequent requests for bespoke alterations, expedited home delivery, tiered loyalty discounts, and custom payment scheduling (such as initial deposit holds followed by balance settlement upon dispatch).
+
+\subsection{The Boutique Owner's Operational Bottleneck}
+
+Historically, the commercial execution of these conversational inquiries represented the boutique owner's single most severe operational bottleneck. Because boutique floor staff and junior associates lack the legal authority or financial visibility to negotiate margins or authorise credit, every conversational inquiry previously triggered an operational deadlock:
+
+\begin{enumerate}
+    \item \textbf{Uncontrolled Margin Erosion:} Floor associates, eager to close sales over WhatsApp, frequently granted ad-hoc discounts (e.g., ``15\% off for a valued customer'') without visibility into the underlying wholesale material cost or import tariffs. When fabric costs for pure silk or handloom garments fluctuated, unvetted discounts resulted in negative net margins or razor-thin profits.
+    \item \textbf{Owner Interruption and Decision Chokepoints:} Boutique owners and general managers were inundated with continuous phone calls, WhatsApp messages, and verbal requests from associates asking for pricing clearance, discount approvals, or high-value order sign-offs. An owner traveling abroad or engaged in physical inventory curation would delay customer checkouts by hours or days, directly causing abandoned purchases.
+    \item \textbf{Logistics and Dispatch Overhead:} Once an order was agreed upon, coordinating courier logistics across the Western Province and outstation districts was entirely manual. Associates navigated third-party consumer apps (e.g., PickMe Flash, Uber Connect) on personal smartphones, miscalculating delivery surcharges, failing to capture tracking numbers centrally, and exposing the business to delivery losses.
+    \item \textbf{Disjointed Payment Tracking:} Counter staff manually checked SMS banking notifications or static payment slips sent as low-resolution photos on WhatsApp. Payments were neither systematically linked to inventory depletion nor audited against double-redemption, creating serious accounting discrepancies between physical cash registers and bank deposits.
+\end{enumerate}
+
+\subsection{Core Questions Answered by Slice 3}
+
+Vertical Slice 3 (\textbf{Commerce Validation \& Optimisation}) resolves this operational crisis by serving as the financial and logistical authority within the Aveline platform. Specifically, this slice engineers a robust, deterministic, and multi-tenant subsystem that definitively answers three fundamental questions for every commercial interaction:
+
+\begin{enumerate}
+    \item \textbf{Should we accept this order?} Does the order conform to tenant-specific commercial policies? Does the requested discount violate the customer's verified loyalty tier (VIP 10\%, Regular 5\%, New 0\%)? Does the gross transaction value exceed the boutique's high-value safety threshold (defaulting to \textbf{LKR 40,000.00})? If rules are breached, how is human oversight enforced without stalling business execution?
+    \item \textbf{Is it profitable?} What is the deterministic gross profit margin after subtracting verified wholesale line-item costs from the discounted order total? Does the calculated margin satisfy the boutique's non-negotiable minimum profit margin floor (defaulting strictly to \textbf{25.00\%})? If an order erodes profit margins below viable business sustainability, how does the system reject or revise the quote before legal commitment?
+    \item \textbf{How do we deliver it?} What is the optimal dispatch routing and courier assignment based on the delivery destination (Colombo local zones vs. Outstation regions)? What are the exact customer-quoted fees versus estimated courier costs? How is courier dispatch scheduled, tracked via immutable identifiers, and surfaced directly to showroom associates on mobile devices?
+\end{enumerate}
+
+\subsection{Architectural Placement: Deterministic Guardrails vs. Probabilistic Agents}
+
+A paramount engineering thesis of Slice 3 is the strict separation between \textbf{probabilistic cognitive reasoning} and \textbf{deterministic financial enforcement}. While the platform leverages large language models (LLMs) via LangGraph to converse naturally with patrons and understand unstructured style requests, the LLM is \textbf{never permitted to compute prices, evaluate margins, grant discounts, or execute payments}. 
+
+All monetary calculations, threshold validations, state transitions, and ledger mutations reside exclusively within deterministic ASP.NET Core backend services and PostgreSQL relational schemas. The cognitive Commerce Agent (``Lina'') acts purely as an orchestrator and reasoning bridge: it gathers intent, queries deterministic backend tools, formats quotes, and halts execution when business boundaries are breached.
+
+\section{Data Model}
+\label{sec:c-data}
+
+The Commerce validation and optimization subsystem is modeled around six relational entities within PostgreSQL, managed via Entity Framework Core (EF Core 10). Each entity implements the platform's multi-tenant contract interface (\texttt{ITenantEntity}), guaranteeing strict tenant data isolation through mandatory \texttt{OrganizationId} foreign keys and database-level query filters.
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l p{5cm} X}
+\toprule
+\textbf{Table} & \textbf{Purpose} & \textbf{Key Invariant} \\
+\midrule
+\texttt{Orders} & Commercial transaction header tracking monetary totals, cost basis, profit margin ratio, and lifecycle state. & $\text{Total} = \max(0, \text{Subtotal} - \text{Discount})$; $\text{Margin} = \frac{\text{Total} - \text{TotalCost}}{\text{Total}}$ when $\text{Total} > 0$, else $0$; Status mutations strictly enforce the state transition matrix \texttt{ValidTransitions}. Scoped by \texttt{OrganizationId}. \\
+\addlinespace
+\texttt{OrderItems} & Granular line items snapshotting unit retail prices, wholesale costs, quantities, and item linkage. & $\text{TotalPrice} = \text{UnitPrice} \times \text{Quantity}$; \texttt{WholesaleCost} is an immutable historical snapshot at order creation; $\text{Quantity} \ge 1$; References catalog \texttt{ItemId} and parent \texttt{OrderId}. \\
+\addlinespace
+\texttt{Payments} & Payment requests, gateway intents, hosted checkout URLs, and transaction settlement tracking. & Idempotent on unique constraint \texttt{(OrganizationId, GatewayTransactionId)}; Confirmation requires verified provider intent status (\texttt{Succeeded}); Only \texttt{confirmed} payments can transition to \texttt{refunded}. \\
+\addlinespace
+\texttt{ApprovalQueue} & Asynchronous Human-in-the-Loop (HITL) approval queue for orders exceeding risk or margin thresholds. & At most one active \texttt{pending} approval per \texttt{OrderId}; Immutable once decided (\texttt{Status != "pending"}); Must contain non-empty \texttt{ThreadId} to resume the paused LangGraph workflow checkpoint. \\
+\addlinespace
+\texttt{DeliveryPlans} & Physical logistics management, route planning metadata, carrier booking, and tracking references. & Exactly one delivery plan per order (1:1 with \texttt{Orders}); Tracking number follows pattern \texttt{TRK-\{CARRIER\}-\{REF\}}; Status changes cascade to parent order (\texttt{delivery\_scheduled}, \texttt{delivered}). \\
+\addlinespace
+\texttt{BusinessRules} & Configurable multi-tenant business rules engine defining thresholds, discount limits, and margin floors. & Scoped to \texttt{OrganizationId}; Versioned via \texttt{CreatedAt} and \texttt{UpdatedAt}; \texttt{RuleValue} stores validated JSONB; Gracefully falls back to hardcoded boutique defaults if unconfigured. \\
+\bottomrule
+\end{tabularx}
+\caption{Commerce relational entities and their governing domain invariants.}
+\label{tab:commerce-data-model}
+\end{table}
+
+\section{Pricing and Margin}
+\label{sec:c-pricing}
+
+\subsection{Mathematical Formulation and Margin Calculation}
+
+Profitability within Aveline is governed by strict mathematical invariants. Commercial calculations are evaluated in sequence:
+
+\begin{equation}
+\text{Subtotal} = \sum_{i=1}^{n} (\text{UnitPrice}_i \times \text{Quantity}_i)
+\end{equation}
+
+\begin{equation}
+\text{TotalCost} = \sum_{i=1}^{n} (\text{WholesaleCost}_i \times \text{Quantity}_i)
+\end{equation}
+
+\begin{equation}
+\text{Discount} = \min\left(\text{Subtotal}, \text{Round}(\text{Subtotal} \times \text{TierDiscountRate}, 2)\right)
+\end{equation}
+
+\begin{equation}
+\text{Total} = \max\left(0.00, \text{Round}(\text{Subtotal} - \text{Discount}, 2)\right)
+\end{equation}
+
+\begin{equation}
+\text{Gross Profit} = \text{Round}(\text{Total} - \text{TotalCost}, 2)
+\end{equation}
+
+\begin{equation}
+\text{Margin Ratio} = \begin{cases} 
+\text{Clamp}\left(\text{Round}\left(\frac{\text{Total} - \text{TotalCost}}{\text{Total}}, 4\right), -0.9999, 0.9999\right) & \text{if } \text{Total} > 0 \\ 
+0.0000 & \text{otherwise} 
+\end{cases}
+\end{equation}
+
+\subsection{Rounding Policy and Currency Handling}
+
+In Sri Lanka, retail transactions in Sri Lankan Rupees (LKR) do not use fractional cents in physical cash settlements, but electronic card payments and bank settlements strictly enforce two decimal places. Aveline enforces the following rounding policy across all commerce services:
+
+\begin{itemize}
+    \item \textbf{Two-Decimal Currency Rounding:} All monetary amounts (\texttt{Subtotal}, \texttt{Discount}, \texttt{Total}, \texttt{WholesaleCost}, \texttt{UnitPrice}, \texttt{EstimatedCost}) use standard 128-bit \texttt{decimal} representations in C\# and \texttt{DECIMAL(18,2)} in PostgreSQL. Monetary rounding is executed using standard commercial midpoint rounding (\texttt{Math.Round(amount, 2, MidpointRounding.AwayFromZero)}).
+    \item \textbf{Four-Decimal Margin Precision:} Margin ratios are computed and stored with 4 decimal places (\texttt{DECIMAL(5,4)}), allowing precision up to one-hundredth of a percent (e.g., $0.2545 = 25.45\%$).
+    \item \textbf{Clamping Safety Limits:} In exceptional edge cases where heavy discounting or promotional write-offs produce negative profits, margins are clamped between $-0.9999$ and $+0.9999$ to prevent database numeric overflow exceptions in \texttt{DECIMAL(5,4)} columns.
+    \item \textbf{Division-by-Zero Defenses:} If an order has a total of zero (e.g., a promotional gift or 100\% discount waiver), margin division defaults safely to $0.0000m$ rather than throwing an unhandled arithmetic exception.
+\end{itemize}
+
+\subsection{Why Margin Evaluation is Deterministic Code (Not an LLM Call)}
+
+In modern agentic AI systems, a frequent architectural anti-pattern is delegating pricing, mathematical discounting, and threshold evaluation to the LLM via prompt instructions. Aveline categorically rejects this approach based on five critical engineering realities:
+
+\begin{enumerate}
+    \item \textbf{Floating-Point and Arithmetic Hallucinations:} Generative autoregressive language models predict tokens statistically; they do not perform arithmetic natively. LLMs frequently produce subtle rounding errors (e.g., calculating $45,000 - 10\% = 40,400$ instead of $40,500$) that corrupt accounting ledgers and violate audit compliance.
+    \item \textbf{Prompt Injection and Boundary Subversion:} If pricing decisions are left to prompt instructions, malicious or persuasive customer prompts over WhatsApp can bypass system prompt guidelines. In contrast, deterministic C\# code guarantees that a rule refusal is a hard, impassable stop.
+    \item \textbf{Legal and Regulatory Auditability:} Financial systems must provide provable, deterministic guarantees. If an auditor questions why an order was discounted or approved, the system must point to versioned database records and exact deterministic code paths, not a non-deterministic temperature-sampled LLM trace.
+    \item \textbf{Latency and Resource Efficiency:} Executing pricing and margin checks in compiled C\# code takes microseconds ($< 0.05 \text{ ms}$), whereas an LLM API round-trip requires $800 \text{ ms} - 2500 \text{ ms}$ and incurs per-token inference costs.
+    \item \textbf{Zero-Trust Autonomous Execution:} Under Aveline's zero-trust agentic model, the cognitive Commerce Agent (``Lina'') proposes or queries quotes, but the ASP.NET Core \texttt{OrderService} and \texttt{BusinessRulesService} retain exclusive write-authority over the actual persisted \texttt{Order} and \texttt{ApprovalQueue} tables.
+\end{enumerate}
+
+\subsection{Worked Financial Example}
+
+Consider an actual transaction scenario at an Aveline boutique in Colombo:
+\begin{itemize}
+    \item \textbf{Customer:} Dr. Radhika Senanayake (VIP Tier, eligible for 10\% discount, discount cap = 10\%).
+    \item \textbf{Item 1:} Emerald Garden Floral Silk Midi Dress (1 unit, Retail: LKR 32,000.00, Wholesale Cost: LKR 18,500.00).
+    \item \textbf{Item 2:} Handcrafted Raw Silk Evening Blazer (1 unit, Retail: LKR 28,000.00, Wholesale Cost: LKR 16,000.00).
+\end{itemize}
+
+\textbf{Step-by-Step Calculation:}
+\begin{enumerate}
+    \item $\text{Subtotal} = (32,000.00 \times 1) + (28,000.00 \times 1) = \text{LKR } 60,000.00$.
+    \item $\text{TotalCost} = (18,500.00 \times 1) + (16,000.00 \times 1) = \text{LKR } 34,500.00$.
+    \item $\text{Discount} = \text{Round}(60,000.00 \times 0.10, 2) = \text{LKR } 6,000.00$.
+    \item $\text{Total} = 60,000.00 - 6,000.00 = \text{LKR } 54,000.00$.
+    \item $\text{Gross Profit} = 54,000.00 - 34,500.00 = \text{LKR } 19,500.00$.
+    \item $\text{Margin Ratio} = \frac{19,500.00}{54,000.00} = 0.361111... \approx 36.11\%$.
+    \item \textbf{Rule Evaluation:} Margin $36.11\% \ge 25.00\%$ floor (Pass). Discount $10.00\% \le 10.00\%$ VIP cap (Pass). Total LKR $54,000.00 > \text{LKR } 40,000.00$ threshold (\textbf{Breach: \texttt{HIGH\_VALUE\_THRESHOLD\_EXCEEDED}}).
+\end{enumerate}
+
+The order satisfies margin and discount rules, but its total value exceeds LKR 40,000.00. The system halts straight-through execution, tags the order with \texttt{HIGH\_VALUE\_THRESHOLD\_EXCEEDED}, sets order status to \texttt{pending\_approval}, and enqueues an entry in \texttt{ApprovalQueue} awaiting owner authorization.
+
+\begin{lstlisting}[language={[Sharp]C},caption={Margin evaluation is deterministic (\texttt{lst:margin})},label={lst:margin}]
+public MarginResult Evaluate(OrderDraft draft)
+{
+    var cost      = draft.Items.Sum(i => i.UnitCost * i.Quantity);
+    var subtotal  = draft.Items.Sum(i => i.UnitPrice * i.Quantity);
+    var discount  = _loyalty.DiscountFor(draft.CustomerTier, subtotal);
+    var total     = Round(subtotal - discount);
+    var margin    = Round(total - cost);
+
+    // The model never decides this. A rule refusal is a hard stop.
+    var floor = _rules.MinimumMarginPercent;
+    return margin / total < floor
+        ? MarginResult.Refuse($"margin {margin / total:P1} below floor {floor:P1}")
+        : MarginResult.Accept(total, margin);
+}
+\end{lstlisting}
+
+\section{Approval Workflow}
+\label{sec:c-approval}
+
+The approval workflow balances operational velocity with strict managerial control. While low-value, standard orders flow through an automated straight-through execution path, transactions presenting commercial risk are caught by the business rules engine and diverted into the Human-in-the-Loop (HITL) approval queue.
+
+\subsection{Threshold Parameters and Rules Matrix}
+
+The \texttt{BusinessRulesService} evaluates draft orders against three core parameters, either retrieved from active tenant configuration in \texttt{BusinessRules} or falling back to boutique defaults:
+\begin{enumerate}
+    \item \textbf{High-Value Order Threshold (\texttt{DefaultHighValueThreshold = LKR 40,000.00}):} Any order whose net total exceeds LKR 40,000 requires explicit managerial approval before payment links can be issued.
+    \item \textbf{Minimum Profit Margin Floor (\texttt{DefaultMinMargin = 0.2500} / 25\%):} The net margin must meet or exceed 25\%. If wholesale costs are elevated, preventing the margin from meeting the 25\% threshold, the rule triggers \texttt{LOW\_MARGIN\_THRESHOLD}.
+    \item \textbf{Customer Loyalty Tier Discount Caps:} VIP Tier: Max 10\% (\texttt{DefaultVipDiscountCap = 0.1000}); Regular Tier: Max 5\% (\texttt{DefaultRegularDiscountCap = 0.0500}); New Customer Tier: Max 0\% (\texttt{DefaultNewDiscountCap = 0.0000}). Any discount exceeding these limits triggers \texttt{DISCOUNT\_LIMIT\_EXCEEDED}.
+\end{enumerate}
+
+\subsection{Authorization and Role-Based Access Control (RBAC)}
+
+Approval processing enforces strict role separation based on the permission catalog in \texttt{Permissions.cs}:
+\begin{itemize}
+    \item \textbf{\texttt{approvals:approve}:} Permits approving an order as drafted. Granted to \texttt{BoutiqueOwner}, \texttt{BoutiqueSupervisor}, and \texttt{BoutiqueManager}.
+    \item \textbf{\texttt{orders:manage}:} Mandatory for destructive or financial-modifying actions: \texttt{reject} and \texttt{revise}. Counter associates (\texttt{BoutiqueStaff}) are explicitly \textbf{denied} \texttt{orders:manage}. If a counter associate attempts to reject or rewrite an order discount via \texttt{POST /api/v1/orgs/\{orgId\}/approvals/\{id\}/decision}, the API rejects the request with HTTP \texttt{403 Forbidden}.
+\end{itemize}
+
+\subsection{Timeout Policy and Approver Inaction}
+
+\begin{itemize}
+    \item \textbf{No Automatic Approval:} Under no circumstances does an unapproved high-value or low-margin order ``time out'' into an auto-approved state. Auto-approval upon timeout would introduce an exploitable security loophole.
+    \item \textbf{Order Hold Expiry:} If an order remains in \texttt{pending\_approval} beyond a configurable threshold (typically 24 hours), the inventory hold automatically lapses to prevent inventory lockup.
+    \item \textbf{Prometheus Metric Monitoring:} The system continuously exports the gauge \texttt{aveline\_approval\_queue\_pending\_count}. When pending approvals age beyond 12 hours, Grafana alert rules notify the boutique manager.
+\end{itemize}
+
+\section{Payments}
+\label{sec:c-payments}
+
+The payment subsystem coordinates customer deposits, full balances, hosted checkout page redirection, webhook verification, and refund management.
+
+\subsection{Provider-Backed Intent Architecture}
+
+Vertical Slice 3 refactored the checkout pipeline around provider-backed payment intents:
+\begin{enumerate}
+    \item \textbf{Request Generation:} Validates order existence and creates a \texttt{PaymentPurpose.CommerceOrder} intent through \texttt{IPaymentIntentService}. Returns the authentic hosted checkout URL from the gateway adapter.
+    \item \textbf{Settlement Authority:} Confirmation does not accept arbitrary transaction strings from the client. It polls \texttt{IPaymentIntentService.GetAsync(payment.PaymentIntentId)}. The payment gateway's verified state is the sole authority on settlement.
+    \item \textbf{Idempotency Guarantee:} Unique index on \texttt{(OrganizationId, GatewayTransactionId)} guarantees no duplicate settlement rows. Re-confirming a settled payment returns HTTP 200 with the existing record.
+    \item \textbf{Refund Handling:} \texttt{RefundPaymentAsync} requires \texttt{payments:refund} permission. Strictly validates that only \texttt{confirmed} payments can be refunded, appending an offsetting journal entry to \texttt{BoutiqueSaleEntries} with \texttt{BoutiqueSaleEntryKind.Refund}.
+\end{enumerate}
+
+\subsection{Payment Failure Test Evidence}
+
+\begin{lstlisting}[language={[Sharp]C},caption={Payment failure and terminal status test in \texttt{CommercePaymentsTests.cs}}]
+[Fact]
+public async Task PaymentService_ConfirmPayment_PollsTheProviderState_AndMapsEveryTerminalStatus()
+{
+    var cases = new (PaymentProviderStatus Provider, string Expected)[]
+    {
+        (PaymentProviderStatus.RequiresAction, "pending"),
+        (PaymentProviderStatus.Processing,     "pending"),
+        (PaymentProviderStatus.Failed,         "failed"),
+        (PaymentProviderStatus.Cancelled,      "failed"),
+        (PaymentProviderStatus.Expired,        "failed"),
+        (PaymentProviderStatus.Succeeded,      "confirmed"),
+    };
+
+    foreach (var @case in cases)
+    {
+        using var caseContext = CreateInMemoryDbContext();
+        var caseOrderRepo = new OrderRepository(caseContext);
+        var orgId = Guid.NewGuid();
+        EnsureOrganization(caseContext, orgId);
+        var order = await SeedOrderAsync(caseOrderRepo, orgId, 1000m, status: "payment_requested");
+
+        var intentId = Guid.NewGuid();
+        var intents = new FakePaymentIntentService();
+        intents.OnCreate = command => FakePaymentIntentService.SettledInPlaceView(
+            command, intentId, "mock", null, @case.Provider.ToString());
+
+        var service = NewService(caseContext, intents);
+        var created = await service.GeneratePaymentRequestAsync(
+            orgId, new GeneratePaymentRequestDto { OrderId = order.Id, Amount = 1000m });
+
+        var result = await service.ConfirmPaymentAsync(
+            orgId, created.Id, new ConfirmPaymentDto { GatewayTransactionId = "TXN-SPRAY" });
+
+        Assert.Equal(@case.Expected, result.Status);
+    }
+}
+\end{lstlisting}
+
+\section{Delivery}
+\label{sec:c-delivery}
+
+Physical order delivery completes the commercial transaction lifecycle. Vertical Slice 3 provides full courier routing, dispatch planning, tracking generation, and mobile fulfillment views.
+
+\begin{itemize}
+    \item \textbf{Integrated Carriers:} PickMe Flash (dense Colombo municipal zones 01--15), Uber Connect (wardrobe boxes and hanging garments), and In-house boutique fleet (white-glove VIP deliveries).
+    \item \textbf{Dynamic Rate Card:} Colombo Local (postal zones Colombo 01--15): flat fee of \textbf{LKR 650.00}; Greater Colombo and Outstation: flat fee of \textbf{LKR 850.00}.
+    \item \textbf{Tracking Synthesis:} Standardized enterprise format: $\text{TrackingNumber} = \text{"TRK-"} + \text{CarrierCode} + \text{"-"} + \text{ShortRef}$ (e.g., \texttt{TRK-PK-7B2A91}).
+    \item \textbf{Floor Associate Mobile UX:} Showroom associates view dispatch cards in the Flutter mobile app, tracking courier status and executing physical handover confirmations.
+\end{itemize}
+
+\section{Agent Contribution}
+\label{sec:c-agent}
+
+The cognitive layer of Slice 3 is powered by the \textbf{Commerce Agent (``Lina'')}, implemented as an asynchronous StateGraph in LangGraph (\texttt{agent-service/app/agents/commerce/}).
+
+\begin{itemize}
+    \item \textbf{Tool Suite:} Five specialized tools (\texttt{pricing\_tools.py}, \texttt{rules\_tools.py}, \texttt{loyalty\_tools.py}, \texttt{payment\_tools.py}, \texttt{delivery\_tools.py}) bridge cognitive queries to deterministic backend APIs.
+    \item \textbf{Exact Point of Interruption:} Occurs within the \texttt{evaluate\_deal} node when \texttt{evaluation.requires\_approval == True}. LangGraph halts execution, saves state to a PostgreSQL checkpoint (\texttt{ThreadId}), and publishes an interactive \texttt{sign\_off} SignalR card in the Salon conversation.
+    \item \textbf{Resumption Protocol (ADR-024):} When the manager approves, \texttt{ApprovalService.ResumePausedWorkflowAsync} calls \texttt{POST /agents/approvals/resume}. LangGraph reloads the checkpoint and resumes execution \textbf{directly at \texttt{prepare\_settlement}}, completely bypassing the supervisor and avoiding redundant rule evaluations.
+\end{itemize}
+
+\section{Testing}
+\label{sec:c-testing}
+
+Vertical Slice 3 is verified across all layers:
+\begin{itemize}
+    \item \textbf{.NET Backend Tests:} \textbf{101 passing tests} executed via \texttt{dotnet test Aveline.Api.Tests --filter "FullyQualifiedName\~Commerce"}.
+    \item \textbf{Python Agent Tests:} \textbf{37 passing tests} executed via \texttt{pytest agent-service/tests/test\_commerce\_*.py agent-service/tests/test\_hitl\_resume.py}.
+    \item \textbf{Frontend Web Tests:} \textbf{15 passing tests} executed via \texttt{bun run test orders-api}.
+\end{itemize}
+
+\begin{lstlisting}[language={[Sharp]C},caption={Rules matrix evaluation test in \texttt{BusinessRulesServiceTests.cs}}]
+[Fact]
+public async Task EvaluateOrderRules_WhenOrderIsWithinAllDefaults_IsAutoApproved()
+{
+    var request = new EvaluateOrderRulesRequestDto(
+        OrderTotal: 25000m,
+        Margin: 0.35m,
+        RequestedDiscount: 0.10m,
+        CustomerTier: "VIP"
+    );
+
+    var result = await _service.EvaluateOrderRulesAsync(_orgId, request);
+
+    Assert.True(result.IsAutoApproved);
+    Assert.False(result.RequiresApproval);
+    Assert.Empty(result.Flags);
+    Assert.Empty(result.TriggeredRules);
+    Assert.Equal(0.10m, result.MaxAllowedDiscount);
+    Assert.Equal(40000m, result.HighValueThreshold);
+    Assert.Equal(0.25m, result.MinRequiredMargin);
+}
+\end{lstlisting}
+
+\section{Reflection}
+\label{sec:c-reflection}
+
+Building Vertical Slice 3 (Commerce Validation and Optimisation) for Aveline has been a profound software engineering experience. It challenged my perspective on how artificial intelligence should interface with mission-critical enterprise systems.
+
+When our team began this project, my initial intuition was that the AI agent should be end-to-end autonomous: it would understand the customer, compute the price, determine whether the boutique could afford the discount, and finalize the order. However, as I implemented the financial data models and studied real-world luxury retail dynamics in Colombo, I realized that autonomous generative models are fundamentally ill-suited for mathematical and legal write-authority. 
+
+An LLM is a probabilistic engine, whereas financial contracts require absolute determinism. The defining breakthrough of my slice was establishing the architectural boundary codified in \textbf{ADR-024}: \textit{the AI agent is a reasoning assistant and conversational interface, but the ASP.NET Core backend is the sole commercial authority}. Designing the system so that the agent merely prepares a draft deal, delegates margin calculations to C\#, and is forcibly paused by LangGraph interrupts when rules are breached, resulted in an architecture that is secure, audit-compliant, and predictable.
+
+The most complex engineering challenge I encountered was synchronizing the asynchronous Human-in-the-Loop (HITL) approval loop across three distinct technical stacks: Python (LangGraph), ASP.NET Core (C\# Web API with SignalR), and React (TypeScript frontend). Diagnosing the initial breakdown and engineering the dedicated checkpoint resumption mechanism---where \texttt{ApprovalService} passes the exact \texttt{ThreadId} back to the LangGraph checkpoint runner to resume execution at \texttt{prepare\_settlement}---was immensely satisfying.
+
+Collaborating with Kavindu Nirmal (Customer Concierge \& Memory) and Dilud Fernando (Visual Intelligence \& Sourcing) demonstrated the power of modular, contract-driven architecture. Vertical Slice 3 demonstrates that modern AI platforms do not need to choose between flexibility and rigor: by surrounding agentic cognitive reasoning with deterministic architectural guardrails, we can build intelligent commercial systems that are both naturally conversational and mathematically infallible.

@@ -1,0 +1,17 @@
+# Grafana contact points (Slice 3).
+# ONE contact point for OPERATOR concerns only. The eleven seeded product alert rules live in
+# SystemAlertRuleSeed and notify boutique roles through the product's own inbox; they must never
+# share this contact point (plan §3.4).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: aveline-operators
+    receivers:
+      - uid: aveline-operators-email
+        type: email
+        disableResolveMessage: false
+        settings:
+          # Replace with the on-call address before deploying.
+          addresses: operators@aveline.example
+          singleEmail: false

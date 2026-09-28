@@ -13,17 +13,25 @@ public class ClerkAdminClientTests
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
         public List<HttpRequestMessage> Requests { get; } = [];
+        public List<string> RequestBodies { get; } = [];
 
         public ScriptedHandler(Func<HttpRequestMessage, HttpResponseMessage> responder)
         {
             _responder = responder;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
-            return Task.FromResult(_responder(request));
+            if (request.Content is not null)
+            {
+                // The client disposes the request (and its content) after sending, so
+                // the body has to be captured here rather than read by the test.
+                RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
+            }
+
+            return _responder(request);
         }
     }
 
@@ -105,5 +113,38 @@ public class ClerkAdminClientTests
         var client = CreateClient(handler, secretKey: null);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => client.ListSessionsAsync("user_3"));
+    }
+
+    [Fact]
+    public async Task GrantAdminRoleAsync_PatchesUserMetadata()
+    {
+        var handler = new ScriptedHandler(_ => new HttpResponseMessage(HttpStatusCode.OK));
+        var client = CreateClient(handler);
+
+        await client.GrantAdminRoleAsync("user_4");
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        // Clerk deprecated public_metadata on PATCH /users/{id}; metadata is written
+        // through the dedicated /metadata endpoint.
+        Assert.Equal("https://api.clerk.test/v1/users/user_4/metadata", request.RequestUri!.ToString());
+
+        var body = Assert.Single(handler.RequestBodies);
+        Assert.Contains("\"public_metadata\"", body);
+        Assert.Contains("\"role\":\"admin\"", body);
+    }
+
+    [Fact]
+    public async Task GrantAdminRoleAsync_OnRejection_ThrowsWithStatusCodeAndBody()
+    {
+        var handler = new ScriptedHandler(_ => new HttpResponseMessage(HttpStatusCode.UnprocessableEntity)
+        {
+            Content = new StringContent("{\"errors\":[]}", Encoding.UTF8, "application/json"),
+        });
+        var client = CreateClient(handler);
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => client.GrantAdminRoleAsync("user_5"));
+
+        Assert.Contains("422", error.Message);
     }
 }

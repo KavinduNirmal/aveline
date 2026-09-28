@@ -68,5 +68,38 @@ void main() {
         expect(NotificationKind.fromType(kind.apiValue), kind);
       }
     });
+
+    test('kind_covers_every_backend_type', () {
+      // The catalogue on the server is `Aveline.Api/Modules/Notifications/
+      // Models/NotificationType.cs` (values at :10,13,16,19,22,25,28,31). Dart
+      // cannot read a C# enum, so the names are listed here explicitly: this is
+      // the counter-example guard for the drift that let two live kinds ship
+      // with no kind, no visuals and no openability.
+      const backendTypes = <String>[
+        'NewMessage',
+        'ApprovalNeeded',
+        'PaymentConfirmed',
+        'VipAtRisk',
+        'EventReminder',
+        'NewMatch',
+        'IntegrationExpired',
+        'SystemAlert',
+      ];
+
+      for (final type in backendTypes) {
+        expect(
+          NotificationKind.fromType(type),
+          isNot(NotificationKind.unknown),
+          reason: '$type is dispatched by the gateway and must render as itself',
+        );
+      }
+    });
+
+    test('every known kind is reachable and unknown is the only fallback', () {
+      // Eight backend types plus `unknown`: if a ninth kind is added without a
+      // backend type it is dead weight, and if this count changes the change is
+      // deliberate rather than accidental.
+      expect(NotificationKind.values, hasLength(9));
+    });
   });
 }

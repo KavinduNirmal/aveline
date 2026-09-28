@@ -22,8 +22,34 @@ public class Customer : ITenantEntity
 
     public string? FullName { get; set; }
 
+    public string? Nickname { get; set; }
+
+    /// <summary>
+    /// The staff-facing description of this customer: who they are, in the boutique's own words.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Nickname"/> (a short counter alias) and from the memories, which are
+    /// per-fact statements the agent extracts. This is the one prose field an associate writes about
+    /// a client, and it is what the pre-contact brief leads with - so a client whose facts are on
+    /// file still reads as a person rather than as a list of tags. Nullable on purpose: a default
+    /// would invent a description for every client created before the column existed.
+    /// </remarks>
+    public string? Description { get; set; }
+
     /// <summary>new | returning | vip | dormant | deleted</summary>
     public string Status { get; set; } = "new";
+
+    /// <summary>
+    /// The grade the boutique works with: <c>vip</c> | <c>level3</c> |
+    /// <c>level2</c> | <c>level1</c>, or null for a client nobody has graded.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="Status"/>, which the loyalty rule derives from
+    /// spend, visits and recency. Nullable on purpose: a default would invent a
+    /// grade for every client, including the ones created before the column
+    /// existed.
+    /// </remarks>
+    public string? Level { get; set; }
 
     public decimal TotalSpent { get; set; }
 

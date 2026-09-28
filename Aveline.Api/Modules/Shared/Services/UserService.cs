@@ -9,7 +9,9 @@ using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.DTOs;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Repositories;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 namespace Aveline.Api.Modules.Shared.Services;
 
 public class UserService : IUserService
@@ -123,10 +125,29 @@ public class UserService : IUserService
                 UpdatedAt = DateTime.UtcNow
             };
 
-            await _userRepository.CreateAsync(user, cancellationToken);
-            _logger.LogInformation("Created new Aveline DB stub user for ClerkId={ClerkId}, Email={Email}", clerkId, email);
+            try
+            {
+                await _userRepository.CreateAsync(user, cancellationToken);
+                _logger.LogInformation("Created new Aveline DB stub user for ClerkId={ClerkId}, Email={Email}", clerkId, email);
+                dbUser = user;
+            }
+            catch (DbUpdateException ex) when (IsDuplicateClerkId(ex))
+            {
+                // A first page load fires several requests at once (the notifications hub
+                // negotiate and /users/me among them). Each finds no row and each runs this
+                // insert, so all but one lose the race against the unique index on ClerkId.
+                // The loser adopts the winner's row instead of surfacing an unhandled 500.
+                var winner = await _userRepository.GetByClerkIdAsync(clerkId, cancellationToken);
+                if (winner == null)
+                {
+                    throw;
+                }
 
-            dbUser = user;
+                _logger.LogInformation(
+                    "Concurrent first-login for ClerkId={ClerkId}; adopting the row created by the winning request.",
+                    clerkId);
+                dbUser = winner;
+            }
         }
         else
         {
@@ -306,7 +327,15 @@ public class UserService : IUserService
                 user.Id.ToString(),
                 ActorKind: AuditActorKind.User,
                 ActorUserId: user.Id,
-                After: new { user.FirstName, user.LastName, user.DisplayName, user.PhoneNumber }), cancellationToken);
+                After: new
+                {
+                    user.FirstName,
+                    user.LastName,
+                    user.DisplayName,
+                    user.PhoneNumber,
+                    user.ContactPreference,
+                    user.PushNotificationsEnabled,
+                }), cancellationToken);
         }
 
         if (_eventBus is not null)
@@ -509,6 +538,30 @@ public class UserService : IUserService
     {
         var changed = false;
 
+        // Identity claims keep the read model populated even when the user row was
+        // first created from a token that predated the email/name claims, and when
+        // Clerk webhooks are not configured (see ClerkWebhookSyncService).
+        var email = principal.FindFirstValue("email") ?? principal.FindFirstValue(ClaimTypes.Email);
+        if (!string.IsNullOrWhiteSpace(email) && !string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+        {
+            user.Email = email;
+            changed = true;
+        }
+
+        var firstName = principal.FindFirstValue("first_name") ?? principal.FindFirstValue(ClaimTypes.GivenName);
+        if (!string.IsNullOrWhiteSpace(firstName) && !string.Equals(user.FirstName, firstName, StringComparison.Ordinal))
+        {
+            user.FirstName = firstName;
+            changed = true;
+        }
+
+        var lastName = principal.FindFirstValue("last_name") ?? principal.FindFirstValue(ClaimTypes.Surname);
+        if (!string.IsNullOrWhiteSpace(lastName) && !string.Equals(user.LastName, lastName, StringComparison.Ordinal))
+        {
+            user.LastName = lastName;
+            changed = true;
+        }
+
         var userRole = principal.FindFirstValue("user_role");
         if (!string.IsNullOrWhiteSpace(userRole) && !string.Equals(user.UserRole, userRole, StringComparison.Ordinal))
         {
@@ -532,6 +585,15 @@ public class UserService : IUserService
 
         return changed;
     }
+
+    /// <summary>
+    /// True when the failure is the unique-index violation raised by two concurrent first
+    /// requests racing to create the same Clerk user row. The constraint is named explicitly so
+    /// an unrelated unique violation is never swallowed.
+    /// </summary>
+    private static bool IsDuplicateClerkId(DbUpdateException ex)
+        => ex.InnerException is PostgresException { SqlState: "23505" } postgres
+           && string.Equals(postgres.ConstraintName, "IX_Users_ClerkId", StringComparison.Ordinal);
 
     private static bool ClaimsContextDiffers(UserOnboardingCacheItem cached, ClaimsPrincipal principal)
     {

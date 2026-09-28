@@ -21,10 +21,13 @@ public class CustomerConsentConfiguration : IEntityTypeConfiguration<CustomerCon
         builder.Property(c => c.ConsentStatus)
             .IsRequired()
             .HasMaxLength(16)
-            .HasDefaultValue("pending");
+            .HasDefaultValue(ConsentStatuses.Pending);
 
-        builder.Property(c => c.RevokeToken)
-            .HasMaxLength(128);
+        builder.Property(c => c.ConsentSource)
+            .HasMaxLength(16);
+
+        builder.Property(c => c.DisclosureVersion)
+            .HasMaxLength(32);
 
         builder.Property(c => c.CreatedAt)
             .IsRequired();
@@ -44,5 +47,8 @@ public class CustomerConsentConfiguration : IEntityTypeConfiguration<CustomerCon
 
         // One consent row per customer per org.
         builder.HasIndex(c => new { c.OrganizationId, c.CustomerId }).IsUnique();
+
+        // Every consent metric is "count by status within an org".
+        builder.HasIndex(c => new { c.OrganizationId, c.ConsentStatus });
     }
 }

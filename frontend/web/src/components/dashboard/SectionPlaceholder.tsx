@@ -25,7 +25,7 @@ export function SectionPlaceholder({
   icon: Icon = Hammer,
 }: SectionPlaceholderProps) {
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       <div>
         <p className="text-sm font-medium uppercase tracking-[0.15em] text-muted-foreground">
           {title}

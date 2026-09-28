@@ -260,6 +260,150 @@ public class BusinessRulesService : IBusinessRulesService
         }
     }
 
+    public async Task<IReadOnlyList<PieceDiscountResponseDto>> GetPieceDiscountsAsync(
+        Guid organizationId,
+        CancellationToken cancellationToken = default)
+    {
+        var rules = await _repository.GetAllAsync(organizationId, activeOnly: true, cancellationToken);
+        var result = new List<PieceDiscountResponseDto>();
+
+        foreach (var rule in rules.Where(r => r.RuleType.Equals("piece_discount", StringComparison.OrdinalIgnoreCase)))
+        {
+            var parsed = TryParsePieceDiscount(rule);
+            if (parsed is not null)
+            {
+                result.Add(parsed);
+            }
+        }
+
+        return result;
+    }
+
+    public async Task<PieceDiscountResponseDto?> GetPieceDiscountByItemIdAsync(
+        Guid organizationId,
+        Guid itemId,
+        CancellationToken cancellationToken = default)
+    {
+        var rules = await _repository.GetAllAsync(organizationId, activeOnly: true, cancellationToken);
+        foreach (var rule in rules.Where(r => r.RuleType.Equals("piece_discount", StringComparison.OrdinalIgnoreCase)))
+        {
+            var parsed = TryParsePieceDiscount(rule);
+            if (parsed is not null && parsed.ItemId == itemId)
+            {
+                return parsed;
+            }
+        }
+
+        return null;
+    }
+
+    public async Task<PieceDiscountResponseDto> SetPieceDiscountAsync(
+        Guid organizationId,
+        SetPieceDiscountDto dto,
+        CancellationToken cancellationToken = default)
+    {
+        if (dto.ItemId == Guid.Empty)
+        {
+            throw new ArgumentException("ItemId is required.", nameof(dto));
+        }
+
+        if (dto.DiscountPercentage < 0m || dto.DiscountPercentage > 1.0m)
+        {
+            throw new ArgumentException("DiscountPercentage must be between 0.0 and 1.0 (e.g. 0.10 for 10%).", nameof(dto));
+        }
+
+        var rules = await _repository.GetAllAsync(organizationId, activeOnly: false, cancellationToken);
+        var existing = rules.FirstOrDefault(r =>
+            r.RuleType.Equals("piece_discount", StringComparison.OrdinalIgnoreCase) &&
+            TryParsePieceDiscount(r)?.ItemId == dto.ItemId);
+
+        var ruleValueJson = JsonSerializer.Serialize(new
+        {
+            item_id = dto.ItemId,
+            item_name = dto.ItemName,
+            discount_percentage = dto.DiscountPercentage,
+            description = dto.Description
+        });
+
+        if (existing is not null)
+        {
+            var ruleToUpdate = await _repository.GetByIdAsync(existing.Id, organizationId, cancellationToken) ?? existing;
+            ruleToUpdate.RuleName = $"PieceDiscount_{dto.ItemId}";
+            ruleToUpdate.RuleValue = ruleValueJson;
+            ruleToUpdate.IsActive = dto.DiscountPercentage > 0m;
+            ruleToUpdate.Description = dto.Description;
+            var updated = await _repository.UpdateAsync(ruleToUpdate, cancellationToken);
+            return TryParsePieceDiscount(updated)!;
+        }
+
+        var newRule = new BusinessRule
+        {
+            Id = Guid.NewGuid(),
+            OrganizationId = organizationId,
+            RuleName = $"PieceDiscount_{dto.ItemId}",
+            RuleType = "piece_discount",
+            RuleValue = ruleValueJson,
+            IsActive = dto.DiscountPercentage > 0m,
+            Description = dto.Description
+        };
+
+        var created = await _repository.CreateAsync(newRule, cancellationToken);
+        return TryParsePieceDiscount(created)!;
+    }
+
+    public async Task<bool> DeletePieceDiscountAsync(
+        Guid organizationId,
+        Guid itemId,
+        CancellationToken cancellationToken = default)
+    {
+        var rules = await _repository.GetAllAsync(organizationId, activeOnly: false, cancellationToken);
+        var existing = rules.FirstOrDefault(r =>
+            r.RuleType.Equals("piece_discount", StringComparison.OrdinalIgnoreCase) &&
+            TryParsePieceDiscount(r)?.ItemId == itemId);
+
+        if (existing is null)
+        {
+            return false;
+        }
+
+        return await _repository.DeleteAsync(existing.Id, organizationId, cancellationToken);
+    }
+
+    private static PieceDiscountResponseDto? TryParsePieceDiscount(BusinessRule rule)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(rule.RuleValue);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("item_id", out var idProp) && Guid.TryParse(idProp.GetString(), out var itemId))
+            {
+                var itemName = root.TryGetProperty("item_name", out var nameProp) ? nameProp.GetString() ?? "" : "";
+                var discountPct = 0m;
+                if (root.TryGetProperty("discount_percentage", out var discProp) && discProp.TryGetDecimal(out var pct))
+                {
+                    discountPct = pct;
+                }
+                var desc = root.TryGetProperty("description", out var descProp) ? descProp.GetString() : rule.Description;
+
+                return new PieceDiscountResponseDto(
+                    rule.Id,
+                    itemId,
+                    itemName,
+                    discountPct,
+                    rule.IsActive,
+                    desc,
+                    rule.CreatedAt,
+                    rule.UpdatedAt);
+            }
+        }
+        catch (JsonException)
+        {
+            // malformed rule
+        }
+
+        return null;
+    }
+
     private static BusinessRuleResponseDto MapToResponseDto(BusinessRule rule) =>
         new(
             rule.Id,

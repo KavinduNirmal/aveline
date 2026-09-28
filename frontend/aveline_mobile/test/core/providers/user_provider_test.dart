@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 class _UpdateAdapter implements HttpClientAdapter {
   int statusCode = 200;
   String failureMessage = 'That change was refused.';
+  Map<String, dynamic>? failureBody;
   bool fail = false;
   int calls = 0;
   String? method;
@@ -65,8 +66,9 @@ class _UpdateAdapter implements HttpClientAdapter {
 
     final headers = {Headers.contentTypeHeader: [Headers.jsonContentType]};
     if (statusCode != 200) {
+      final payload = failureBody ?? <String, dynamic>{'message': failureMessage};
       return ResponseBody.fromString(
-        jsonEncode(<String, dynamic>{'message': failureMessage}),
+        jsonEncode(payload),
         statusCode,
         headers: headers,
       );
@@ -318,6 +320,25 @@ void main() {
       // Dio's own message for a bad response explains validateStatus, which is no
       // use to an associate. The API's reason is the one worth repeating.
       expect(provider.updateErrorMessage, 'Phone number is too long.');
+    });
+
+    test('extracts first error message from ValidationProblem errors map', () async {
+      adapter.statusCode = 400;
+      adapter.failureBody = {
+        'title': 'One or more validation errors occurred.',
+        'status': 400,
+        'errors': {
+          'PhoneNumber': ["'phoneNumber' cannot exceed 20 characters."],
+        },
+      };
+
+      final saved = await provider.updateProfile(
+        dio,
+        phoneNumber: '+947712345678901234567890',
+      );
+
+      expect(saved, isFalse);
+      expect(provider.updateErrorMessage, "'phoneNumber' cannot exceed 20 characters.");
     });
 
     test('clears the failure once a later save succeeds', () async {

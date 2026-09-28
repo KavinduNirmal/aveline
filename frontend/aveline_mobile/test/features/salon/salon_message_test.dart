@@ -3,6 +3,24 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('SalonMessage', () {
+    test('carries the hash and status a sign-off decision is bound to', () {
+      final message = SalonMessage.fromJson({
+        'id': 'm1',
+        'authorKind': 'Agent',
+        'agentKey': 'lina',
+        'contentBlocks': [
+          {'type': 'sign_off', 'reason': 'A discount.', 'amount': 24500},
+        ],
+        'contentHash': 'hash-1',
+        'status': 'AwaitingSignOff',
+        'createdAt': '2026-09-09T10:00:00Z',
+      });
+
+      expect(message.contentHash, 'hash-1');
+      expect(message.needsSignOff, isTrue);
+      expect(message.copyWith(status: 'Published').needsSignOff, isFalse);
+    });
+
     test('parses a wire MessageDto into a SalonMessage', () {
       final message = SalonMessage.fromJson({
         'id': 'm1',

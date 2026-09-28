@@ -55,6 +55,26 @@ function extractMessage(status: number, data: unknown): string {
   }
 }
 
+/**
+ * True when a rejected request was **aborted**, not answered.
+ *
+ * `AbortController.abort()` makes axios reject with a `CanceledError` whose code is
+ * `ERR_CANCELED`, and `toApiError` carries that code through. An abort is a decision the caller
+ * already made - the component unmounted, or a newer request replaced this one - so it is not a
+ * failure and must not be reported as one.
+ *
+ * This is load-bearing rather than defensive: in development React StrictMode mounts, unmounts and
+ * mounts again, so the first request of every panel is aborted before it is even dispatched. Every
+ * panel treated that abort as "could not load", which is why each page needed a "Try again".
+ */
+export function isCanceledError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+  const candidate = error as { name?: unknown; code?: unknown }
+  return candidate.code === 'ERR_CANCELED' || candidate.name === 'CanceledError'
+}
+
 /** Normalizes any thrown value into an [ApiError] with a friendly message. */
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) {

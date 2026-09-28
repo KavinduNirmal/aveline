@@ -1,10 +1,13 @@
 using System.Net;
 using System.Net.Http.Json;
+using Aveline.Api.Infrastructure.Data;
 using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.CustomerConcierge.DTOs;
+using Aveline.Api.Modules.CustomerConcierge.Models;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Aveline.Api.Tests;
@@ -29,6 +32,13 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
                 builder.UseSetting("Clerk:Authority", "http://localhost:0");
                 builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
                 builder.UseSetting("AgentService:InternalToken", InternalToken);
+                // This suite boots the real app, so the media options validator runs. Pinning the
+                // provider to the `database` default keeps the boot identical on a developer
+                // machine, whose environment may select Cloudinary, and in CI, which selects
+                // nothing. None of these assertions touch media.
+                builder.UseSetting("Media:Provider", "database");
+                builder.UseSetting("Media:PublicBaseUrl", "https://media.aveline.test");
+                builder.UseSetting("Media:SigningKey", Convert.ToBase64String(new byte[32]));
 
                 // Stub the embedding provider so endpoints never make a real call.
                 builder.ConfigureServices(services =>
@@ -211,6 +221,86 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Consent_AbsentRow_ReportsPendingOnBothCallSites()
+    {
+        // D-2 / 0.2: the consent endpoint said "pending" while the profile said "unknown" for a
+        // customer with no consent row. Both surfaces must report the same value.
+        var orgId = Guid.NewGuid();
+        var customerId = await CreateWalkInAsync(orgId, "No Consent Row", "+94774440001");
+
+        var profileResponse = await InternalGetAsync(
+            $"/internal/customers/{customerId}/profile?organizationId={orgId}");
+        var profile = await profileResponse.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var consentResponse = await InternalGetAsync(
+            $"/internal/customers/{customerId}/consent?organizationId={orgId}");
+        var consent = await consentResponse.Content.ReadFromJsonAsync<CustomerConsentDto>();
+
+        Assert.NotNull(profile);
+        Assert.NotNull(consent);
+        Assert.Equal("pending", profile!.ConsentStatus);
+        Assert.Equal("pending", consent!.ConsentStatus);
+        Assert.Equal(profile.ConsentStatus, consent.ConsentStatus);
+    }
+
+    [Fact]
+    public async Task Consent_Revoked_OnACustomerWithNoRow_StampsConsentRevokedAt()
+    {
+        // D-5 / 0.1b: the insert branch wrote the status with a null revocation timestamp, so a
+        // privacy audit could not answer "when was the objection recorded?".
+        var orgId = Guid.NewGuid();
+        var customerId = await CreateWalkInAsync(orgId, "First Message Revoker", "+94774440002");
+
+        var update = await InternalPostAsync($"/internal/customers/{customerId}/consent",
+            new UpdateConsentRequest { OrganizationId = orgId, ConsentStatus = "revoked" });
+        Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var row = await context.CustomerConsents.SingleAsync(
+            candidate => candidate.OrganizationId == orgId && candidate.CustomerId == customerId);
+        Assert.Equal("revoked", row.ConsentStatus);
+        Assert.NotNull(row.ConsentRevokedAt);
+    }
+
+    [Fact]
+    public async Task Consent_SerialisesTheWidenedPayloadInCamelCase()
+    {
+        // D-2 / 0.3: the Python agent reads the camelCase `consentStatus` field
+        // (agent-service/app/agents/customer_memory/nodes.py:112) and docs/api/openapi.yaml
+        // documents it. Widening the DTO must not rename or re-case what the agent parses.
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94774440003" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var get = await InternalGetAsync($"/internal/customers/{profile!.CustomerId}/consent?organizationId={orgId}");
+        var json = await get.Content.ReadAsStringAsync();
+
+        Assert.Contains("\"consentStatus\"", json);
+        Assert.Contains("\"consentGrantedAt\"", json);
+        Assert.Contains("\"consentRevokedAt\"", json);
+        Assert.Contains("\"disclosureShownAt\"", json);
+    }
+
+    [Fact]
+    public async Task Consent_UnknownStatus_ReturnsBadRequestNotAnException()
+    {
+        // D-3 / 0.1: an unknown status is a client error, never an unhandled 500.
+        var orgId = Guid.NewGuid();
+        var identify = await InternalPostAsync("/internal/customers/identify",
+            new IdentifyCustomerRequest { OrganizationId = orgId, PhoneNumber = "+94774440004" });
+        var profile = await identify.Content.ReadFromJsonAsync<CustomerProfileDto>();
+
+        var response = await InternalPostAsync($"/internal/customers/{profile!.CustomerId}/consent",
+            new UpdateConsentRequest { OrganizationId = orgId, ConsentStatus = "bogus" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("invalid-consent-status", body);
+    }
+
+    [Fact]
     public async Task Events_AddAndList_RoundTrips()
     {
         var orgId = Guid.NewGuid();
@@ -301,6 +391,107 @@ public class CustomerConciergeEndpointsIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var dto = await response.Content.ReadFromJsonAsync<CustomerStatusDto>();
         Assert.Equal("returning", dto!.Status);
+    }
+
+    [Fact]
+    public async Task BookSummary_WithoutToken_ReturnsUnauthorized()
+    {
+        var response = await _client.GetAsync(
+            $"/internal/customers/book-summary?organizationId={Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task BookSummary_ReportsTheBookSizeAndTheRecentlyActiveClients()
+    {
+        // ADR-026: Aveline answers "who are our customers?" from this. It reuses the highlights
+        // read Home uses, so the named clients are the same ones, ordered the same way.
+        var orgId = Guid.NewGuid();
+        var active = await CreateWalkInAsync(orgId, "Aisha Fernando", "+94771110001");
+        var recent = await CreateWalkInAsync(orgId, "Nadia Perera", "+94771110002");
+        await CreateWalkInAsync(orgId, "Dormant Client", "+94771110003");
+
+        await SetLastVisitAsync(active, DateTime.UtcNow.AddDays(-1));
+        await SetLastVisitAsync(recent, DateTime.UtcNow.AddDays(-3));
+        // The third client keeps no visit, so they are in the book but not in the highlights.
+
+        var response = await InternalGetAsync($"/internal/customers/book-summary?organizationId={orgId}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var summary = await response.Content.ReadFromJsonAsync<CustomerBookSummaryDto>();
+        Assert.NotNull(summary);
+        Assert.Equal(3, summary.Total);
+        // Newest activity first.
+        Assert.Equal(["Aisha Fernando", "Nadia Perera"], summary.Highlights.Select(h => h.Name));
+        Assert.True(summary.ActivitySince > DateTime.UtcNow.AddDays(-15));
+    }
+
+    [Fact]
+    public async Task BookSummary_HonoursTheLimitOnNamedClients()
+    {
+        // The limit bounds the names, not the book: this is a chat answer, and a question must not
+        // turn into an enumeration of the whole client list.
+        var orgId = Guid.NewGuid();
+        for (var i = 0; i < 4; i++)
+        {
+            var id = await CreateWalkInAsync(orgId, $"Client {i}", $"+94772220{i:D3}");
+            await SetLastVisitAsync(id, DateTime.UtcNow.AddDays(-1));
+        }
+
+        var response = await InternalGetAsync(
+            $"/internal/customers/book-summary?organizationId={orgId}&limit=2");
+
+        var summary = await response.Content.ReadFromJsonAsync<CustomerBookSummaryDto>();
+        Assert.NotNull(summary);
+        Assert.Equal(4, summary.Total);
+        Assert.Equal(2, summary.Highlights.Count);
+    }
+
+    [Fact]
+    public async Task BookSummary_ExcludesAnotherOrganisationsClients()
+    {
+        var mine = Guid.NewGuid();
+        var theirs = Guid.NewGuid();
+        await CreateWalkInAsync(theirs, "Not Mine", "+94773330001");
+
+        var response = await InternalGetAsync($"/internal/customers/book-summary?organizationId={mine}");
+
+        var summary = await response.Content.ReadFromJsonAsync<CustomerBookSummaryDto>();
+        Assert.NotNull(summary);
+        Assert.Equal(0, summary.Total);
+        Assert.Empty(summary.Highlights);
+    }
+
+    private async Task<Guid> CreateWalkInAsync(Guid orgId, string fullName, string phone)
+    {
+        // Seeded directly rather than through the tenant route: walk-in creation is a *user-facing*
+        // endpoint behind a boutique policy, and this suite holds only the internal token.
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider
+            .GetRequiredService<Aveline.Api.Infrastructure.Data.AppDbContext>();
+
+        var customer = new Customer
+        {
+            OrganizationId = orgId,
+            FullName = fullName,
+            PhoneNumber = phone,
+            Status = "new",
+        };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+        return customer.Id;
+    }
+
+    private async Task SetLastVisitAsync(Guid customerId, DateTime at)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var context = scope.ServiceProvider
+            .GetRequiredService<Aveline.Api.Infrastructure.Data.AppDbContext>();
+        var customer = await context.Customers.FindAsync(customerId);
+        Assert.NotNull(customer);
+        customer!.LastVisitAt = at;
+        await context.SaveChangesAsync();
     }
 
     private sealed class StubEmbeddingService : IEmbeddingService

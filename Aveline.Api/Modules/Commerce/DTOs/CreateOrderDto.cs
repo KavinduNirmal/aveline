@@ -25,4 +25,13 @@ public class CreateOrderDto
 
     [MaxLength(500)]
     public string? Notes { get; set; }
+
+    /// <summary>LangGraph checkpoint thread id for HITL approval workflows (ADR-016).</summary>
+    public string? ThreadId { get; set; }
+
+    /// <summary>The Salon conversation this order originates from (ADR-016).</summary>
+    public Guid? ConversationId { get; set; }
+
+    /// <summary>Whether this order explicitly requires manual owner approval (e.g. conversational agent orders).</summary>
+    public bool RequireApproval { get; set; }
 }

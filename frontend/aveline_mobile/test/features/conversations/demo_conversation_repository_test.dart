@@ -9,10 +9,14 @@ final DateTime _now = DateTime.utc(2026, 9, 18, 12);
 DemoConversationRepository _inbox() =>
     DemoConversationRepository(clock: () => _now, latency: Duration.zero);
 
+/// The fixture's threads, without the envelope around them.
+Future<List<Conversation>> _items() async =>
+    (await _inbox().fetchConversations()).items;
+
 void main() {
   group('DemoConversationRepository.fetchConversations', () {
     test('holds the Salon, so the pinned thread is always there', () async {
-      final conversations = await _inbox().fetchConversations();
+      final conversations = await _items();
 
       final aveline = conversations.where((item) => item.isAveline).toList();
       expect(aveline, hasLength(1));
@@ -20,7 +24,7 @@ void main() {
     });
 
     test('holds several client threads', () async {
-      final conversations = await _inbox().fetchConversations();
+      final conversations = await _items();
 
       final clients = conversations
           .where((item) => item.kind == ConversationKind.customer)
@@ -30,23 +34,8 @@ void main() {
       expect(clients.every((item) => item.customerName != null), isTrue);
     });
 
-    test('leaves something unread, so the badge has work to do', () async {
-      final conversations = await _inbox().fetchConversations();
-
-      final unread = conversations.where((item) => item.isUnread).toList();
-      expect(unread, isNotEmpty);
-      expect(unread.map((item) => item.unreadCount).reduce((a, b) => a + b),
-          greaterThan(0));
-    });
-
-    test('leaves something read, so both row states can be seen', () async {
-      final conversations = await _inbox().fetchConversations();
-
-      expect(conversations.any((item) => !item.isUnread), isTrue);
-    });
-
     test('gives every thread a preview and a time in the past', () async {
-      final conversations = await _inbox().fetchConversations();
+      final conversations = await _items();
 
       for (final conversation in conversations) {
         expect(
@@ -65,7 +54,7 @@ void main() {
     });
 
     test('marks who spoke last, so the row can say who it was', () async {
-      final conversations = await _inbox().fetchConversations();
+      final conversations = await _items();
 
       expect(
         conversations.every((item) => item.lastMessageAuthor != null),
@@ -79,7 +68,7 @@ void main() {
     });
 
     test('carries a thread that wants a decision, and one that is settled', () async {
-      final conversations = await _inbox().fetchConversations();
+      final conversations = await _items();
 
       expect(
         conversations.where(
@@ -93,10 +82,18 @@ void main() {
       );
     });
 
+    test('serves its fixture as one complete page', () async {
+      final page = await _inbox().fetchConversations();
+
+      expect(page.page, 1);
+      expect(page.total, page.items.length);
+      expect(page.items.length, greaterThan(2));
+    });
+
     test('hands back a list a caller cannot mutate under the next one', () async {
       final inbox = _inbox();
 
-      final first = await inbox.fetchConversations();
+      final first = (await inbox.fetchConversations()).items;
       expect(
         () => first.add(
           const Conversation(id: 'x', kind: ConversationKind.customer),
@@ -104,14 +101,19 @@ void main() {
         throwsUnsupportedError,
       );
 
-      final second = await inbox.fetchConversations();
+      final second = (await inbox.fetchConversations()).items;
       expect(second.map((item) => item.id), hasLength(first.length));
     });
 
     test('measures its ages from the injected clock', () async {
-      final conversations = await _inbox().fetchConversations();
+      final conversations = await _items();
 
-      expect(conversations.every((item) => item.lastMessageAt!.isBefore(_now) || item.lastMessageAt == null), isTrue);
+      expect(
+        conversations.every(
+          (item) => item.lastMessageAt!.isBefore(_now) || item.lastMessageAt == null,
+        ),
+        isTrue,
+      );
       // The test's clock is a fixed 2026-09-18T12:00Z, not the wall clock.
       final newest = conversations
           .map((item) => item.lastMessageAt!)

@@ -2,23 +2,35 @@ import { useState, useMemo } from 'react'
 import {
   Search,
   AlertTriangle,
-  Plus,
   PackageCheck,
+  X,
 } from 'lucide-react'
 
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ProductCard } from './ProductCard'
-import type { CustomerMatchMock, InventoryItemMock } from './mockData'
+import type { InventoryItemMock } from './mockData'
 
 interface InventoryTabProps {
   inventory: InventoryItemMock[]
-  matches: CustomerMatchMock[]
-  onAddNewPiece: () => void
+  onAddNewPiece?: () => void
+  /** Absent means the grid is a plain list of tiles with no piece page to open. */
+  onOpenItem?: (item: InventoryItemMock) => void
   onViewMatches: (item: InventoryItemMock) => void
   onComposeOutfit: (item: InventoryItemMock) => void
   onEditItem: (item: InventoryItemMock) => void
+  onViewQr: (item: InventoryItemMock) => void
+  onDeleteItem: (item: InventoryItemMock) => void
+  onReduceStock?: (item: InventoryItemMock) => void
+  onMarkOutOfStock?: (item: InventoryItemMock) => void
 }
 
 const CATEGORY_PILLS = [
@@ -27,21 +39,29 @@ const CATEGORY_PILLS = [
   'Lehengas',
   'Gowns',
   'Kurtas & Tunics',
+  'Tops & Blouses',
+  'Trousers & Pants',
   'Outerwear',
   'Drapes & Shawls',
+  'Jewelry & Accessories',
+  'Footwear',
 ]
 
 export function InventoryTab({
   inventory,
-  matches,
-  onAddNewPiece,
+  onOpenItem,
   onViewMatches,
   onComposeOutfit,
   onEditItem,
+  onViewQr,
+  onDeleteItem,
+  onReduceStock,
+  onMarkOutOfStock,
 }: InventoryTabProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'low_stock' | 'reserved'>('all')
+  const [isWarningDismissed, setIsWarningDismissed] = useState(false)
 
   // Low stock counter
   const lowStockItems = useMemo(
@@ -80,25 +100,36 @@ export function InventoryTab({
   }, [inventory, selectedCategory, statusFilter, searchQuery])
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6">
       {/* Low Stock Warning Alert Banner if any */}
-      {lowStockItems.length > 0 && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-900 dark:text-amber-200">
+      {!isWarningDismissed && lowStockItems.length > 0 && (
+        <div className="flex items-center justify-between rounded-xl border border-warning/30 bg-warning/10 p-3.5 text-xs text-warning-foreground dark:text-warning">
           <div className="flex items-center gap-2.5">
-            <AlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <AlertTriangle className="size-4 shrink-0 text-warning dark:text-warning" />
             <span>
-              <strong>{lowStockItems.length} pieces</strong> have low stock levels (2 units or fewer).
+              <strong>{lowStockItems.length} {lowStockItems.length === 1 ? 'piece' : 'pieces'}</strong> {lowStockItems.length === 1 ? 'has' : 'have'} low stock levels (2 units or fewer).
               Consider placing an atelier re-order.
             </span>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs border-amber-500/40 bg-background/60 hover:bg-background text-amber-900 dark:text-amber-100"
-            onClick={() => setStatusFilter('low_stock')}
-          >
-            Filter Low Stock
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs border-warning/40 bg-background/60 hover:bg-background text-warning-foreground dark:text-warning"
+              onClick={() => setStatusFilter('low_stock')}
+            >
+              Filter Low Stock
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Dismiss low stock warning"
+              className="size-7 rounded-lg text-warning-foreground/70 hover:text-warning-foreground hover:bg-warning/20 dark:text-warning/70 dark:hover:text-warning"
+              onClick={() => setIsWarningDismissed(true)}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
         </div>
       )}
 
@@ -115,46 +146,43 @@ export function InventoryTab({
           />
         </div>
 
-        {/* Status Filter & Add Button */}
+        {/* Status Filter */}
         <div className="flex items-center gap-2.5">
-          <select
+          <Select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
-            className="h-9 rounded-xl border border-input bg-background px-3 text-xs text-foreground"
+            onValueChange={(value) =>
+              setStatusFilter(value as 'all' | 'available' | 'low_stock' | 'reserved')
+            }
           >
-            <option value="all">All Availability</option>
-            <option value="available">In Stock Only</option>
-            <option value="low_stock">Low Stock (≤2)</option>
-            <option value="reserved">Reserved</option>
-          </select>
-
-          <Button
-            type="button"
-            size="sm"
-            onClick={onAddNewPiece}
-            className="gap-1.5 rounded-xl text-xs h-9 px-4 shadow-sm cursor-pointer"
-          >
-            <Plus className="size-4" />
-            <span>Add Piece</span>
-          </Button>
+            <SelectTrigger
+              aria-label="Filter by availability"
+              className="h-9 w-[11rem] rounded-xl text-xs"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Availability</SelectItem>
+              <SelectItem value="available">In Stock Only</SelectItem>
+              <SelectItem value="low_stock">Low Stock (≤2)</SelectItem>
+              <SelectItem value="reserved">Reserved</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
       {/* Category Filter Pills */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
         {CATEGORY_PILLS.map((cat) => (
-          <button
+          <Button
             key={cat}
             type="button"
+            variant={selectedCategory === cat ? 'default' : 'secondary'}
+            size="sm"
             onClick={() => setSelectedCategory(cat)}
-            className={`rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors shrink-0 ${
-              selectedCategory === cat
-                ? 'bg-primary text-white shadow-xs'
-                : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
-            }`}
+            className="h-auto shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium"
           >
             {cat}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -181,15 +209,22 @@ export function InventoryTab({
       ) : (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.map((item) => {
-            const matchCount = matches.filter((m) => m.itemId === item.id).length
+            // The drawer generates matches on demand; the tab has no match source of its own, so
+            // this badge used to read a hard zero from a state array nobody ever populated.
+            const matchCount = 0
             return (
               <ProductCard
                 key={item.id}
                 item={item}
                 matchCount={matchCount}
+                onOpen={onOpenItem}
                 onViewMatches={onViewMatches}
                 onComposeOutfit={onComposeOutfit}
                 onEditItem={onEditItem}
+                onViewQr={onViewQr}
+                onDeleteItem={onDeleteItem}
+                onReduceStock={onReduceStock}
+                onMarkOutOfStock={onMarkOutOfStock}
               />
             )
           })}

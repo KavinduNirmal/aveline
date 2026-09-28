@@ -5,109 +5,25 @@ using Aveline.Api.Modules.Statistics.Services;
 namespace Aveline.Api.Modules.Statistics.Endpoints;
 
 /// <summary>
-/// Organisation-facing agentic statistics (docs/api/README.md §C.6) and the team-only
-/// admin subset. Every response carries a <c>dataQuality</c> envelope so an
-/// un-instrumented zero is never mistaken for a measurement.
+/// The team-only agentic statistics subset (docs/api/README.md §C.6). Every response carries a
+/// <c>dataQuality</c> envelope so an un-instrumented zero is never mistaken for a measurement.
 /// </summary>
+/// <remarks>
+/// The organisation-facing group that used to live here (`/orgs/{id}/statistics/agents/**`) was
+/// removed: a boutique reads its usage in Blossoms, not in agent runs, tokens or provider cost.
+/// The console's equivalent lives on `/admin/statistics/agents/**` behind <c>stats:system</c>.
+/// </remarks>
 public static class AgentStatisticsEndpoints
 {
     private const int MaxWindowDays = 400;
 
     public static IEndpointRouteBuilder MapAgentStatisticsEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        MapOrgEndpoints(endpoints);
+        // The org-facing agent statistics routes were removed: a boutique must not be able to read
+        // agent runs, tokens or provider cost. Only the team-only admin subset remains, behind
+        // `stats:system`.
         MapAdminEndpoints(endpoints);
         return endpoints;
-    }
-
-    private static void MapOrgEndpoints(IEndpointRouteBuilder endpoints)
-    {
-        var group = endpoints
-            .MapGroup("/orgs/{organizationId:guid}/statistics/agents")
-            .WithTags("Agent Statistics")
-            .RequireAuthorization(AuthorizationConfiguration.StatsAgentPolicy);
-
-        group.MapGet("/runs", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? status, string? triggerKind,
-            string? agentKey, int? page, int? pageSize, IAgentStatisticsService statistics,
-            CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, status, triggerKind, agentKey, page, pageSize);
-            return error ?? Results.Ok(await statistics.GetRunsAsync(query!, ct));
-        });
-
-        group.MapGet("/runs/{runId:guid}", async (
-            Guid organizationId, Guid runId, IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var detail = await statistics.GetRunDetailAsync(organizationId, runId, ct);
-            return detail is null
-                ? Results.NotFound(new { message = "Agent run not found." })
-                : Results.Ok(detail);
-        });
-
-        group.MapGet("/reliability", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? status, string? triggerKind,
-            string? agentKey, IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, status, triggerKind, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetReliabilityAsync(query!, ct));
-        });
-
-        group.MapGet("/latency", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? status, string? triggerKind,
-            string? agentKey, IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, status, triggerKind, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetLatencyAsync(query!, ct));
-        });
-
-        group.MapGet("/steps", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? agentKey,
-            IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, null, null, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetStepsAsync(query!, ct));
-        });
-
-        group.MapGet("/tokens", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? agentKey,
-            IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, null, null, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetTokensAsync(query!, ct));
-        });
-
-        group.MapGet("/cost", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? agentKey, string? status,
-            string? triggerKind, IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, status, triggerKind, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetCostAsync(query!, ct));
-        });
-
-        group.MapGet("/tools", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? agentKey,
-            IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, null, null, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetToolsAsync(query!, ct));
-        });
-
-        group.MapGet("/failures", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? agentKey, string? status,
-            string? triggerKind, IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, status, triggerKind, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetFailuresAsync(query!, ct));
-        });
-
-        group.MapGet("/approvals", async (
-            Guid organizationId, DateTime? from, DateTime? to, string? agentKey,
-            IAgentStatisticsService statistics, CancellationToken ct) =>
-        {
-            var (query, error) = Build(organizationId, from, to, null, null, agentKey, null, null);
-            return error ?? Results.Ok(await statistics.GetApprovalsAsync(query!, ct));
-        });
     }
 
     private static void MapAdminEndpoints(IEndpointRouteBuilder endpoints)

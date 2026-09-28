@@ -149,4 +149,38 @@ public class OrganizationRecipientResolverTests
         var token = Assert.Single(recipient.DeviceTokens);
         Assert.Equal("active-tok", token);
     }
+
+    [Fact]
+    public void ChannelRouter_WhenPushDisabled_ReturnsRealtimeOnly()
+    {
+        var router = new ChannelRouter();
+        var recipient = new ResolvedRecipient(
+            Guid.CreateVersion7(),
+            "staff@aveline.lk",
+            PushEnabled: false,
+            ContactPreferences.SMS,
+            new[] { "active-token-1" });
+
+        var allowed = router.AllowedChannels(recipient, NotificationChannel.Realtime | NotificationChannel.Push);
+
+        Assert.Equal(NotificationChannel.Realtime, allowed);
+    }
+
+    [Fact]
+    public void ChannelRouter_WhenPushReEnabled_ReUsesExistingTokens()
+    {
+        var router = new ChannelRouter();
+        var recipient = new ResolvedRecipient(
+            Guid.CreateVersion7(),
+            "staff@aveline.lk",
+            PushEnabled: true,
+            ContactPreferences.SMS,
+            new[] { "active-token-1" });
+
+        var allowed = router.AllowedChannels(recipient, NotificationChannel.Realtime | NotificationChannel.Push);
+
+        Assert.True(allowed.HasFlag(NotificationChannel.Realtime));
+        Assert.True(allowed.HasFlag(NotificationChannel.Push));
+    }
 }
+

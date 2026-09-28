@@ -13,7 +13,7 @@ Image analysis must satisfy three core constraints:
 
 ## Options Considered
 
-### 1. Direct vision API calls from Python LangGraph sub-graph (`agnet-service`)
+### 1. Direct vision API calls from Python LangGraph sub-graph (`agent-service`)
 - **Pros**: Direct integration in the Python agent graph.
 - **Cons**: Duplicates external credential management across services; bypasses the central .NET API client architecture; complicates integration tests and mocking across platforms.
 
@@ -22,8 +22,8 @@ Image analysis must satisfy three core constraints:
   - Single point of outbound multimodal HTTP client configuration (`Vision:ApiKey`, `Vision:BaseUrl`, `Vision:Model`).
   - Native integration with `IUsageTrackerService.RecordWorkflowUsageAsync` for ADR-010 Blossom credit accounting.
   - Consistent with the architecture of `EmbeddingService` (ADR-017) and `WhatsAppService` (ADR-015).
-  - Clean internal HTTP interface (`POST /internal/visual/analyze-image`, ADR-009) consumed by `agnet-service` tool registry.
-- **Cons**: One internal HTTP hop between `agnet-service` and `Aveline.Api`.
+  - Clean internal HTTP interface (`POST /internal/visual/analyze-image`, ADR-009) consumed by `agent-service` tool registry.
+- **Cons**: One internal HTTP hop between `agent-service` and `Aveline.Api`.
 
 ## Decision
 
@@ -45,3 +45,13 @@ Image analysis must satisfy three core constraints:
 - External vision API credentials are centrally managed in `appsettings.json`, `appsettings.Development.json`, `.env`, and `docker-compose.yml`.
 - All multimodal API usage is auditable and tracked in the `ai_usage_records` table with calculated Blossom credits.
 - Development and test suites remain 100% deterministic and offline-capable without requiring real OpenAI API keys.
+- **The image reference and its URL contract were extended by the media workstream**
+  ([ADR-022](ADR-022-media-storage-and-access.md)). `AnalyzeImageDto` gained an additive named
+  reference arm (`imageRefKind` = `attachment` | `inventoryImage`, plus `imageRefId`); `imageUrl`
+  stays **non-nullable** and empty-means-absent. For a referenced protected asset the API mints an
+  absolute, expiring, single-use token URL and hands **that** to the provider, because the provider
+  fetches the URL itself. The URL handed to the vision path is the **original**, not the catalog's
+  `w_800,f_auto,q_auto` display variant: the display variant is for the grid, and the colour-hex
+  extraction wants the pixels. The response wire names `primary_color` and `secondary_colors` are
+  pinned snake_case, and `not_analysable` distinguishes "this stored type is outside the provider's
+  four analysable formats" from "the provider failed".

@@ -62,11 +62,12 @@ public class SignalRRealtimeChannelTests
     public async Task SendAsync_SendsReceiveNotificationToUserGroup_WithDtoPayload()
     {
         var userId = Guid.NewGuid();
+        var inboxItemId = Guid.NewGuid();
         var recipient = new ResolvedRecipient(userId, "user@aveline.lk", true, ContactPreferences.None, []);
         var context = new RecordingHubContext();
         var channel = new SignalRRealtimeChannel(context);
 
-        await channel.SendAsync(recipient, SampleNotification());
+        await channel.SendAsync(recipient, SampleNotification(), inboxItemId, unreadCount: 7);
 
         Assert.Equal($"user:{userId}", context.Clients.LastGroupName);
         Assert.Equal("ReceiveNotification", context.Clients.GroupProxy.Method);
@@ -76,5 +77,9 @@ public class SignalRRealtimeChannelTests
         Assert.Equal("Payment confirmed", dto.Title);
         Assert.Equal("Order #1234 paid", dto.Body);
         Assert.Equal("ord-1", dto.Data["orderId"]);
+        // The payload carries an identity so a tap can mark this row read, and the
+        // recipient's own count so the badge can move without a list read.
+        Assert.Equal(inboxItemId, dto.NotificationId);
+        Assert.Equal(7, dto.UnreadCount);
     }
 }

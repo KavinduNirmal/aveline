@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Aveline.Api.Authorization;
 using Aveline.Api.Modules.Shared.Models;
 using Aveline.Api.Modules.Shared.Services;
 using Microsoft.AspNetCore.Http;
@@ -101,6 +102,17 @@ public class OnboardingMiddleware
                 // OnboardingPending: profile, onboarding-wizard, and invitation endpoints only.
                 // Raw /orgs endpoints are intentionally excluded so a caller cannot create an
                 // organization to short-circuit onboarding into an Active state.
+                //
+                // Aveline team members that operate the platform console are not
+                // boutique tenants and never go through tenant onboarding, so this
+                // gate does not apply to them. Suspended accounts are handled above
+                // and never reach here, so the bypass cannot resurrect one.
+                if (Roles.OnboardingExemptRoles.Any(context.User.IsInRole))
+                {
+                    await _next(context);
+                    return;
+                }
+
                 var path = context.Request.Path.Value?.TrimEnd('/') ?? string.Empty;
                 var isAllowed = AllowedPrefixPathsForOnboardingPending.Any(p =>
                         path.Equals(p, StringComparison.OrdinalIgnoreCase)

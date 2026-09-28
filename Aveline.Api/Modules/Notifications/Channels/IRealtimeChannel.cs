@@ -9,5 +9,15 @@ namespace Aveline.Api.Modules.Notifications.Channels;
 /// </summary>
 public interface IRealtimeChannel
 {
-    Task SendAsync(ResolvedRecipient recipient, Notification notification, CancellationToken cancellationToken = default);
+    /// <param name="inboxItemId">The recipient's inbox row, carried so a tap can mark it read.</param>
+    /// <param name="unreadCount">
+    /// The recipient's unread count after the row was written, so the client's badge can move
+    /// without a full inbox read.
+    /// </param>
+    Task SendAsync(
+        ResolvedRecipient recipient,
+        Notification notification,
+        Guid inboxItemId,
+        int unreadCount,
+        CancellationToken cancellationToken = default);
 }

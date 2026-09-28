@@ -78,9 +78,19 @@ public interface IAgentRunRepository
         DateTime cutoff, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Marks every paused run whose <c>PausedAt</c> is before <paramref name="pausedBefore"/> as
-    /// <c>TimedOut</c>, setting <c>CompletedAt</c> and <c>DurationMs</c>. Idempotent.
+    /// Marks every abandoned run as <c>TimedOut</c>, setting <c>CompletedAt</c> and
+    /// <c>DurationMs</c>. Idempotent.
     /// </summary>
+    /// <remarks>
+    /// Two kinds of abandonment: a run paused on an approval nobody answered
+    /// (<paramref name="pausedBefore"/> against <c>PausedAt</c>), and a run whose process died
+    /// before it reported (<paramref name="runningStartedBefore"/> against <c>StartedAt</c>). The
+    /// second is what keeps <c>agent.runs_running</c> from sticking above zero forever after a
+    /// crash: a run row opened at the start of a run is otherwise the last the API ever hears of it.
+    /// </remarks>
     Task<int> MarkTimedOutAsync(
-        DateTime pausedBefore, DateTime completedAt, CancellationToken cancellationToken);
+        DateTime pausedBefore,
+        DateTime runningStartedBefore,
+        DateTime completedAt,
+        CancellationToken cancellationToken);
 }

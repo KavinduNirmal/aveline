@@ -1,3 +1,4 @@
+using Aveline.Api.Modules.Billing.DTOs;
 using Aveline.Api.Modules.Billing.Models;
 using Aveline.Api.Modules.Billing.Repositories;
 using Aveline.Api.Modules.Billing.Services;
@@ -38,7 +39,65 @@ public static class UsageEndpoints
             .Produces<IReadOnlyList<AiUsageRecordResponse>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/tenant/{organizationId:guid}", GetTenantUsageAsync)
+            .WithName("GetTenantUsage")
+            .WithSummary(
+                "Get one organisation's own account position: its Blossom balance and its standing " +
+                "against the plan's staff and customer limits.")
+            .Produces<TenantUsageSnapshotDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         return app;
+    }
+
+    /// <summary>
+    /// The tenant's own account figures, for Aveline to answer questions about this boutique
+    /// (ADR-026).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the first internal endpoint that reports a tenant's *business* position rather than
+    /// an agent-internal one, so the audience is decided by the caller: the agent service will only
+    /// ask for an organisation whose request carried explicit staff evidence. Nothing here is
+    /// scoped by an end-user token, because there is no end user on this call - the agent service
+    /// is the only consumer and it authenticates as an internal service.
+    /// </para>
+    /// <para>
+    /// Both numbers are read from the services that already own them, never recomputed: the
+    /// entitlement layer for the plan limits, and the balance projection the boutique's own Blossom
+    /// meter renders. A figure that disagreed with the dashboard would be a bug in the product, not
+    /// a rounding difference.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> GetTenantUsageAsync(
+        Guid organizationId,
+        IBlossomService blossoms,
+        ISubscriptionService subscriptions,
+        IConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Entitlement usage is read first, deliberately: it validates that the organisation
+            // exists. The balance read creates the period account on demand, so asking it about an
+            // unknown organisation would leave a stray account behind.
+            var usage = await subscriptions.GetEntitlementUsageAsync(organizationId, cancellationToken);
+
+            // The authoritative balance, not `usage`'s Blossom row: that row compares consumption
+            // against the resolved entitlement limit and knows nothing about grants, adjustments or
+            // the expiring remainder, so a remainder derived from it would disagree with the meter.
+            var balance = await blossoms.GetBalanceAsync(organizationId, cancellationToken);
+
+            var threshold = configuration.GetValue("Billing:LowBalanceThresholdPercent", 20m);
+
+            return Results.Ok(TenantUsageSnapshotDto.From(
+                organizationId, balance, usage, threshold, DateTime.UtcNow));
+        }
+        catch (BlossomOrganizationNotFoundException notFound)
+        {
+            return Results.NotFound(new { message = notFound.Message });
+        }
     }
 
     private static async Task<IResult> RecordUsageAsync(

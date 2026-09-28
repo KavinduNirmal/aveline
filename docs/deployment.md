@@ -1,5 +1,26 @@
 # Aveline — Azure Deployment Plan (Demo Phase)
 
+> **Status:** **DEPLOYED — see [`deploy/README.md`](../deploy/README.md) for what is actually live.**
+> This document is retained as the original 2026-09-01 plan. Several of its claims were disproven
+> during the deployment; the corrections are listed below and at each affected line.
+>
+> ### Corrections (verified 2026-09-25)
+>
+> | This document says | Reality |
+> |---|---|
+> | Redis is "nice-to-have; not yet used in code"; "Skip Redis" | **Redis is load-bearing.** 15 API files use it for the distributed cache, the ADR-014 pub/sub event bus, distributed job locks, idempotency, quota counters, rate limiting and a health check. Azure Managed Redis is deployed. |
+> | Azure Static Web Apps hosts the dashboard | **SWA cannot be created** — it exists in none of the five regions this subscription permits. The SPA is on Vercel. |
+> | `minReplicas: 0` on both apps | **Wrong for this application.** The API registers 26 in-process `PeriodicTimer` jobs and holds the `PSUBSCRIBE` subscriptions; asleep means the jobs never tick and agent→API events are dropped. Both apps run `minReplicas: 1`. |
+> | `GET /openapi/v1.json` is a production warm-up target | **It does not exist in Production** — `Program.cs` maps OpenAPI only in Development. Warm up on `/health` instead. |
+> | Migrations run "in a CI step" | **There is no CI migration step and no deploy job at all.** `Program.cs` applies migrations only when `IsDevelopment()`, so schema is applied out of band with `dotnet ef migrations bundle`. |
+> | Azure Cache for Redis | Classic Redis is unavailable in all five permitted regions; **Azure Managed Redis** (`redisEnterprise`) is used, with `NoEviction` rather than the `VolatileLRU` default. |
+>
+> **Known defect in the plan's assumptions:** the default eviction policy matters here. `VolatileLRU`
+> makes the TTL-bearing job lock and idempotency mutex evictable, which is a money-path correctness
+> risk; the deployed instance pins `NoEviction`.
+>
+> Original status line follows.
+>
 > **Status:** Plan — to be implemented. See [ADR-006](ADR/ADR-006-deployment-platform.md) for the architectural decision.
 >
 > This document is the working implementation plan for deploying Aveline to Azure for the SE3090 demo phase (budget < $100) with fully automated CI/CD.
@@ -31,7 +52,7 @@ graph LR
 
     subgraph Azure
         ACA1["Container App: Aveline.Api<br/>(scale-to-zero)"]
-        ACA2["Container App: agnet-service<br/>(scale-to-zero)"]
+        ACA2["Container App: agent-service<br/>(scale-to-zero)"]
         PG[("PostgreSQL Flexible Server<br/>B1ms + pgvector")]
         KV["Key Vault<br/>(secrets)"]
         ACR["Container Registry"]
@@ -67,9 +88,9 @@ All communication between clients and the agent service goes through the API —
 | Resource | Service | Sizing | Est. cost/mo | Free-offer coverage |
 |---|---|---|---|---|
 | `Aveline.Api` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | 180k vCPU-sec, 360k GiB-sec, 2M req/mo |
-| `agnet-service` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | same grant |
+| `agent-service` | Azure Container Apps | Consumption, min 0 replicas | $0 (in grant) | same grant |
 | Database | PostgreSQL Flexible Server | Burstable **B1ms**, 32 GB | $0 | 750 h/mo + 32 GB (12-mo offer) |
-| Web dashboard | Azure Static Web Apps | Free tier | $0 | 100 GB bandwidth/mo |
+| Web dashboard | ~~Azure Static Web Apps~~ **Vercel** | Free tier | $0 | SWA is unavailable in every permitted region (corrected 2026-09-25) |
 | Container images | Azure Container Registry | Standard | $0 | 12-mo offer (100 GB) — *fallback: GHCR* |
 | Secrets | Azure Key Vault | Free | $0 | always free |
 | Observability | Application Insights + Log Analytics | Free tier | $0 | 5 GB logs/mo |
@@ -100,7 +121,7 @@ All communication between clients and the agent service goes through the API —
 
 ### Phase 1 — Infrastructure as Code (Bicep)
 Create `deploy/main.bicep` (+ `main.parameters.json`) that declares:
-- Container Apps environment (consumption) + two container apps (`api`, `agent`), each with `minReplicas: 0`, HTTP scaling.
+- Container Apps environment (consumption) + two container apps (`aveline-api`, `aveline-agent`), each with `minReplicas: 1` (**corrected 2026-09-25** — `0` silently stops the 26 `PeriodicTimer` jobs and drops agent→API events), HTTP scaling.
 - PostgreSQL Flexible Server (B1ms) with `CREATE EXTENSION vector` available; firewall locked to the ACA environment.
 - Key Vault (access policies / RBAC) + initial secrets.
 - Static Web Apps (free tier).
@@ -115,7 +136,7 @@ az deployment group create \
 ```
 
 ### Phase 2 — Container images
-- `Aveline.Api/Dockerfile` and `agnet-service/Dockerfile` already exist — validate `docker build` locally.
+- `Aveline.Api/Dockerfile` and `agent-service/Dockerfile` already exist — validate `docker build` locally.
 - Build and push `api` / `agent` images to ACR (or GHCR).
 
 ### Phase 3 — CI/CD: GitHub Actions `deploy.yml`
@@ -185,7 +206,7 @@ jobs:
         run: |
           az acr login --name ${{ vars.ACR_NAME }}
           docker build -t $ACR/api:${GITHUB_SHA} ./Aveline.Api
-          docker build -t $ACR/agent:${GITHUB_SHA} ./agnet-service
+          docker build -t $ACR/agent:${GITHUB_SHA} ./agent-service
           docker push $ACR/api:${GITHUB_SHA}
           docker push $ACR/agent:${GITHUB_SHA}
       - name: Deploy infrastructure (Bicep)
@@ -211,7 +232,10 @@ jobs:
 
 1. **Scale-to-zero** on both Container Apps.
 2. **Stop** PostgreSQL Flexible Server when not demoing (start/stop supported).
-3. **Skip Redis** (nice-to-have; not yet used in code).
+3. **Redis is required, not optional** (corrected 2026-09-25). It is used by 15 API files for the
+   distributed cache, the pub/sub event bus, job locks, idempotency, quota counters and rate
+   limiting, plus the agent's event bus. Azure Managed Redis is deployed; the instance pins
+   `NoEviction` because the plan's assumed default would evict the job lock and idempotency keys.
 4. Use **Burstable B1ms**, never General Purpose.
 5. Keep LLM calls minimal; prefer cheaper models for demo scripts.
 6. **Cost Management budget + alerts** at $10/mo.
@@ -224,7 +248,7 @@ jobs:
 
 - [ ] `docker compose config` and both `Dockerfile`s build locally.
 - [ ] `az deployment group create` succeeds idempotently (run twice, no drift).
-- [ ] `GET /openapi/v1.json` and `GET /health` respond from the deployed Container Apps.
+- [ ] `GET /health` responds from the deployed Container Apps. (**Corrected 2026-09-25:** the original item also listed `/openapi/v1.json`, which does not exist in Production — OpenAPI is mapped only when `IsDevelopment()`.)
 - [ ] A database migration + `CREATE EXTENSION vector` run via CI.
 - [ ] A sample customer-memory semantic search returns results (pgvector path).
 - [ ] A LangGraph workflow pauses for approval and resumes from the PostgreSQL checkpointer.
@@ -267,3 +291,102 @@ jobs:
   az group delete --name rg-aveline-demo --yes --no-wait
   ```
   This removes all Azure resources and stops all cost.
+
+---
+
+## Observability tier — Prometheus + Grafana (metrics plan, OQ-2)
+
+The metrics workstream commits **one** configuration used in both local development and production:
+`docker-compose.yml` plus `observability/prometheus/**` and `observability/grafana/**`. Production
+self-hosts the same images rather than using a managed Prometheus. Three consequences for the
+deployment:
+
+1. **Prometheus and Grafana must be always-on.** A TSDB cannot scale to zero and keep its data, so
+   both need `minReplicas: 1` **plus persistent storage** — on Container Apps that is an Azure Files
+   mount for `/prometheus` and `/var/lib/grafana`. The rest of the deployment keeps `minReplicas: 0`.
+   Updating `deploy/main.bicep` for this is a **follow-up**, not part of the metrics slices; it is
+   recorded here and in [`docs/backend/observability.md`](backend/observability.md).
+2. **Two new Key Vault secrets** (plus one for the database exporter):
+   `METRICS_SCRAPE_TOKEN` (32+ random bytes; the API refuses to boot in Production without it),
+   `GRAFANA_ADMIN_PASSWORD`, and `POSTGRES_EXPORTER_PASSWORD`. They join the existing secrets at
+   [`docs/deployment.md`](deployment.md) §Key Vault.
+3. **A scale-to-zero API makes "the series stopped" and "the container slept" look identical.**
+   The API keeps `minReplicas: 0`, so its process counters restart on every cold start and its 15 s
+   overview cache is per-replica. The production runbook must say so: a flat line during a quiet
+   period is not necessarily an outage.
+
+`postgres_exporter` is internal only — no host port — and runs as a dedicated `pg_monitor` role with
+no application-table access. Grafana is operator-only; the admin console does not embed it (D3).
+
+---
+
+## 10. Administrator console — deployment requirements
+
+The console is served by the same SPA as the tenant dashboard, so it inherits every host decision
+above. Two requirements are specific to it and neither can be satisfied from the repository, because
+no production host configuration is committed.
+
+### 10.1 SPA fallback rewrite for deep links
+
+Every console route is a client-side path under `/admin/:userId/*`. A static host must rewrite an
+unmatched path to `index.html`, or a refresh on `/admin/<id>/users` returns a `404`. The Vite dev
+server does this automatically; a production host does not. Required rule (exact syntax depends on
+the host):
+
+```
+/*  →  /index.html   (200)
+```
+
+This applies to the tenant app too (`/app/b/:slug`), so the rewrite is not console-specific — but the
+console makes it visible, because its URLs are the ones an operator bookmarks and shares.
+
+### 10.2 Grafana deep links
+
+The console links out to Grafana; it never embeds it. Two environment variables must be set at build
+time for the links to resolve, and both are inert when unset:
+
+| Variable | Value | Behaviour when unset |
+|---|---|---|
+| `VITE_GRAFANA_ENABLED` | `true` to enable links | a **production** build renders every link **disabled** with *"Grafana is not configured for this environment"*; a dev build points at `http://localhost:3000` |
+| `VITE_GRAFANA_BASE_URL` | e.g. `https://grafana.aveline.internal` | as above; the base is **never hard-coded**, because the compose port is DEV ONLY and no production route exists in the repository |
+
+The four dashboard UIDs the console links to (`aveline-overview`, `aveline-business`,
+`aveline-database`, `aveline-notifications`) are the **provisioned** UIDs from
+`observability/grafana/dashboards/*.json`, so they survive re-provisioning.
+
+### 10.3 The console depends on one backend fix
+
+`GET /api/v1/auth/claims` must return a non-null `email`. Before slice A9 it returned `email: null`
+for every real bearer token because the JwtBearer pipeline maps the claim to `ClaimTypes.Email`
+while the endpoint read the raw name. A deployment pinned to an API build older than that fix will
+show blank operator identities and will not be able to key self-approval on email (the console keys
+it on the Clerk subject, so approval still behaves correctly).
+
+### 10.4 Revenue ledger settings
+
+Three settings, all optional with the defaults below. None is a secret, so none belongs in a secret
+store.
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `Revenue:MaxWindowDays` | `400` | Longest window a revenue read accepts. Matches the retention the statistics catalog claims for the ledger, rather than telemetry's 92-day forensic cap |
+| `Revenue:CacheSeconds` | `60` | Console TTL for the five statistics reads. Every response carries `Cache-Control: private, max-age=…`, and the ledger register is deliberately uncached (`max-age=0`) |
+| `Billing:StatementMaxWindowDays` | `400` | Longest Blossom statement window. Was hard-coded at 92, which was shorter than the 400-day retention S-3 already claimed |
+
+**The revenue cache is an `IDistributedCache` and it degrades rather than fails.** With Redis
+configured it is shared, which matters because the deployment runs two replicas and an in-process
+cache would let them serve different figures for the same request. Without Redis it falls back to
+the per-instance implementation: a cache read or write that throws is swallowed, the request is
+served from an uncached query, and the degradation appears in `dataQuality.notes` so an operator is
+told rather than left to notice two replicas disagreeing. Set `Revenue:CacheSeconds` to `1` to
+disable caching in effect without changing the fallback.
+
+**No new frontend environment variable.** `frontend/web/.env.example` is unchanged by this
+workstream: the console reaches the revenue endpoints through the existing `VITE_API_BASE_URL`.
+
+### 10.5 The console's E2E suite runs signed-out only
+
+`tests/e2e/admin-console/console-access.spec.ts` asserts, for every console route including the four
+`money` ones, that a signed-out visitor lands on `/sign-in`, sees no console chrome and issues **no**
+`/api/v1/admin/*` request. The authenticated walk needs a Clerk test session that CI does not
+provision, so it is not run — stated here rather than implied by a green suite.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ApiError, toApiError } from './api-error'
+import { ApiError, isCanceledError, toApiError } from './api-error'
 
 describe('ApiError', () => {
   it('carries status, message, code and details', () => {
@@ -85,5 +85,36 @@ describe('toApiError', () => {
     const error = toApiError(new Error('kaput'))
     expect(error.status).toBe(0)
     expect(error.message).toBe('kaput')
+  })
+})
+
+describe('isCanceledError', () => {
+  it('recognizes an aborted axios request by its code', () => {
+    // What the request interceptor becomes once `AbortController.abort()` fires: axios throws a
+    // CanceledError and `toApiError` carries `ERR_CANCELED` through as `code`.
+    expect(isCanceledError(new ApiError(0, 'canceled', 'ERR_CANCELED'))).toBe(true)
+  })
+
+  it('recognizes a CanceledError that never reached the interceptor', () => {
+    const canceled = new Error('canceled')
+    canceled.name = 'CanceledError'
+    expect(isCanceledError(canceled)).toBe(true)
+  })
+
+  it('does not claim an AbortError, which this client never produces', () => {
+    // `AbortError` is native `fetch` vocabulary. The panels call axios, which reports an abort as a
+    // `CanceledError`; recognizing a name the client cannot emit would be untested code dressed as
+    // robustness, so the contract stops at the two shapes axios actually throws.
+    const aborted = new Error('The operation was aborted.')
+    aborted.name = 'AbortError'
+    expect(isCanceledError(aborted)).toBe(false)
+  })
+
+  it('does not mistake a real failure for a cancellation', () => {
+    expect(isCanceledError(new ApiError(500, 'Something went wrong'))).toBe(false)
+    expect(isCanceledError(new ApiError(0, 'Unable to reach the server'))).toBe(false)
+    expect(isCanceledError(new Error('kaput'))).toBe(false)
+    expect(isCanceledError(null)).toBe(false)
+    expect(isCanceledError('canceled')).toBe(false)
   })
 })

@@ -52,6 +52,17 @@ public static class StatisticsModule
         services.AddSingleton<ApiKeyUsageAggregator>();
         services.AddSingleton<IApiKeyUsageSink>(sp => sp.GetRequiredService<ApiKeyUsageAggregator>());
 
+        // The Clerk-id → GUID claim map (B1/DR-7). Singleton by design: a per-replica
+        // dictionary is correct for identity, where the only cost of staleness is one interval
+        // of unresolved attribution, not a visible number disagreement.
+        services.AddSingleton<ClaimIdentityMap>();
+        services.AddSingleton<IClaimIdentityMap>(sp => sp.GetRequiredService<ClaimIdentityMap>());
+
+        // Registered as a singleton first so the integration test can drive one deterministic
+        // refresh, then hosted so the production host runs it on its five-minute interval.
+        services.AddSingleton<ClaimIdentityMapRefresher>();
+        services.AddHostedService(sp => sp.GetRequiredService<ClaimIdentityMapRefresher>());
+
         services.AddHostedService<AgentStatsRetentionJob>();
         services.AddHostedService<AgentStatsRollupJob>();
         services.AddHostedService<StaleAgentRunJob>();

@@ -15,6 +15,12 @@ public interface IOrderService
         Guid organizationId,
         CancellationToken cancellationToken = default);
 
+    Task<OrderResponseDto> UpdateOrderAsync(
+        Guid id,
+        Guid organizationId,
+        CreateOrderDto dto,
+        CancellationToken cancellationToken = default);
+
     Task<PagedResult<OrderResponseDto>> GetOrdersAsync(
         Guid organizationId,
         OrderQueryParametersDto query,

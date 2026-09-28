@@ -27,7 +27,10 @@ public class AgentRunUnattributedTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(builder =>
-                builder.UseSetting("AgentService:InternalToken", _internalToken));
+            {
+                builder.UseSetting("AgentService:InternalToken", _internalToken);
+                builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
+            });
 
         _client = _factory.CreateClient();
         return Task.CompletedTask;
@@ -53,7 +56,7 @@ public class AgentRunUnattributedTests : IAsyncLifetime
 
     private static AppDbContext Context() =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(databaseName: "AvelineInMemoryDb")
+            .UseInMemoryDatabase(databaseName: TestDatabase.Name())
             .Options);
 
     [Fact]

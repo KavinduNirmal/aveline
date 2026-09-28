@@ -63,6 +63,28 @@ public class CustomerConciergeRepositoryTests
     }
 
     [Fact]
+    public async Task CustomerRepository_GetByPhone_PrefersTheOldestProfile_WhenTheNumberMatchesTwice()
+    {
+        // The same person can exist as two rows: `+94771234567` and `0771234567` are one number, and
+        // the unique index only compares the literal string, so it does not stop the second one.
+        // Both are candidates for a locally-formatted query, and without an ordering the choice
+        // between them was arbitrary - which decides whose consent row a first-contact disclosure
+        // stamps, and which profile a thread resolves to.
+        var older = NewCustomer(_orgA, "+94771234567");
+        older.CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var newer = NewCustomer(_orgA, "0771234567");
+        newer.CreatedAt = new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc);
+        _context.Customers.AddRange(older, newer);
+        await _context.SaveChangesAsync();
+
+        var sut = new CustomerRepository(_context);
+        var found = await sut.GetByPhoneAsync(_orgA, "0771234567");
+
+        Assert.NotNull(found);
+        Assert.Equal(older.Id, found.Id);
+    }
+
+    [Fact]
     public async Task CustomerRepository_SoftDeletedCustomer_IsNotReturned()
     {
         var sut = new CustomerRepository(_context);

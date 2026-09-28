@@ -50,6 +50,7 @@ public static class VisualEndpoints
             .WithName("UpdateInventoryItem")
             .WithSummary("Update details of an existing inventory item.")
             .Produces<InventoryItemDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
@@ -57,6 +58,13 @@ public static class VisualEndpoints
             .WithName("UpdateInventoryStatus")
             .WithSummary("Update status (available/reserved/archived) of an inventory item.")
             .Produces<InventoryItemDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapDelete("/inventory/{itemId:guid}", DeleteInventoryItemAsync)
+            .WithName("DeleteInventoryItem")
+            .WithSummary("Delete an inventory item.")
+            .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status401Unauthorized);
 
@@ -105,6 +113,25 @@ public static class VisualEndpoints
             .Produces<IReadOnlyList<SupplierCatalogItemDto>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/inventory/{itemId:guid}/qr", GetInventoryItemQrAsync)
+            .WithName("GetInventoryItemQr")
+            .WithSummary("Generate and retrieve a QR code for an inventory item.")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/inventory/scan-qr", ScanInventoryQrAsync)
+            .WithName("ScanInventoryQr")
+            .WithSummary("Scan and resolve a QR barcode or image.")
+            .Produces<QrScanResultDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapPost("/qr/generate", GenerateQrInternalAsync)
+            .WithName("GenerateQrInternal")
+            .WithSummary("Generate a custom QR code.")
+            .Produces<QrCodeResponseDto>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         // Backward compatibility aliases (/api/internal/visual/...)
         var apiGroup = endpoints.MapGroup("/api/internal/visual")
             .WithTags("Visual Intelligence & Sourcing (Internal)")
@@ -116,6 +143,7 @@ public static class VisualEndpoints
         apiGroup.MapPost("/inventory", CreateInventoryItemAsync);
         apiGroup.MapPut("/inventory/{itemId:guid}", UpdateInventoryItemAsync);
         apiGroup.MapPatch("/inventory/{itemId:guid}/status", UpdateInventoryStatusAsync);
+        apiGroup.MapDelete("/inventory/{itemId:guid}", DeleteInventoryItemAsync);
         apiGroup.MapGet("/inventory/low-stock", GetLowStockInventoryAsync);
         apiGroup.MapPost("/analyze-image", AnalyzeImageAsync);
         apiGroup.MapGet("/customer-matches/{itemId:guid}", GetCustomerMatchesAsync);
@@ -123,6 +151,9 @@ public static class VisualEndpoints
         apiGroup.MapPost("/outfits/compose", ComposeOutfitAsync);
         apiGroup.MapPost("/sourcing-requests", CreateSourcingRequestAsync);
         apiGroup.MapGet("/suppliers/{supplierId:guid}/catalog", GetSupplierCatalogAsync);
+        apiGroup.MapGet("/inventory/{itemId:guid}/qr", GetInventoryItemQrAsync);
+        apiGroup.MapPost("/inventory/scan-qr", ScanInventoryQrAsync);
+        apiGroup.MapPost("/qr/generate", GenerateQrInternalAsync);
 
         // Backward compatibility aliases (/internal/inventory/...)
         var inventoryGroup = endpoints.MapGroup("/internal/inventory")
@@ -134,7 +165,10 @@ public static class VisualEndpoints
         inventoryGroup.MapPost("/", CreateInventoryItemAsync);
         inventoryGroup.MapPut("/{itemId:guid}", UpdateInventoryItemAsync);
         inventoryGroup.MapPatch("/{itemId:guid}/status", UpdateInventoryStatusAsync);
+        inventoryGroup.MapDelete("/{itemId:guid}", DeleteInventoryItemAsync);
         inventoryGroup.MapGet("/low-stock", GetLowStockInventoryAsync);
+        inventoryGroup.MapGet("/{itemId:guid}/qr", GetInventoryItemQrAsync);
+        inventoryGroup.MapPost("/scan-qr", ScanInventoryQrAsync);
 
         return endpoints;
     }
@@ -180,8 +214,11 @@ public static class VisualEndpoints
             return Results.BadRequest(new { error = "Valid OrganizationId is required." });
         }
 
-        var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
-        return Results.Created($"/internal/visual/inventory/{created.Id}?organizationId={created.OrganizationId}", created);
+        return await WriteInventoryItemAsync(async () =>
+        {
+            var created = await visualService.CreateInventoryItemAsync(dto, cancellationToken);
+            return Results.Created($"/internal/visual/inventory/{created.Id}?organizationId={created.OrganizationId}", created);
+        });
     }
 
     private static async Task<IResult> UpdateInventoryItemAsync(
@@ -190,13 +227,16 @@ public static class VisualEndpoints
         [FromServices] IVisualService visualService,
         CancellationToken cancellationToken)
     {
-        var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
-        if (updated is null)
+        return await WriteInventoryItemAsync(async () =>
         {
-            return Results.NotFound(new { error = "Inventory item not found." });
-        }
+            var updated = await visualService.UpdateInventoryItemAsync(itemId, dto, cancellationToken);
+            if (updated is null)
+            {
+                return Results.NotFound(new { error = "Inventory item not found." });
+            }
 
-        return Results.Ok(updated);
+            return Results.Ok(updated);
+        });
     }
 
     private static async Task<IResult> UpdateInventoryStatusAsync(
@@ -212,6 +252,23 @@ public static class VisualEndpoints
         }
 
         return Results.Ok(updated);
+    }
+
+    private static async Task<IResult> DeleteInventoryItemAsync(
+        [FromRoute] Guid itemId,
+        [FromQuery] Guid? organizationId,
+        [FromQuery] Guid? orgId,
+        [FromServices] IVisualService visualService,
+        CancellationToken cancellationToken)
+    {
+        var targetOrgId = organizationId ?? orgId ?? Guid.Empty;
+        var deleted = await visualService.DeleteInventoryItemAsync(itemId, targetOrgId, cancellationToken);
+        if (!deleted)
+        {
+            return Results.NotFound(new { error = "Inventory item not found or already deleted." });
+        }
+
+        return Results.NoContent();
     }
 
     private static async Task<IResult> GetLowStockInventoryAsync(
@@ -231,8 +288,26 @@ public static class VisualEndpoints
         [FromServices] IVisualService visualService,
         CancellationToken cancellationToken)
     {
-        var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
-        return Results.Ok(analysis);
+        try
+        {
+            var analysis = await visualService.AnalyzeImageAsync(dto, cancellationToken);
+            return Results.Ok(analysis);
+        }
+        catch (KeyNotFoundException)
+        {
+            // A named reference the caller cannot see - another organisation's, unknown, or
+            // deleted - is a 404, never a resolved image and never a token (strategy §3.5,
+            // migration plan §7.5). The same translation this file's QR route already applies.
+            return Results.NotFound(new { error = "Image not found." });
+        }
+        catch (ArgumentException ex)
+        {
+            // The vision target refusal: a blank target, inline data the provider cannot read, or
+            // a relative route that is neither an absolute http(s) URL nor inline image data. A
+            // caller error is a 400 with the service's own message, never the global handler's
+            // 500. Everything else still propagates.
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 
     private static async Task<IResult> GetCustomerMatchesAsync(
@@ -289,5 +364,80 @@ public static class VisualEndpoints
         var targetOrgId = organizationId ?? orgId ?? Guid.Empty;
         var items = await visualService.GetSupplierCatalogAsync(supplierId, targetOrgId, category, color, maxPrice, cancellationToken);
         return Results.Ok(items);
+    }
+
+    private static async Task<IResult> GetInventoryItemQrAsync(
+        [FromRoute] Guid itemId,
+        [FromQuery] Guid? organizationId,
+        [FromQuery] Guid? orgId,
+        [FromQuery] string? format,
+        [FromQuery] int? size,
+        [FromServices] IQrCodeService qrService,
+        CancellationToken cancellationToken)
+    {
+        var targetOrgId = organizationId ?? orgId ?? Guid.Empty;
+        var requestedFormat = format?.Trim().ToLowerInvariant() ?? "png";
+        var requestedSize = Math.Clamp(size.GetValueOrDefault(300), 50, 2000);
+
+        try
+        {
+            if (requestedFormat == "json" || requestedFormat == "base64")
+            {
+                var dto = await qrService.GenerateItemQrDtoAsync(targetOrgId, itemId, requestedFormat, requestedSize, cancellationToken);
+                return Results.Ok(dto);
+            }
+
+            var bytes = await qrService.GenerateItemQrBytesAsync(targetOrgId, itemId, requestedFormat, requestedSize, cancellationToken);
+            if (requestedFormat == "svg")
+            {
+                return Results.File(bytes, "image/svg+xml; charset=utf-8");
+            }
+            return Results.File(bytes, "image/png");
+        }
+        catch (KeyNotFoundException)
+        {
+            return Results.NotFound(new { error = "Catalog item not found." });
+        }
+    }
+
+    private static async Task<IResult> ScanInventoryQrAsync(
+        [FromQuery] Guid? organizationId,
+        [FromQuery] Guid? orgId,
+        [FromBody] ScanQrDto dto,
+        [FromServices] IQrCodeService qrService,
+        CancellationToken cancellationToken)
+    {
+        var targetOrgId = organizationId ?? orgId ?? Guid.Empty;
+        var result = await qrService.ScanAndResolveAsync(targetOrgId, dto, cancellationToken);
+        return Results.Ok(result);
+    }
+
+    private static IResult GenerateQrInternalAsync(
+        [FromBody] GenerateQrDto dto,
+        [FromServices] IQrCodeService qrService)
+    {
+        var result = qrService.GenerateQrResponse(dto);
+        return Results.Ok(result);
+    }
+
+    /// <summary>
+    /// Runs an inventory write, translating the catalog tier's image-size refusal
+    /// (<see cref="CatalogImageTooLargeException"/>, raised by
+    /// <c>InventoryService.ProcessImageUrlAsync</c> for a <c>data:</c> image URL) into the same
+    /// <c>400 { error }</c> shape this file's other refusals use. The catalog item routes in
+    /// <c>CatalogEndpoints.cs</c> answer the identical refusal the same way, so one cap has one
+    /// answer across both lanes (strategy §3.4, plan U0.6). Every other failure keeps
+    /// propagating to the global handler, so this cannot mask an unrelated fault.
+    /// </summary>
+    private static async Task<IResult> WriteInventoryItemAsync(Func<Task<IResult>> write)
+    {
+        try
+        {
+            return await write();
+        }
+        catch (CatalogImageTooLargeException ex)
+        {
+            return Results.BadRequest(new { error = ex.Message });
+        }
     }
 }

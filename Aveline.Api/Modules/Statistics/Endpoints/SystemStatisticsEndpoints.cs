@@ -136,8 +136,15 @@ public static class SystemStatisticsEndpoints
                 return Results.Unauthorized();
             }
 
-            var alert = await alerts.AcknowledgeAsync(alertId, user.Id, request?.Note, ct);
-            return alert is null ? Results.NotFound() : Results.Ok(alert);
+            try
+            {
+                var alert = await alerts.AcknowledgeAsync(alertId, user.Id, request?.Note, ct);
+                return alert is null ? Results.NotFound() : Results.Ok(alert);
+            }
+            catch (AlertStateConflictException conflict)
+            {
+                return Results.Conflict(new { message = conflict.Message });
+            }
         });
 
         return endpoints;

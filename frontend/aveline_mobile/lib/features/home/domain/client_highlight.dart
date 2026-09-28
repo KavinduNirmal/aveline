@@ -1,21 +1,41 @@
 /// The client's value to the boutique, strongest first.
 ///
-/// Mirrors the loyalty tier the API recomputes from spend and visits (see
-/// `CustomerConciergeEndpoints`' status route). VIPs wear the wine ring and pill;
+/// Mirrors the grade the server stores on `Customer.Level`
+/// (`vip | level3 | level2 | level1`). VIPs wear the wine ring and pill;
 /// everyone else wears their level, the darker the badge the stronger the tier.
 enum ClientTier {
-  vip(isVip: true, level: null),
-  level3(isVip: false, level: '3'),
-  level2(isVip: false, level: '2'),
-  level1(isVip: false, level: '1');
+  vip(isVip: true, level: null, wireValue: 'vip'),
+  level3(isVip: false, level: '3', wireValue: 'level3'),
+  level2(isVip: false, level: '2', wireValue: 'level2'),
+  level1(isVip: false, level: '1', wireValue: 'level1');
 
-  const ClientTier({required this.isVip, required this.level});
+  const ClientTier({
+    required this.isVip,
+    required this.level,
+    required this.wireValue,
+  });
 
   /// VIP clients are marked with the brand wine rather than a level.
   final bool isVip;
 
   /// The digit inside the `LVL` badge, or `null` for [ClientTier.vip].
   final String? level;
+
+  /// The wire value the API stores.
+  final String wireValue;
+
+  /// The tier a wire value names, or `null` when it is absent or unknown.
+  ///
+  /// Nullable on purpose: the server stores no grade until the boutique sets
+  /// one, and a default would invent a grade for every client.
+  static ClientTier? fromWire(String? value) {
+    for (final tier in values) {
+      if (tier.wireValue == value) {
+        return tier;
+      }
+    }
+    return null;
+  }
 }
 
 /// A client worth surfacing on Home because something is happening with them.
@@ -29,21 +49,20 @@ class ClientHighlight {
     required this.name,
     required this.tier,
     required this.activity,
-    this.hasNewActivity = false,
   });
 
+  /// The profile route id. A real customer's GUID, or a local id inside a test.
   final String id;
 
   final String name;
 
-  final ClientTier tier;
+  /// The grade the boutique works with, or `null` when nobody has graded this
+  /// client. The tile hides the badge rather than inventing one.
+  final ClientTier? tier;
 
   /// Why they are in this row, in the associate's words. Shown in the
   /// all-clients sheet, where there is room for a line of context.
   final String activity;
-
-  /// Whether something has arrived that the associate has not looked at yet.
-  final bool hasNewActivity;
 
   /// `Eleanor Vane` reads as `Eleanor V.` under a circular avatar.
   String get shortName {

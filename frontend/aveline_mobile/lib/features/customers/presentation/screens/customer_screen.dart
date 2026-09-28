@@ -5,6 +5,7 @@ import '../../../../shared/utils/date_formatter.dart';
 import '../../../../shared/widgets/app_toast.dart';
 import '../../../../shared/widgets/aurora_field.dart';
 import '../../../../shared/widgets/filter_pill.dart';
+import '../../data/api_customer_repository.dart';
 import '../../data/customer_repository.dart';
 import '../../data/demo_customer_repository.dart';
 import '../../domain/customer.dart';
@@ -165,6 +166,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
       );
     });
     AppToast.show(context, 'Visit added to ${detail.customer.displayName}.');
+
+    final repo = _repository;
+    if (repo is ApiCustomerRepository) {
+      repo.recordVisit(detail.customer.id).catchError((_) {});
+    }
   }
 
   /// Recomputes the tier from spend, visits and recency.
@@ -189,6 +195,11 @@ class _CustomerScreenState extends State<CustomerScreen> {
       );
     });
     AppToast.show(context, 'Tier recomputed: ${status.label}.');
+
+    final repo = _repository;
+    if (repo is ApiCustomerRepository) {
+      repo.recomputeTier(detail.customer.id).catchError((_) => null);
+    }
   }
 
   @override
@@ -468,6 +479,14 @@ class _Profile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: _ClientSheet(detail: detail, now: now),
         ),
+        // Who this client is, in the boutique's own words. It sits above the facts because it is
+        // what an associate reads before making contact (the pre-contact brief), and a list of
+        // tags is not that.
+        if (customer.hasDescription)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+            child: _DescriptionCard(description: customer.description!),
+          ),
         // The deadline is the one thing on this page that expires, so it is the
         // one block allowed to be loud, and it sits above everything read for
         // interest rather than for work.
@@ -516,6 +535,47 @@ class _Profile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The boutique's own prose about this client.
+///
+/// Shown verbatim and attributed, because it is the one field an associate wrote rather than the
+/// agent extracted: reading it as anything else would be attributing a person's words to a model.
+class _DescriptionCard extends StatelessWidget {
+  const _DescriptionCard({required this.description});
+
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Who they are',
+            style: theme.textTheme.labelSmall?.copyWith(
+              letterSpacing: 0.6,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            description,
+            key: const Key('customer_description'),
+            style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -755,18 +815,19 @@ class _Ledger extends StatelessWidget {
 
     Widget divider() => Container(
       width: 1,
-      height: 40,
-      margin: const EdgeInsets.symmetric(horizontal: 6),
+      height: 42,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
       color: scheme.outlineVariant.withValues(alpha: 0.45),
     );
 
     return Padding(
       key: const Key('customer_metrics'),
-      padding: const EdgeInsets.fromLTRB(10, 16, 10, 18),
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 18),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
+            flex: 7,
             child: _Metric(
               metricKey: const Key('customer_metric_spend'),
               value: customer.totalSpentLabel,
@@ -775,6 +836,7 @@ class _Ledger extends StatelessWidget {
           ),
           divider(),
           Expanded(
+            flex: 5,
             child: _Metric(
               metricKey: const Key('customer_metric_visits'),
               value: '${customer.visitCount}',
@@ -783,6 +845,7 @@ class _Ledger extends StatelessWidget {
           ),
           divider(),
           Expanded(
+            flex: 7,
             child: _Metric(
               metricKey: const Key('customer_metric_last-visit'),
               value: lastVisit == null
@@ -817,30 +880,39 @@ class _Metric extends StatelessWidget {
 
     return Padding(
       key: metricKey,
-      padding: const EdgeInsets.symmetric(horizontal: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            label.toUpperCase(),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-              letterSpacing: 0.8,
-              fontSize: 9.5,
-              fontWeight: FontWeight.w600,
-              height: 1.25,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label.toUpperCase(),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                letterSpacing: 0.6,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                height: 1.2,
+              ),
             ),
           ),
           const SizedBox(height: 6),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              color: scheme.onSurface,
-              height: 1.1,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: scheme.onSurface,
+                fontSize: 19,
+                fontWeight: FontWeight.w600,
+                height: 1.15,
+              ),
             ),
           ),
         ],

@@ -15,7 +15,7 @@ But "done" needs three qualifications, and the third matters more than the first
 
 1. **Nine items are formally deferred** — declared in writing, with the reason and the impact, in `docs/backend/README.md` §Deferred and `docs/api/README.md` Appendix P. Deferred is not missing; they are recorded scope decisions.
 2. **Three feature areas were never in scope** for this work: the load-test harness, the Python instrumentation, and the billing-statistics family.
-3. **One de facto gap is not on any deferred list.** The `POST /internal/agent-runs` ingest pipeline has **no producer anywhere in the repository**. `agnet-service/` contains no call to it, and all five `dataQuality` flags are hard-coded `false` (`AgentStatisticsDtos.cs:20-24`). The C# side of Phase 4 is complete and tested, but it receives no data, so the agentic-statistics endpoints will serve empty series and null percentiles against real traffic. The documents describe this as "deferred per risk R-1" — which is accurate — but it is the one item that means a shipped feature does not actually function end to end.
+3. **One de facto gap is not on any deferred list.** The `POST /internal/agent-runs` ingest pipeline has **no producer anywhere in the repository**. `agent-service/` contains no call to it, and all five `dataQuality` flags are hard-coded `false` (`AgentStatisticsDtos.cs:20-24`). The C# side of Phase 4 is complete and tested, but it receives no data, so the agentic-statistics endpoints will serve empty series and null percentiles against real traffic. The documents describe this as "deferred per risk R-1" — which is accurate — but it is the one item that means a shipped feature does not actually function end to end.
 
 ```
 dotnet build → Build succeeded. 0 errors (26 warnings, all pre-existing: obsolete Testcontainers ctors + EF1002 in tests)
@@ -116,7 +116,7 @@ Appendix P is explicit that these are **not** normative and "must not be reporte
 This is the finding I would act on. It is *described* as deferred, but its consequence is not obvious from the deferral note.
 
 - `POST /internal/agent-runs` (and `/steps`, `GET /{workflowId}`) exist, are tested, and are wired (`Program.cs`, `InternalAgentRunEndpoints.cs`).
-- **Nothing calls them.** `grep -rn 'internal/agent-runs'` across `agnet-service/` and `frontend/` returns nothing.
+- **Nothing calls them.** `grep -rn 'internal/agent-runs'` across `agent-service/` and `frontend/` returns nothing.
 - The `dataQuality` contract is hard-coded to all-false:
 
 ```csharp
@@ -128,9 +128,9 @@ CostInstrumented: false);
 ```
 — `Aveline.Api/Modules/Statistics/DTOs/AgentStatisticsDtos.cs:20-24`
 
-Consequence: every agent-statistics response against real traffic carries `dataQuality` with all flags false, `GET /latency` returns a **null series** rather than zeros, and percentiles below the sample floor return `null`. `docs/backend/README.md:243-252` states this accurately ("nothing in `agnet-service/` emits run/step telemetry yet"), and the API is behaving exactly as designed — the design just has no upstream. A frontend that ignores `dataQuality` will render nothing useful; one that respects it will render "not instrumented", which is honest.
+Consequence: every agent-statistics response against real traffic carries `dataQuality` with all flags false, `GET /latency` returns a **null series** rather than zeros, and percentiles below the sample floor return `null`. `docs/backend/README.md:243-252` states this accurately ("nothing in `agent-service/` emits run/step telemetry yet"), and the API is behaving exactly as designed — the design just has no upstream. A frontend that ignores `dataQuality` will render nothing useful; one that respects it will render "not instrumented", which is honest.
 
-The Python service *does* still report Blossom usage (`agnet-service/app/services/usage_reporter.py`), so billing consumption is fed. It is only the richer agentic statistics that are unfed.
+The Python service *does* still report Blossom usage (`agent-service/app/services/usage_reporter.py`), so billing consumption is fed. It is only the richer agentic statistics that are unfed.
 
 Note there is also a **catalogue/wire naming mismatch** on that contract, documented at `README:246-249`: the API uses `costInstrumented` where the catalogue says `costIsEstimated`, and `retryInstrumented`, `materialisedCounts`, `streamingRunsIncluded` and `unattributedRunsExcluded` are not emitted at all.
 

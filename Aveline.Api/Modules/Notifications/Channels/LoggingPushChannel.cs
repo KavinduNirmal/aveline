@@ -16,11 +16,15 @@ public sealed class LoggingPushChannel : IPushChannel
         _logger = logger;
     }
 
-    public Task SendAsync(ResolvedRecipient recipient, Notification notification, CancellationToken cancellationToken = default)
+    public Task SendAsync(
+        ResolvedRecipient recipient,
+        Notification notification,
+        Guid inboxItemId,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
-            "Push notification (demo delivery, provider not configured). User={UserId} Type={Type} Title={Title}",
-            recipient.UserId, notification.Type, notification.Title);
+            "Push notification (demo delivery, provider not configured). User={UserId} Type={Type} Title={Title} InboxItemId={InboxItemId}",
+            recipient.UserId, notification.Type, notification.Title, inboxItemId);
         return Task.CompletedTask;
     }
 }

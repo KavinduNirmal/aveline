@@ -12,7 +12,7 @@ void main() {
     test('lists every destination the side panel shows, in order', () {
       expect(
         staffScreens().map((screen) => screen.id),
-        ['home', 'customers', 'catalog', 'conversations', 'notifications', 'settings'],
+        ['home', 'customers', 'catalog', 'orders', 'conversations', 'notifications', 'settings'],
       );
     });
 
@@ -22,6 +22,7 @@ void main() {
       expect(screens['home']!.route, AppRoutes.home);
       expect(screens['customers']!.route, AppRoutes.customers);
       expect(screens['catalog']!.route, AppRoutes.catalog);
+      expect(screens['orders']!.route, AppRoutes.orders);
       expect(screens['conversations']!.route, AppRoutes.conversations);
       expect(screens['notifications']!.route, AppRoutes.notifications);
       expect(screens['settings']!.route, AppRoutes.settings);

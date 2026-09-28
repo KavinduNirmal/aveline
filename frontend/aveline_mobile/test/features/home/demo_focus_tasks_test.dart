@@ -2,8 +2,11 @@ import 'package:aveline_mobile/features/home/data/demo_focus_tasks.dart';
 import 'package:aveline_mobile/features/home/domain/focus_task.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// `demoFocusTasks` is a **test fixture**, not production data: Home reads the
+/// focus feed from the API now. These tests pin the shapes the fixtures must
+/// keep so a test that injects them stays honest.
 void main() {
-  group('demoFocusTasks', () {
+  group('demoFocusTasks (fixture contract)', () {
     test('gives owners and the floor different work', () {
       final owner = demoFocusTasks(isOwner: true);
       final staff = demoFocusTasks(isOwner: false);

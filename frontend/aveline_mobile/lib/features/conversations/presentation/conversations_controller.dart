@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/conversation_repository.dart';
@@ -22,8 +24,14 @@ class ConversationsController extends ChangeNotifier {
   List<Conversation> _items = const [];
   String _query = '';
 
+  /// The page last read, and how many threads the whole inbox holds.
+  int _page = 0;
+  int _total = 0;
+
   bool _isLoading = false;
+  bool _isLoadingMore = false;
   bool _hasLoadedOnce = false;
+  bool _isWaitingForOrg = false;
   String? _errorMessage;
   bool _disposed = false;
 
@@ -50,13 +58,6 @@ class ConversationsController extends ChangeNotifier {
   /// The inbox as the screen draws it: the Salon, the clients, then the notices.
   List<Conversation> get items => [?aveline, ...clients, ...announcements];
 
-  /// How many unread messages the whole inbox holds, on screen or not.
-  ///
-  /// Counted over everything rather than over what the search left, because the
-  /// number is about the inbox rather than about the narrowing.
-  int get unreadTotal =>
-      _items.fold(0, (total, conversation) => total + conversation.unreadCount);
-
   /// The search in force, trimmed. Empty when the inbox is not narrowed.
   String get query => _query;
 
@@ -66,6 +67,26 @@ class ConversationsController extends ChangeNotifier {
   bool get hasMatches => clients.isNotEmpty || announcements.isNotEmpty;
 
   bool get isLoading => _isLoading;
+
+  /// Whether a further page is in flight.
+  bool get isLoadingMore => _isLoadingMore;
+
+  /// How many threads the server says the whole inbox holds.
+  ///
+  /// Not the same as `items.length`: the screen prints how many are loaded
+  /// against this so the footer cannot claim the list is complete while it is
+  /// not.
+  int get total => _total;
+
+  /// Whether the server holds more threads than have been loaded.
+  bool get hasMore => _items.length < _total;
+
+  /// Whether the read is waiting for the organization context to arrive.
+  ///
+  /// A null org id is a "not yet", not a failure: the canonical id comes from
+  /// `GET /orgs/my` after the shell mounts. The error state is reserved for the
+  /// server's own refusal, so the two must not read the same on screen.
+  bool get isWaitingForOrg => _isWaitingForOrg;
 
   /// Whether a read has finished, successfully or not.
   bool get hasLoadedOnce => _hasLoadedOnce;
@@ -86,18 +107,30 @@ class ConversationsController extends ChangeNotifier {
   Future<void> load() async {
     final id = ++_requestId;
     _isLoading = true;
+    _isLoadingMore = false;
     _hasLoadedOnce = false;
+    _isWaitingForOrg = false;
     _errorMessage = null;
     _items = const [];
+    _page = 0;
+    _total = 0;
     _notify();
 
     try {
-      final conversations = await _repository.fetchConversations();
+      final page = await _repository.fetchConversations();
       if (id != _requestId) {
         return;
       }
-      _items = List.unmodifiable(conversations);
+      _items = List.unmodifiable(page.items);
+      _page = page.page;
+      _total = page.total;
       _hasLoadedOnce = true;
+    } on OrgContextUnavailable {
+      if (id != _requestId) {
+        return;
+      }
+      _isWaitingForOrg = true;
+      _errorMessage = null;
     } catch (error) {
       if (id != _requestId) {
         return;
@@ -114,18 +147,31 @@ class ConversationsController extends ChangeNotifier {
 
   /// Re-reads the inbox, leaving what is on screen standing until the newer one
   /// lands: a pull that blanked the column would read as a failure.
+  ///
+  /// A refresh restarts from the first page: the whole inbox may have changed,
+  /// and keeping accumulated pages would leave stale rows above fresh ones.
   Future<void> refresh() async {
     if (!_hasLoadedOnce) {
       return load();
     }
 
     final id = ++_requestId;
+    _isLoadingMore = false;
     try {
-      final conversations = await _repository.fetchConversations();
+      final page = await _repository.fetchConversations();
       if (id != _requestId) {
         return;
       }
-      _items = List.unmodifiable(conversations);
+      _items = List.unmodifiable(page.items);
+      _page = page.page;
+      _total = page.total;
+      _isWaitingForOrg = false;
+      _errorMessage = null;
+    } on OrgContextUnavailable {
+      if (id != _requestId) {
+        return;
+      }
+      _isWaitingForOrg = true;
       _errorMessage = null;
     } catch (error) {
       if (id != _requestId) {
@@ -139,6 +185,45 @@ class ConversationsController extends ChangeNotifier {
     }
   }
 
+  /// Loads the next page and appends it.
+  ///
+  /// A thread already held is not appended twice, so a row cannot appear on two
+  /// pages - which the server's id tiebreak makes unlikely but the client should
+  /// not depend on.
+  Future<void> loadMore() async {
+    if (_isLoadingMore || !_hasLoadedOnce || !hasMore) {
+      return;
+    }
+
+    _isLoadingMore = true;
+    final id = _requestId;
+    _notify();
+
+    try {
+      final page = await _repository.fetchConversations(page: _page + 1);
+      if (id != _requestId) {
+        return;
+      }
+      final seen = _items.map((conversation) => conversation.id).toSet();
+      _items = List.unmodifiable([
+        ..._items,
+        ...page.items.where((conversation) => seen.add(conversation.id)),
+      ]);
+      _page = page.page;
+      _total = page.total;
+    } catch (error) {
+      if (id != _requestId) {
+        return;
+      }
+      _errorMessage = _describe(error);
+    } finally {
+      if (id == _requestId) {
+        _isLoadingMore = false;
+        _notify();
+      }
+    }
+  }
+
   /// Narrows the inbox to the threads matching [query].
   void search(String query) {
     final next = query.trim();
@@ -146,6 +231,24 @@ class ConversationsController extends ChangeNotifier {
       return;
     }
     _query = next;
+    _notify();
+  }
+
+  /// Applies an inbox tile that arrived over the hub.
+  ///
+  /// A thread already on screen is replaced in place, so its preview, time and markers move
+  /// without a re-read. A thread the list does not hold is not invented: the first page is
+  /// re-read, so a brand-new thread lands in the position the server gives it.
+  void applyChanged(Conversation conversation) {
+    final index = _items.indexWhere((item) => item.id == conversation.id);
+    if (index < 0) {
+      unawaited(refresh());
+      return;
+    }
+
+    final next = [..._items];
+    next[index] = conversation;
+    _items = List.unmodifiable(next);
     _notify();
   }
 

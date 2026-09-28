@@ -13,6 +13,14 @@ public interface IOrganizationRepository
     Task<Organization> UpdateAsync(Organization organization, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// The organization's current subscription row, or <c>null</c> when plan selection has not yet
+    /// provisioned one. Read-only: onboarding reports the price and status the plan selection
+    /// recorded (plan §9.1 F1); the Billing module owns every write to the table.
+    /// </summary>
+    Task<OrganizationSubscription?> GetSubscriptionAsync(
+        Guid organizationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Cross-tenant organization search for the Aveline-team admin route (FR-4.8).
     /// Organizations are deliberately not tenant-scoped here: the caller's
     /// <c>admin:orgs:read</c> permission is the scope.

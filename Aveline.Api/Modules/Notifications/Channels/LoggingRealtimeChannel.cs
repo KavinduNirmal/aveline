@@ -16,11 +16,16 @@ public sealed class LoggingRealtimeChannel : IRealtimeChannel
         _logger = logger;
     }
 
-    public Task SendAsync(ResolvedRecipient recipient, Notification notification, CancellationToken cancellationToken = default)
+    public Task SendAsync(
+        ResolvedRecipient recipient,
+        Notification notification,
+        Guid inboxItemId,
+        int unreadCount,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
-            "Realtime notification (demo delivery). User={UserId} Type={Type} Title={Title}",
-            recipient.UserId, notification.Type, notification.Title);
+            "Realtime notification (demo delivery). User={UserId} Type={Type} Title={Title} InboxItemId={InboxItemId} UnreadCount={UnreadCount}",
+            recipient.UserId, notification.Type, notification.Title, inboxItemId, unreadCount);
         return Task.CompletedTask;
     }
 }

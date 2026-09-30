@@ -73,6 +73,7 @@ in-memory provider cannot exercise the vector column.
 - [ADR-002](ADR-002-agent-framework.md) — LangGraph agent layer consuming these endpoints.
 - [ADR-003](ADR-003-database-strategy.md) — PostgreSQL + pgvector single datastore.
 - [ADR-009](ADR-009-internal-service-authentication.md) — internal endpoints use `X-Internal-Token`.
+- [ADR-025](ADR-025-handbook-knowledge-base.md) — the hybrid (dense + lexical, RRF-fused) retrieval pattern customer memory now adopts.
 
 ## Follow-up (Slice 1 finalization, Issues #163–#167)
 
@@ -89,4 +90,92 @@ and `create_chat_model` was dead code):
 - **Agent outputs** are validated against the `MemoryAgentOutput` Pydantic schema in the running
   path (`app/schemas/customer_memory.py`), so contract drift between the graph's dicts and the
   typed schema fails loudly instead of silently.
+
+## Implementation note: customer memory adopts the hybrid pattern (ADR-025)
+
+Customer-memory search was the last dense-only retrieval in the system. It now mirrors
+[ADR-025](ADR-025-handbook-knowledge-base.md): one statement runs a pgvector cosine leg and a
+PostgreSQL full-text leg over the same tenant + customer + live + unexpired filter, and fuses them
+with Reciprocal Rank Fusion.
+
+**Why adopt it here.** Parity is not the reason by itself - the reason is that the two stores answer
+different query shapes and memory was only serving one of them. Memory queries are frequently exact
+tokens: a garment or product name a customer mentioned ("Kanjeevaram", "Banarasi silk", "bridal
+lehenga"), a label-like phrase, or a term a paraphrase-trained embedding ranks mid-pack. The
+handbook's eval showed the lexical leg is what carries those (competitive with the dense leg on
+exact queries, and collapsed on paraphrases), and the fused result was never worse than either leg.
+
+- **The store is small and customer-scoped, and that is the point.** The lexical leg is not earning
+  its place on corpus size (the handbook's corpus needed `websearch_to_tsquery` precision across
+  many sources). Its recall is bounded to one customer's live notes, so the candidate set is tiny
+  and the GIN lookup is cheap; what the leg buys is exact-token *precision* on the vocabulary the
+  customer actually used. A dense leg alone blurs a specific garment name into a general "elegant
+  clothing" region, which a boutique experiences as "it forgot the saree I told it about".
+- **RRF is rank-based for the same reason it is in the handbook.** Cosine similarity and
+  `ts_rank_cd` are not on a comparable scale, so a hit found by only one leg must still place.
+
+**What was added (migration `AddCustomerMemorySearchVector`).** A generated `SearchVector tsvector`
+weighted `Content` `'A'` then `Category` `'B'`, plus a GIN index. Like the `embedding vector(1536)`
+column, `SearchVector` is **not** part of the EF model - EF cannot map `tsvector`, and mapping it
+would break the in-memory provider for the whole suite - so it is created by raw SQL and searched
+through raw SQL in `CustomerMemoryRepository`. The GIN index is **partial on `DeletedAt IS NULL`**:
+every search leg filters live rows, and rows are only ever soft-deleted except by a GDPR erase, so
+indexing withdrawn notes would be dead weight (and the predicate matches the existing partial unique
+index's definition of "present").
+
+**Eval surface.** `MemorySearchRequest.Mode` is `hybrid` (default) | `lexical` | `vector`, and each
+hit carries `VectorRank`, `LexicalRank` and the fused `Score` alongside the dense `Similarity`. An
+unknown mode is refused (`400`) rather than defaulted: a misspelled single-leg request silently
+answered by fusion would be read as a leg measurement. `MinSimilarity` continues to bound the
+**dense leg only** - a lexical hit has no cosine to floor, and a post-fusion floor would delete
+exactly the lexical-only hits the hybrid exists to surface. A failed query embedding degrades the
+search to the lexical leg, as it does for the handbook, with `VectorRank` NULL so the degradation is
+visible on the wire.
+
+## Implementation note: model-driven fact extraction (the "nitbits")
+
+**Why deterministic-only extraction was insufficient.** The rule-based parse recognises exactly
+three shapes in the *current message*: a first-person preference (`"I like/prefer/hate …"`), a dated
+event, and a quoted complaint. A live thread showed the ceiling of that approach. "nothing nylon, or
+spandex, I dont like them, they make my skin itchy" produces a preference whose object is the
+pronoun *them*; no regex can know what *them* is, so the signal is dropped (before the pronoun guard
+it stored the false "prefers them"). "browsing a brown dress seen on Instagram" is an observation
+and matches no shape at all, so it was never stored. Only the wedding was recorded, because a dated
+event is the one shape that matched. The product requirement is that Ava write these small facts
+herself "so she can find it regardless of her context" - a fact retrieval can only satisfy if it was
+written down.
+
+**Decision.** An `extract` node runs between `retrieve` and `persist`, and with a model configured
+reads the small, durable facts out of an inbound message. It is a *task contract* beside the node,
+not a new agent persona: it reuses the memory system prompt through the same `assemble_system_prompt`
+layer the draft and staff-answer calls use, rather than a parallel prompt mechanism. The design
+choices that make the facts trustworthy:
+
+- **The transcript resolves references; it is not a source of facts.** The bounded window is handed
+  over with that label in the prompt. A model given a conversation will summarise it, and a
+  summarised conversation is not a fact about this customer. Each stored fact is one self-contained
+  sentence that starts with the customer's name, so it makes sense with no context beside it - which
+  is what retrieval across conversations requires.
+- **The category vocabulary is closed** (`preference`, `event`, `observation`, `complaint`,
+  `constraint`). A model free to name its own category invents a taxonomy one row at a time, and the
+  at-a-glance table is read by people.
+- **`stated` is the customer's distinction, not the boutique's.** A fact the customer asserted is
+  `IsExplicit=true` and reads "Stated"; what the boutique observed (what they browsed) is `false` and
+  reads "Inferred", so the column keeps meaning something.
+- **The node is best-effort and owns no writes.** No model, a staff query, an empty message, a
+  provider failure or an unparseable reply all yield no facts; `persist` owns every write, so a
+  provider outage costs facts, never a run. Confidence is clamped to the store's 0..1 range, facts
+  are capped per turn, and empty or over-long sentences and unknown categories are dropped on parse.
+- **The regex classes still lead.** Extracted facts are written after them, skipping any whose
+  normalised content a deterministic class already wrote this turn (`ContentKey` would refuse the
+  duplicate anyway). An extracted preference carrying a key/value is also mirrored into
+  `Customer_Preferences`, so the brief's summary cannot say "nothing recorded" while the note sits
+  in the store.
+
+**Consequences.** An inbound turn now makes up to two model calls, so the run's reported token usage
+is their **sum** (ADR-010 reports per run, not per call). The offline and CI path is unchanged: with
+no model there is no extraction call and the deterministic writes are byte-identical. The model can
+still be wrong; the closed vocabulary, the caps, the reference-resolution framing, the explicit
+"never invent" constraint and the provenance fields bound that risk, and a wrong model fact is a
+normal, correctable memory row rather than a schema failure.
 

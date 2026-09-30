@@ -7,10 +7,13 @@ explicit preference extraction.
 """
 
 
+import json
+
 import httpx
 
 from app.agents.customer_memory.graph import build_memory_graph
 from app.agents.customer_memory.parsing import parse_message
+from app.events.block_builders import build_ava_blocks
 
 
 class FakeRegistry:
@@ -18,6 +21,7 @@ class FakeRegistry:
 
     def __init__(self) -> None:
         self.saved_memories: list[dict] = []
+        self.saved_preferences: list[dict] = []
         self.recorded_interactions: list[tuple[str, str, str, str, str | None]] = []
         self.added_events: list[tuple[str, str, str, str | None]] = []
         self.consent_status = "granted"
@@ -83,6 +87,21 @@ class FakeRegistry:
             }
         )
         return {"id": f"mem-{len(self.saved_memories)}"}
+
+    async def save_customer_preference(
+        self, org_id, customer_id, key, value, source=None, is_explicit=None, confidence=None
+    ):
+        self.saved_preferences.append(
+            {
+                "customer_id": customer_id,
+                "key": key,
+                "value": value,
+                "source": source,
+                "is_explicit": is_explicit,
+                "confidence": confidence,
+            }
+        )
+        return {"id": f"pref-{len(self.saved_preferences)}"}
 
     async def record_customer_interaction(
         self, org_id, customer_id, channel, direction, message_content, parsed_intent_json=None
@@ -300,8 +319,11 @@ async def test_llm_produces_draft_and_usage_when_injected():
 
     assert result["status"] == "success"
     assert result["output"]["draft_response"] == "Ava LLM draft."
-    # Token usage captured from the LLM response (surfaced on state, not the schema output).
-    assert result["usage"] == {"input_tokens": 12, "output_tokens": 6}
+    # Token usage captured from the LLM responses (surfaced on state, not the schema output). An
+    # inbound turn now makes two calls - fact extraction, then the draft - and ADR-010 reports one
+    # figure per run, so the two are summed rather than the last one winning. This fake answers both
+    # calls with the same reply, so each contributes its 12/6.
+    assert result["usage"] == {"input_tokens": 24, "output_tokens": 12}
 
 
 async def test_llm_usage_surfaces_the_cached_token_direction():
@@ -311,8 +333,9 @@ async def test_llm_usage_surfaces_the_cached_token_direction():
     graph = build_memory_graph(registry, llm=llm)
     result = await graph.ainvoke(await _llm_state())
 
-    assert result["usage"]["cached_tokens"] == 64
-    assert result["usage"]["input_tokens"] == 12
+    # Both calls (extraction + draft) report the cached direction, so the run's sum carries 128.
+    assert result["usage"]["cached_tokens"] == 128
+    assert result["usage"]["input_tokens"] == 24
 
 
 async def test_llm_failure_falls_back_to_template():
@@ -992,9 +1015,15 @@ class _CapturingChatModel:
         self.calls.append(messages)
         return _Msg("Ava LLM draft.")
 
-    def prompt_text(self) -> str:
+    def prompt_text(self, index: int = -1) -> str:
+        """One call's rendered prompt (the newest by default).
+
+        The graph makes up to two calls per inbound turn now - fact extraction, then the draft - so
+        "the prompt" is ambiguous and the caller has to say which call it means. The default is the
+        newest one, which is the draft.
+        """
         return "\n".join(
-            getattr(message, "content", None) or str(message) for message in self.calls[0]
+            getattr(message, "content", None) or str(message) for message in self.calls[index]
         )
 
 
@@ -1149,3 +1178,655 @@ async def test_the_staff_answer_counts_the_notes_it_is_about_to_show():
 
     assert result["output"]["interaction_brief"] == "Nadia (returning). 2 notes are on file."
     assert len(result["output"]["memories_on_file"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# A staff instruction to record a note
+# ---------------------------------------------------------------------------
+#
+# The headline defect: staff typed "Please add a note for this customer: He prefers green tea over
+# coffee" and got the ordinary customer brief, with no memory written and no explanation. There was
+# no path from a staff instruction to a memory at all.
+
+NOTE_MESSAGE = "Please add a note for this customer: He prefers green tea over coffee"
+
+
+class _FailingNoteRegistry(_UpdateRegistry):
+    """A registry whose memory store is down, to prove a failed note write is reported."""
+
+    async def save_customer_memory(self, *args, **kwargs):
+        raise RuntimeError("memory store unavailable")
+
+
+async def test_a_staff_note_instruction_is_stored_and_confirmed():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=NOTE_MESSAGE)
+
+    # The customer's words reach the store as the staff member wrote them, with staff provenance.
+    assert registry.saved_memories == [
+        {
+            "customer_id": "cust-kasha",
+            "content": "He prefers green tea over coffee",
+            "category": "note",
+            "source": "staff",
+            "is_explicit": True,
+            "confidence": 1.0,
+        }
+    ]
+    # A note is not a rename: no identity field was touched.
+    assert registry.updates == []
+
+    brief = result["output"]["interaction_brief"]
+    assert brief == "Noted for this customer: He prefers green tea over coffee."
+    assert "Nothing was changed" not in brief
+    # Still no customer-facing draft / Suggestion: this was an instruction, not a customer message.
+    assert result["output"]["draft_response"] is None
+    assert result["output"]["action_required"] is None
+
+
+async def test_a_note_keeps_its_own_punctuation_without_doubling_it():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message="add a note: she prefers green tea.")
+
+    assert [m["content"] for m in registry.saved_memories] == ["she prefers green tea."]
+    assert result["output"]["interaction_brief"] == "Noted for this customer: she prefers green tea."
+
+
+async def test_a_note_instruction_without_a_customer_is_refused_not_guessed():
+    """The bound-customer rule holds for notes exactly as it does for identity updates."""
+    from app.agents.customer_memory.nodes import CustomerMemoryAgent
+
+    registry = _UpdateRegistry()
+    agent = CustomerMemoryAgent(registry)
+
+    result = await agent.apply_staff_update(
+        {
+            "org_id": "org-1",
+            "customer_id": None,
+            "message": NOTE_MESSAGE,
+            "staff_query": True,
+        }
+    )
+
+    assert "could not tell which customer" in result["customer_update_error"]
+    assert registry.saved_memories == []
+
+
+async def test_an_inbound_customer_message_never_records_a_staff_note():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(registry, message=NOTE_MESSAGE, staff_query=False)
+
+    assert registry.saved_memories == []
+    # The customer's own message still gets a customer-facing draft.
+    assert result["output"]["draft_response"] is not None
+
+
+async def test_a_failed_note_write_is_reported_and_never_silently_dropped():
+    registry = _FailingNoteRegistry()
+
+    result = await _run_update(registry, message=NOTE_MESSAGE)
+
+    brief = result["output"]["interaction_brief"]
+    assert "nothing was noted" in brief.lower()
+    assert "Noted for this customer" not in brief
+
+
+async def test_a_note_and_an_identity_change_in_one_instruction_both_apply():
+    registry = _UpdateRegistry()
+
+    result = await _run_update(
+        registry,
+        message=(
+            "Please update this customer with the name Kasha Vivian Perera and number 0771234567 "
+            "and add a note: she prefers green tea"
+        ),
+    )
+
+    assert registry.updates == [("org-1", "cust-kasha", "Kasha Vivian Perera", "0771234567")]
+    assert [m["content"] for m in registry.saved_memories] == ["she prefers green tea"]
+    brief = result["output"]["interaction_brief"]
+    assert "Kasha Vivian Perera" in brief
+    assert "Noted for this customer: she prefers green tea." in brief
+
+
+# ---------------------------------------------------------------------------
+# The customer description leads the brief
+# ---------------------------------------------------------------------------
+#
+# The backend interaction brief carries `description`, the customer-level prose the brief exists to
+# surface. The agent fetched it and never read it, so a staff answer led with a mechanical fact dump.
+
+
+BRIEF_WITH_DESCRIPTION = {
+    "customerName": "Sarah Perera",
+    "status": "vip",
+    "description": "Sarah is a regular who loves emerald silk.",
+    "preferenceSummary": None,
+    "upcomingEvents": "wedding on 2026-12-01",
+    "tags": ["vip"],
+}
+
+
+async def test_the_inbound_brief_leads_with_the_customer_description():
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return dict(BRIEF_WITH_DESCRIPTION)
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["output"]["interaction_brief"] == (
+        "Sarah is a regular who loves emerald silk. | "
+        "Sarah Perera (vip) | Context: Prefers emerald silk | "
+        "Upcoming: wedding on 2026-12-01 | Tags: vip"
+    )
+
+
+async def test_the_inbound_brief_is_unchanged_without_a_description():
+    """No description means exactly the brief the agent produced before the field was read."""
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(await _llm_state())
+
+    assert result["output"]["interaction_brief"] == (
+        "Sarah Perera (vip) | Context: Prefers emerald silk | "
+        "Upcoming: wedding on 2026-12-01 | Tags: vip"
+    )
+
+
+async def test_a_note_is_refused_for_a_customer_who_revoked_consent():
+    """Consent is a property of the customer, not of who is asking.
+
+    ``apply_staff_update`` runs *before* ``check_consent`` and short-circuits the run when it
+    answers, so without its own guard a staff instruction would store a note - or apply a rename -
+    for a customer who had revoked. ``persist`` already refuses in that case, and the documented
+    contract is that revocation means nothing is stored.
+    """
+    registry = _UpdateRegistry()
+    registry.consent_status = "revoked"
+
+    result = await _run_update(registry, message=NOTE_MESSAGE)
+
+    assert registry.saved_memories == []
+    assert registry.updates == []
+
+    brief = result["output"]["interaction_brief"]
+    assert "revoked consent" in brief
+    assert "Noted for this customer" not in brief
+
+
+async def test_an_update_is_refused_when_consent_cannot_be_read():
+    """A privacy control that cannot read its own state must not write (fail closed)."""
+    registry = _UpdateRegistry()
+    registry.consent_error = RuntimeError("consent backend unavailable")
+
+    result = await _run_update(registry, message=UPDATE_MESSAGE)
+
+    assert registry.updates == []
+    assert registry.saved_memories == []
+    assert "could not check" in result["output"]["interaction_brief"]
+
+
+async def test_the_staff_answer_leads_with_the_customer_description():
+    registry = FakeRegistry()
+
+    async def brief(org_id, customer_id):
+        return {
+            "customerName": "Sarah Perera",
+            "status": "returning",
+            "description": "Sarah is a regular who loves emerald silk.",
+            "preferenceSummary": "colour: emerald",
+            "upcomingEvents": None,
+            "tags": [],
+        }
+
+    registry.generate_interaction_brief = brief
+    graph = build_memory_graph(registry)
+
+    result = await graph.ainvoke(
+        {
+            "org_id": "org-1",
+            "customer_id": "cust-sarah",
+            "customer_name": "Sarah Perera",
+            "message": "what do we know about @sarah?",
+            "intent_type": "general_inquiry",
+            "channel": "whatsapp",
+            "direction": None,
+            "staff_query": True,
+        }
+    )
+
+    assert result["output"]["interaction_brief"] == (
+        "Sarah is a regular who loves emerald silk. "
+        "Sarah Perera (returning) - preferences: colour: emerald. One note is on file."
+    )
+
+
+# ---------------------------------------------------------------------------
+# A staff query is answered by the model, with the template as the offline fallback
+# ---------------------------------------------------------------------------
+
+
+STAFF_STATE = {
+    "org_id": "org-1",
+    "customer_id": "cust-sarah",
+    "customer_name": "Sarah Perera",
+    "message": "what do we have on file for her?",
+    "intent_type": "general_inquiry",
+    "channel": "whatsapp",
+    "direction": None,
+    "staff_query": True,
+}
+
+
+async def test_a_staff_query_is_answered_by_the_model_when_one_is_configured():
+    registry = FakeRegistry()
+    llm = FakeChatModel(draft="Sarah has one note on file: she prefers emerald silk.")
+    graph = build_memory_graph(registry, llm=llm)
+
+    result = await graph.ainvoke(dict(STAFF_STATE))
+
+    assert result["status"] == "success"
+    out = result["output"]
+    assert out["interaction_brief"] == "Sarah has one note on file: she prefers emerald silk."
+    # Token usage reaches the same state path the customer draft reports on (ADR-010).
+    assert result["usage"] == {"input_tokens": 12, "output_tokens": 6}
+    # Still NO customer-facing draft / Suggestion: the staff/customer separation is deliberate.
+    assert out["draft_response"] is None
+    assert out["action_required"] is None
+
+
+async def test_a_staff_query_keeps_the_grounded_template_without_an_llm():
+    """The offline guarantee: no model configured means today's template answer, byte for byte."""
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry)  # llm defaults to None
+
+    result = await graph.ainvoke(dict(STAFF_STATE))
+
+    out = result["output"]
+    assert out["interaction_brief"] == (
+        "Sarah Perera (vip) - upcoming events: wedding on 2026-12-01; tags: vip. "
+        "One note is on file."
+    )
+    assert out["draft_response"] is None
+    assert result.get("usage") is None
+
+
+async def test_a_staff_query_falls_back_to_the_template_when_the_provider_fails():
+    registry = FakeRegistry()
+    graph = build_memory_graph(registry, llm=FakeChatModel(fail=True))
+
+    result = await graph.ainvoke(dict(STAFF_STATE))
+
+    out = result["output"]
+    assert out["interaction_brief"] == (
+        "Sarah Perera (vip) - upcoming events: wedding on 2026-12-01; tags: vip. "
+        "One note is on file."
+    )
+    assert out["draft_response"] is None
+    assert result.get("usage") is None
+
+
+# ---------------------------------------------------------------------------
+# Model-driven fact extraction - the "nitbits"
+# ---------------------------------------------------------------------------
+#
+# The deterministic parse covers three shapes and only three: a first-person preference, a dated
+# event, and a quoted complaint. Everything else a customer says that is worth keeping matched no
+# shape and was never stored at all. The live thread behind this feature: "nothing nylon, or
+# spandex, I dont like them, they make my skin itchy" (the object is the pronoun "them", so the
+# preference signal is dropped) and "browsing a brown dress seen on Instagram" (an observation, no
+# shape at all). A model reading the message can resolve the reference and record the fact; the
+# transcript is handed to it for that resolution only, because retrieval must find a stored fact
+# regardless of which conversation is asking.
+
+
+class ScriptedChatModel:
+    """A chat-model double that answers each call with the next scripted reply.
+
+    The graph makes up to two calls per inbound turn (fact extraction, then the draft), and one fixed
+    reply cannot exercise both: the extraction would be handed draft prose and the draft JSON.
+    Scripting by call keeps each test's intent - and its token arithmetic - visible.
+    """
+
+    def __init__(self, replies, *, fail=False, usages=None):
+        self.replies = list(replies)
+        self.fail = fail
+        self.usages = list(usages) if usages is not None else [(12, 6)] * len(self.replies)
+        self.calls: list[list] = []
+
+    async def ainvoke(self, messages):
+        index = len(self.calls)
+        self.calls.append(messages)
+        if self.fail:
+            raise RuntimeError("provider unavailable")
+        reply = self.replies[min(index, len(self.replies) - 1)]
+        input_tokens, output_tokens = self.usages[min(index, len(self.usages) - 1)]
+        return _Msg(reply, input_tokens=input_tokens, output_tokens=output_tokens)
+
+    def prompt_text(self, index: int = -1) -> str:
+        """One call's rendered prompt (the newest by default)."""
+        return "\n".join(
+            getattr(message, "content", None) or str(message) for message in self.calls[index]
+        )
+
+
+def _facts_reply(*facts) -> str:
+    """A model extraction reply carrying exactly ``facts``."""
+    return json.dumps({"facts": list(facts)})
+
+
+def _fact(content, category="preference", stated=True, confidence=0.9, **extra):
+    return {"content": content, "category": category, "stated": stated, "confidence": confidence, **extra}
+
+
+NITBITS_MESSAGE = "nothing nylon, or spandex, I dont like them"
+
+
+async def _run_extraction(registry, llm, *, message=NITBITS_MESSAGE, staff_query=False, **state_extra):
+    graph = build_memory_graph(registry, llm=llm)
+    state = {
+        "org_id": "org-1",
+        "customer_id": "cust-sarah",
+        "customer_name": "Sarah Perera",
+        "message": message,
+        "intent_type": "general_inquiry",
+        "channel": "whatsapp",
+        "direction": None if staff_query else "inbound",
+        "staff_query": staff_query,
+    }
+    state.update(state_extra)
+    return await graph.ainvoke(state)
+
+
+def test_the_memory_state_declares_the_extraction_outputs():
+    """LangGraph drops undeclared keys silently, so this is guarded like the context transport.
+
+    Without the declaration the extract node would run, be paid for, and its facts would reach
+    neither `persist` (so nothing is stored) nor `compose_output` (so the tokens vanish from the
+    usage report) - a failure no mocked-sub-graph test can see.
+    """
+    from app.agents.customer_memory.state import MemoryAgentState
+
+    assert "_extracted_facts" in MemoryAgentState.__annotations__
+    assert "_extraction_usage" in MemoryAgentState.__annotations__
+
+
+async def test_extraction_resolves_a_pronoun_into_self_contained_facts():
+    """The reported case: "I dont like them" - the regex cannot know what "them" is, the model can."""
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(
+        [
+            _facts_reply(
+                _fact("Sarah Perera dislikes nylon"),
+                _fact("Sarah Perera dislikes spandex"),
+            ),
+            "Hi Sarah! Noted.",
+        ]
+    )
+
+    result = await _run_extraction(registry, llm, message=NITBITS_MESSAGE)
+
+    contents = [m["content"] for m in registry.saved_memories]
+    assert contents == ["Sarah Perera dislikes nylon", "Sarah Perera dislikes spandex"]
+    # The fact stands alone: nothing stored refers to "them", so another conversation can retrieve it.
+    assert "them" not in " ".join(contents).lower()
+    assert result["status"] == "success"
+
+
+async def test_an_observation_is_inferred_and_a_stated_fact_is_stated():
+    """`stated` decides the Known column, so an observation is not dressed as the customer's words."""
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(
+        [
+            _facts_reply(
+                _fact(
+                    "Sarah Perera browsed a brown dress seen on Instagram",
+                    category="observation",
+                    stated=False,
+                    confidence=0.6,
+                ),
+                _fact("Sarah Perera prefers cotton", category="preference", stated=True),
+            ),
+            "Hi Sarah!",
+        ]
+    )
+
+    result = await _run_extraction(registry, llm)
+
+    table = next(b for b in build_ava_blocks(result["output"]) if b["type"] == "at_a_glance")
+    assert [
+        "Observation",
+        "Sarah Perera browsed a brown dress seen on Instagram",
+        "Inferred",
+    ] in table["rows"]
+    assert ["Preference", "Sarah Perera prefers cotton", "Stated"] in table["rows"]
+
+
+async def test_no_llm_performs_no_extraction_and_writes_only_the_deterministic_memories(monkeypatch):
+    """The offline guarantee (I3): keyless/CI runs call no extraction and write exactly as before."""
+    built_prompts: list[dict] = []
+    monkeypatch.setattr(
+        "app.agents.customer_memory.nodes.render_context_block",
+        lambda **kwargs: built_prompts.append(kwargs) or "",
+    )
+
+    registry = FakeRegistry()
+    result = await _run(registry)  # llm defaults to None
+
+    # No prompt is assembled for extraction (or for the draft) without a model, so no call is made.
+    assert built_prompts == []
+    assert registry.saved_memories == [
+        {
+            "customer_id": "cust-sarah",
+            "content": "Sarah Perera has a wedding",
+            "category": "event",
+            "source": "conversation",
+            "is_explicit": True,
+            "confidence": 0.9,
+        }
+    ]
+    assert result.get("_extracted_facts") in (None, [])
+    assert result.get("_extraction_usage") is None
+
+
+async def test_extraction_never_fails_the_run_on_a_provider_failure_or_a_prose_reply():
+    failed = FakeRegistry()
+    result = await _run_extraction(failed, ScriptedChatModel([_facts_reply()], fail=True))
+
+    assert result["status"] == "success"
+    assert failed.saved_memories == []
+    # The deterministic draft template still answered.
+    assert result["output"]["draft_response"].startswith("Hi Sarah Perera!")
+
+    prose = FakeRegistry()
+    result = await _run_extraction(
+        prose, ScriptedChatModel(["I could not find any facts to record.", "Hi Sarah!"])
+    )
+
+    assert result["status"] == "success"
+    assert prose.saved_memories == []
+
+
+def test_the_fact_parser_drops_anything_malformed():
+    from app.agents.customer_memory.nodes import parse_extracted_facts
+
+    assert parse_extracted_facts("not json at all") == []
+    assert parse_extracted_facts(None) == []
+    assert parse_extracted_facts('{"facts": "not a list"}') == []
+    assert parse_extracted_facts(json.dumps({"facts": ["not an object"]})) == []
+    # An unknown category is dropped rather than stored under a taxonomy a model invented.
+    assert parse_extracted_facts(_facts_reply(_fact("A", category="style_note"))) == []
+    # Empty and over-long sentences are not facts.
+    assert parse_extracted_facts(_facts_reply(_fact(""))) == []
+    assert parse_extracted_facts(_facts_reply(_fact("x" * 400))) == []
+    # A non-boolean `stated` is not a statement; it takes the honest default.
+    parsed = parse_extracted_facts(_facts_reply(_fact("A", stated="yes")))
+    assert parsed[0]["stated"] is False
+
+
+def test_the_fact_parser_keeps_only_the_closed_category_vocabulary():
+    from app.agents.customer_memory.nodes import parse_extracted_facts
+
+    for category in ("preference", "event", "observation", "complaint", "constraint"):
+        parsed = parse_extracted_facts(_facts_reply(_fact("A", category=category)))
+        assert parsed[0]["category"] == category
+    # Category matching is case-insensitive, because a model capitalising it is not an error.
+    assert parse_extracted_facts(_facts_reply(_fact("A", category="Preference")))[0]["category"] == (
+        "preference"
+    )
+
+
+def test_the_fact_parser_clamps_confidence_and_caps_the_turn():
+    from app.agents.customer_memory.nodes import MAX_EXTRACTED_FACTS, parse_extracted_facts
+
+    high = parse_extracted_facts(_facts_reply(_fact("A", confidence=1.7)))[0]
+    low = parse_extracted_facts(_facts_reply(_fact("A", confidence=-3)))[0]
+    missing = parse_extracted_facts(_facts_reply(_fact("A", confidence="very")))[0]
+    assert high["confidence"] == 1.0
+    assert low["confidence"] == 0.0
+    assert missing["confidence"] == 0.5
+
+    many = _facts_reply(*[_fact(f"fact {index}") for index in range(9)])
+    assert len(parse_extracted_facts(many)) == MAX_EXTRACTED_FACTS
+
+
+def test_the_fact_parser_keeps_a_preference_key_value_pair_and_accepts_a_code_fence():
+    from app.agents.customer_memory.nodes import parse_extracted_facts
+
+    fenced = (
+        "```json\n"
+        + _facts_reply(_fact("Sarah Perera prefers cotton", key="fabric", value="cotton"))
+        + "\n```"
+    )
+
+    parsed = parse_extracted_facts(fenced)
+
+    assert parsed[0]["key"] == "fabric"
+    assert parsed[0]["value"] == "cotton"
+    # A key/value pair is meaningless on another category, so it is not carried there.
+    observation = parse_extracted_facts(
+        _facts_reply(
+            _fact("Sarah Perera browsed a dress", category="observation", key="fabric", value="cotton")
+        )
+    )
+    assert "key" not in observation[0]
+
+
+async def test_a_fact_the_regex_already_wrote_is_not_written_twice():
+    """The model is asked for the same small facts the regexes target, so they will overlap."""
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(
+        [
+            _facts_reply(_fact("Sarah Perera prefers silk sarees")),
+            "Hi Sarah!",
+        ]
+    )
+
+    await _run_extraction(registry, llm, message="I really like silk sarees, please.")
+
+    matching = [
+        m for m in registry.saved_memories if m["content"] == "Sarah Perera prefers silk sarees"
+    ]
+    assert len(matching) == 1
+
+
+async def test_an_extracted_preference_mirrors_into_the_preferences_table():
+    """A note the brief's summary knows nothing about is the disagreement the mirror closes."""
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(
+        [
+            _facts_reply(
+                _fact(
+                    "Sarah Perera prefers cotton",
+                    confidence=0.8,
+                    key="fabric",
+                    value="cotton",
+                )
+            ),
+            "Hi Sarah!",
+        ]
+    )
+
+    result = await _run_extraction(registry, llm)
+
+    assert registry.saved_preferences == [
+        {
+            "customer_id": "cust-sarah",
+            "key": "fabric",
+            "value": "cotton",
+            "source": "conversation",
+            "is_explicit": True,
+            "confidence": 0.8,
+        }
+    ]
+    assert result["output"]["extracted_memories"][0]["confidence"] == 0.8
+
+
+async def test_a_staff_query_performs_no_extraction():
+    """A question about a customer is not a customer message, so there is nothing to extract from."""
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(["Sarah Perera is a vip."])
+
+    result = await _run_extraction(
+        registry, llm, message="what do we know about Sarah?", staff_query=True
+    )
+
+    assert len(llm.calls) == 1, "only the staff answer should have called the model"
+    assert result.get("_extracted_facts") in (None, [])
+    assert registry.saved_memories == []
+
+
+async def test_extraction_and_draft_token_usage_are_summed():
+    """ADR-010 reports one figure per run, and an inbound LLM turn now makes two calls."""
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(
+        [
+            _facts_reply(_fact("Sarah Perera dislikes nylon")),
+            "Hi Sarah!",
+        ],
+        usages=[(10, 4), (12, 6)],
+    )
+
+    result = await _run_extraction(registry, llm)
+
+    assert result["usage"] == {"input_tokens": 22, "output_tokens": 10}
+
+
+async def test_a_single_call_still_reports_only_its_own_usage():
+    registry = FakeRegistry()
+    llm = ScriptedChatModel(["Sarah Perera is a vip."], usages=[(7, 3)])
+
+    result = await _run_extraction(
+        registry, llm, message="what do we know about Sarah?", staff_query=True
+    )
+
+    assert result["usage"] == {"input_tokens": 7, "output_tokens": 3}
+
+
+async def test_the_extraction_prompt_carries_the_name_message_and_a_labelled_transcript():
+    registry = FakeRegistry()
+    llm = ScriptedChatModel([_facts_reply(), "Hi Sarah!"])
+
+    await _run_extraction(
+        registry,
+        llm,
+        message="the pink one",
+        history=[{"authorKind": "Customer", "text": "Any pinkish gowns?"}],
+        thread_summary="She is shopping for a December wedding.",
+        pinned_slots={"budget": "50k"},
+    )
+
+    prompt = llm.prompt_text(index=0)
+    assert "Sarah Perera" in prompt
+    assert "the pink one" in prompt
+    assert "Any pinkish gowns?" in prompt
+    assert "December wedding" in prompt
+    assert "resolve references" in prompt, "the transcript must be labelled as reference-resolution only"

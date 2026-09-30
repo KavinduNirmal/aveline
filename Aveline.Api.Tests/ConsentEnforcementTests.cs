@@ -67,7 +67,8 @@ public class ConsentEnforcementTests
         new CustomerEventRepository(_context),
         _gate,
         new CustomerTagRepository(_context),
-        _embedding);
+        _embedding,
+        NullLogger<CustomerMemoryService>.Instance);
 
     private CustomerInteractionService BuildInteractionService() =>
         new(new CustomerInteractionRepository(_context), _gate);
@@ -81,7 +82,7 @@ public class ConsentEnforcementTests
         var customerId = await SeedCustomerAsync(ConsentStatuses.Revoked);
         _memoryRows.Results =
         [
-            new CustomerMemorySearchResult(Guid.NewGuid(), customerId, "Prefers emerald silk", "preference", "conversation", 0.9m, true, 0.98),
+            new CustomerMemorySearchResult(Guid.NewGuid(), customerId, "Prefers emerald silk", "preference", "conversation", 0.9m, true, 0.98, 1, null, 0.98),
         ];
 
         var results = await BuildMemoryService().SearchAsync(new MemorySearchRequest
@@ -102,7 +103,7 @@ public class ConsentEnforcementTests
         var customerId = await SeedCustomerAsync(ConsentStatuses.Granted);
         _memoryRows.Results =
         [
-            new CustomerMemorySearchResult(Guid.NewGuid(), customerId, "Prefers emerald silk", "preference", "conversation", 0.9m, true, 0.98),
+            new CustomerMemorySearchResult(Guid.NewGuid(), customerId, "Prefers emerald silk", "preference", "conversation", 0.9m, true, 0.98, 1, null, 0.98),
         ];
 
         var results = await BuildMemoryService().SearchAsync(new MemorySearchRequest
@@ -216,10 +217,11 @@ public class ConsentEnforcementTests
             new CustomerEventRepository(_context),
             new FailClosedConsentGate(),
             new CustomerTagRepository(_context),
-            _embedding);
+            _embedding,
+            NullLogger<CustomerMemoryService>.Instance);
         _memoryRows.Results =
         [
-            new CustomerMemorySearchResult(Guid.NewGuid(), Guid.NewGuid(), "Prefers emerald silk", "preference", "conversation", 0.9m, true, 0.98),
+            new CustomerMemorySearchResult(Guid.NewGuid(), Guid.NewGuid(), "Prefers emerald silk", "preference", "conversation", 0.9m, true, 0.98, 1, null, 0.98),
         ];
 
         var results = await service.SearchAsync(new MemorySearchRequest
@@ -256,9 +258,8 @@ public class ConsentEnforcementTests
             Guid orgId, Guid memoryId, float[] embedding, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
 
-        public Task<IReadOnlyList<CustomerMemorySearchResult>> SearchSemanticAsync(
-            Guid orgId, Guid customerId, float[] queryEmbedding, int topK = 5,
-            double minSimilarity = 0.0,
+        public Task<IReadOnlyList<CustomerMemorySearchResult>> SearchAsync(
+            CustomerMemorySearchQuery query,
             CancellationToken cancellationToken = default)
         {
             SearchCalls++;

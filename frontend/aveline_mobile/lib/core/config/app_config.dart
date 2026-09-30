@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// Compile-time configuration read from `--dart-define`.
 class AppConfig {
   const AppConfig({
@@ -20,9 +22,21 @@ class AppConfig {
   /// (`user_role`, `org_role`, `org_id`, `org_slug`).
   final String jwtTemplateName;
 
-  /// Default API base URL: the host machine's local API as seen from an
-  /// Android emulator (`10.0.2.2`).
-  static const String _defaultApiBaseUrl = 'http://10.0.2.2:5091';
+  /// Default API base URL: platform-aware localhost mapping.
+  /// Android emulator uses `10.0.2.2`, while Windows/macOS/Linux/Web/iOS use `localhost`.
+  static String get defaultApiBaseUrl {
+    if (kIsWeb) return 'http://localhost:5091';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return 'http://10.0.2.2:5091';
+      case TargetPlatform.iOS:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+      case TargetPlatform.fuchsia:
+        return 'http://localhost:5091';
+    }
+  }
 
   static const String _defaultJwtTemplateName = 'jwt-aveline-v1';
 
@@ -55,12 +69,11 @@ class AppConfig {
       );
     }
 
+    final envApiUrl = const String.fromEnvironment('API_BASE_URL');
+
     return AppConfig(
       clerkPublishableKey: clerkPublishableKey,
-      apiBaseUrl: const String.fromEnvironment(
-        'API_BASE_URL',
-        defaultValue: _defaultApiBaseUrl,
-      ),
+      apiBaseUrl: envApiUrl.isNotEmpty ? envApiUrl : defaultApiBaseUrl,
       jwtTemplateName: const String.fromEnvironment(
         'JWT_TEMPLATE_NAME',
         defaultValue: _defaultJwtTemplateName,

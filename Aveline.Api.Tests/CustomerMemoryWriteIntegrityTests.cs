@@ -63,7 +63,8 @@ public class CustomerMemoryWriteIntegrityTests
             new CustomerEventRepository(_context),
             gate,
             new CustomerTagRepository(_context),
-            embeddings);
+            embeddings,
+            NullLogger<CustomerMemoryService>.Instance);
         var consent = new CustomerConsentService(new CustomerConsentRepository(_context));
         return new Services(customers, memories, consent, embeddings);
     }

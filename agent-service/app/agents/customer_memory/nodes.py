@@ -45,6 +45,67 @@ MEMORY_SIMILARITY_FLOOR = 0.25
 #: a property of the store.
 STATED_PREFERENCE_CONFIDENCE = 0.9
 
+#: The confidence attached to a note a staff member deliberately asked us to record ("add a note for
+#: this customer: ..."). It is 1.0 because, unlike a preference inferred from what a customer said,
+#: this is not an extraction: a human decided the fact was worth keeping and typed it themselves, so
+#: there is nothing for the store to discount. A lower value would make a deliberate instruction look
+#: like a guess next to the customer's own statements.
+STAFF_NOTE_CONFIDENCE = 1.0
+
+#: The categories a model-extracted fact may take. Closed on purpose: the at-a-glance table is read
+#: by an associate, and a model free to name its own category ("style_note", "sizing") invents a
+#: taxonomy one row at a time. "constraint" is the shape an allergy, skin sensitivity, budget or size
+#: takes - an operational boundary, not a like. "observation" is what the boutique noticed rather
+#: than what the customer stated (what they browsed), which is why it never arrives as `stated`.
+_FACT_CATEGORIES = frozenset({"preference", "event", "observation", "complaint", "constraint"})
+
+#: Facts per turn. The message that prompted this feature held two ("nothing nylon, or spandex"); the
+#: cap is insurance against a model that turns one message into a profile, which would bury the note
+#: that mattered among a wall of paraphrase.
+MAX_EXTRACTED_FACTS = 5
+
+#: A fact is a sentence, not a paragraph. The store's own column allows 2000 characters; this is the
+#: extraction's lower ceiling, because a long "fact" is a summary of the message, and the message is
+#: already on file in the interaction log.
+MAX_FACT_CHARS = 280
+
+#: What the store records when the model states no usable confidence. The schema's own default for an
+#: unvouched-for fact: the node never invents certainty on the model's behalf.
+DEFAULT_FACT_CONFIDENCE = 0.5
+
+#: The extraction call's task contract. Kept beside the node rather than in ``AGENT_PROMPTS`` because
+#: it is not an agent persona: the model is still Ava reading a message, and this is the job she does
+#: for this one call - the same placement reasoning as ``_COMPACTION_PROMPT`` in
+#: ``app/context/__init__.py``.
+_EXTRACTION_INSTRUCTION = (
+    "Read the customer's newest message and record the small, durable facts worth keeping about "
+    "THIS customer - the details an associate would want before the next visit, not a transcript "
+    "of the conversation.\n\n"
+    "Return JSON only, in exactly this shape:\n"
+    '{"facts": [{"content": "<one short sentence>", "category": "<category>", '
+    '"stated": <true|false>, "confidence": <0.0-1.0>, "key": <string|null>, '
+    '"value": <string|null>}]}\n\n'
+    "Rules:\n"
+    '- `content` is ONE self-contained sentence that starts with the customer\'s name, like '
+    '"Sarah Perera prefers cotton". It must make sense with no other context.\n'
+    "- `category` is exactly one of: preference, event, observation, complaint, constraint. A "
+    "constraint is an allergy, a skin sensitivity, a budget or a size; an observation is something "
+    "the boutique noticed (for example what the customer browsed).\n"
+    "- `stated` is true ONLY when the customer said the fact about themselves. Something the "
+    "boutique observed is false, so it is not presented to staff as the customer's own statement.\n"
+    '- `key` and `value` are optional and only meaningful for a preference, like "fabric" and '
+    '"cotton".\n'
+    "- Record only facts about THIS customer. Never invent, guess or generalise.\n"
+    "- Omit anything you are unsure of. An empty list is a valid answer.\n"
+    "- Never store a bare pronoun as the object of a fact. Resolve it from the conversation, or "
+    "omit it.\n"
+    "- Do not store the customer's own message verbatim.\n"
+    f"- At most {MAX_EXTRACTED_FACTS} facts.\n\n"
+    "The RECENT CONVERSATION in the system prompt is provided ONLY so you can resolve references "
+    'in the newest message ("them", "the pink one"). It is not a source of facts to store: only the '
+    "newest message says anything about this customer."
+)
+
 
 def coerce_output(output: dict[str, Any]) -> MemoryAgentOutput | None:
     """Validate an assembled ``MemoryAgentOutput``-shaped dict in the running path.
@@ -67,6 +128,143 @@ def _unwrap_reply(content: str) -> str:
     unwrapping because the visual agent needs exactly the same behaviour.
     """
     return unwrap_reply(content, fallback=content if isinstance(content, str) else "")
+
+
+def _usage_from_result(result: Any) -> dict[str, Any] | None:
+    """Token usage from a langchain completion, in the shape the reporter expects (ADR-010).
+
+    Shared by the customer draft and the staff answer: a second extractor would be a second place
+    for the reporter's field names to drift out of step with the ones the model actually returns.
+    """
+    meta = getattr(result, "usage_metadata", None) or {}
+    token_details = meta.get("input_token_details") or {}
+    cached_tokens = int(token_details.get("cache_read") or 0)
+    usage: dict[str, Any] = {
+        "input_tokens": int(meta.get("input_tokens") or 0),
+        "output_tokens": int(meta.get("output_tokens") or 0),
+    }
+    if cached_tokens > 0:
+        # Cached prompt tokens are span attributes only today; the cached direction is the one
+        # additive token metric (R-15). Surfaced on state so run metrics can observe it.
+        usage["cached_tokens"] = cached_tokens
+    return usage
+
+
+def _sum_usage(*figures: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Add a run's model calls into the one usage figure ADR-010 reports.
+
+    A single inbound turn can now make two calls - fact extraction, then the draft - and the
+    reporter's contract is per run, not per call. Summing rather than overwriting is what stops the
+    extraction's tokens from vanishing behind the draft's; a run with one call, or none, keeps
+    exactly the figure it had before the second call existed.
+    """
+    totals: dict[str, int] = {}
+    for figure in figures:
+        if not isinstance(figure, dict):
+            continue
+        for key, value in figure.items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] = totals.get(key, 0) + value
+    return totals or None
+
+
+def _strip_json_fence(text: str) -> str:
+    """Remove a Markdown code fence wrapping a JSON reply, language tag included.
+
+    The tolerance the thread-summary compaction parser already applies (``app/context/__init__.py``):
+    the universal prompt asks for JSON, models fence it anyway, and refusing a fenced answer would
+    throw away a good extraction over a backtick.
+    """
+    if not text.startswith("```"):
+        return text
+
+    lines = text.splitlines()
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _clamp_confidence(value: Any) -> float:
+    """The model's confidence, clamped into the store's 0..1 range.
+
+    Clamped rather than discarded: a model that says 1.2 believes the fact, and dropping the whole
+    fact over a formatting slip would lose the nitbit this feature exists to keep. A missing or
+    non-numeric value takes the schema's neutral default rather than the top of the range.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_FACT_CONFIDENCE
+    return min(1.0, max(0.0, float(value)))
+
+
+def parse_extracted_facts(reply: Any) -> list[dict[str, Any]]:
+    """Turn a model's extraction reply into the facts worth storing.
+
+    Tolerant on the envelope (a code fence is accepted) and strict on the payload: an unknown
+    category, a missing or over-long sentence, or a non-object entry is dropped rather than guessed
+    at. A model that answers in prose yields no facts - the same outcome as a provider failure -
+    because a fact reconstructed from an unparseable reply is exactly the invention the prompt
+    forbids.
+    """
+    if not isinstance(reply, str) or not reply.strip():
+        return []
+
+    try:
+        parsed = json.loads(_strip_json_fence(reply.strip()))
+    except (ValueError, TypeError):
+        logger.warning("Fact extraction returned unparseable JSON; storing no model facts.")
+        return []
+
+    if not isinstance(parsed, dict):
+        return []
+    raw_facts = parsed.get("facts")
+    if not isinstance(raw_facts, list):
+        return []
+
+    facts: list[dict[str, Any]] = []
+    for raw in raw_facts:
+        if len(facts) >= MAX_EXTRACTED_FACTS:
+            # The cap truncates rather than rejects the whole reply: the model listed the facts in
+            # the order it judged important, so the first few are the ones to keep.
+            break
+        if not isinstance(raw, dict):
+            continue
+
+        # Whitespace is collapsed because the content is a sentence the table and the embedding both
+        # read; a newline from a multi-line JSON value is not part of the fact.
+        content = " ".join(str(raw.get("content") or "").split())
+        if not content or len(content) > MAX_FACT_CHARS:
+            continue
+
+        category = str(raw.get("category") or "").strip().lower()
+        if category not in _FACT_CATEGORIES:
+            continue
+
+        fact: dict[str, Any] = {
+            "content": content,
+            "category": category,
+            "stated": raw.get("stated") is True,
+            "confidence": _clamp_confidence(raw.get("confidence")),
+        }
+
+        # A key/value pair is only meaningful for a preference. Carrying it on an observation would
+        # invite a caller to read the pair as a preference row the fact is not.
+        key = raw.get("key")
+        value = raw.get("value")
+        if (
+            category == "preference"
+            and isinstance(key, str)
+            and key.strip()
+            and isinstance(value, str)
+            and value.strip()
+        ):
+            fact["key"] = key.strip()
+            fact["value"] = value.strip()
+
+        facts.append(fact)
+
+    return facts
 
 
 def _unique_notes(memories: Any) -> list[dict[str, Any]]:
@@ -177,23 +375,59 @@ class CustomerMemoryAgent:
 
         return {}
 
+    async def _consent_refusal_to_write(self, state: MemoryAgentState) -> str | None:
+        """The message to show staff when consent forbids writing, or ``None`` to proceed.
+
+        This node runs *before* ``check_consent`` and short-circuits the run when it answers, so
+        without this guard a note or a rename reached the store for a customer who had revoked
+        consent. ``persist`` already refuses to write in that case, and the documented contract is
+        that revocation means nothing is stored - a staff instruction is not an exception to it.
+        Consent is a property of the customer, not of who is asking.
+
+        Fails closed on a backend failure for the same reason ``check_consent`` does: a privacy
+        control that cannot read its own state must not write.
+        """
+        org_id = state.get("org_id")
+        customer_id = state.get("customer_id")
+        try:
+            consent = await self.registry.get_customer_consent(str(org_id), str(customer_id))
+        except Exception:  # noqa: BLE001 - a privacy control must fail closed, never write
+            logger.warning(
+                "Consent check failed; refusing to write (fail closed). customer_id=%s",
+                customer_id,
+                exc_info=True,
+            )
+            return (
+                "I could not check this customer's consent, so I have not changed anything. "
+                "Try again once the customer book is reachable."
+            )
+
+        if ((consent or {}).get("consentStatus") or "pending") == "revoked":
+            return (
+                "This customer has revoked consent, so nothing may be stored about them. "
+                "No note or update was applied."
+            )
+        return None
+
     async def apply_staff_update(self, state: MemoryAgentState) -> dict[str, Any]:
         """Apply an explicit staff instruction to the bound customer's details.
 
-        Staff type "please update this customer with the name X and number Y" into the Salon. This
-        is the only path that writes identity fields from chat, so it is deliberately narrow:
+        Staff type "please update this customer with the name X and number Y" - or "please add a
+        note for this customer: he prefers green tea" - into the Salon. This is the only path that
+        writes identity fields or staff notes from chat, so it is deliberately narrow:
 
         - **Staff only.** A customer messaging in is never taken as instructing us to rewrite their
           own record. ``staff_query`` is what separates the two.
-        - **Explicit only.** ``extract_customer_update`` requires an update verb; a message that
-          merely mentions a name is not an instruction to store one.
-        - **Bound customer only.** With no customer on the conversation there is nobody to update,
-          and guessing from a name would risk editing the wrong record. It asks instead.
+        - **Explicit only.** ``extract_customer_update`` requires an update verb or a note phrase; a
+          message that merely mentions a name is not an instruction to store one.
+        - **Bound customer only.** With no customer on the conversation there is nobody to update or
+          annotate, and guessing from a name would risk editing the wrong record. It asks instead.
         - **Never creates.** Naming someone not on file is a different operation; silently creating
           a record from a chat message would be wrong.
 
         A failure is reported, not swallowed: an update that appears to succeed while doing nothing
-        is worse than one that says why it could not.
+        is worse than one that says why it could not. That applies to the note write too - a staff
+        member who asked for a note to be recorded must not be told nothing happened.
         """
         if not state.get("staff_query"):
             return {}
@@ -220,24 +454,59 @@ class CustomerMemoryAgent:
                 ),
             }
 
-        try:
-            profile = await self.registry.update_customer(
-                str(org_id),
-                str(customer_id),
-                full_name=instruction.full_name,
-                phone_number=instruction.phone_number,
-            )
-        except httpx.HTTPStatusError as exc:
-            return {
-                "parsed_intent": intent,
-                "customer_update_error": self._update_failure_message(exc, instruction),
-            }
-        except Exception as exc:  # noqa: BLE001 - reported to staff, never silently dropped
-            logger.warning("Customer update failed: %s", exc)
-            return {
-                "parsed_intent": intent,
-                "customer_update_error": "I could not reach the customer book to apply that.",
-            }
+        profile = state.get("profile")
+        # Before the first write, not after: this node short-circuits the run, so `check_consent`
+        # never gets to refuse a note or a rename for a revoked customer.
+        consent_refusal = await self._consent_refusal_to_write(state)
+        if consent_refusal is not None:
+            return {"parsed_intent": intent, "customer_update_error": consent_refusal}
+
+        # A note-only instruction must not send an identity PATCH with no fields: the backend would
+        # receive a change request that changes nothing. The note below is the whole instruction.
+        if instruction.full_name is not None or instruction.phone_number is not None:
+            try:
+                profile = await self.registry.update_customer(
+                    str(org_id),
+                    str(customer_id),
+                    full_name=instruction.full_name,
+                    phone_number=instruction.phone_number,
+                )
+            except httpx.HTTPStatusError as exc:
+                return {
+                    "parsed_intent": intent,
+                    "customer_update_error": self._update_failure_message(exc, instruction),
+                }
+            except Exception as exc:  # noqa: BLE001 - reported to staff, never silently dropped
+                logger.warning("Customer update failed: %s", exc)
+                return {
+                    "parsed_intent": intent,
+                    "customer_update_error": "I could not reach the customer book to apply that.",
+                }
+
+        if instruction.note is not None:
+            # The note is stored as staff wrote it. It is attached to the bound customer, so a
+            # pronoun ("He prefers green tea") has a clear referent in context; rewriting it into
+            # third person would put words in the staff member's mouth and discard the observation
+            # they chose to record. `category="note"` keeps it distinguishable from a preference the
+            # customer stated, and `source="staff"` records who vouched for it.
+            try:
+                await self.registry.save_customer_memory(
+                    str(org_id),
+                    str(customer_id),
+                    instruction.note,
+                    "note",
+                    source="staff",
+                    is_explicit=True,
+                    confidence=STAFF_NOTE_CONFIDENCE,
+                )
+            except Exception as exc:  # noqa: BLE001 - reported to staff, never silently dropped
+                logger.warning("Staff note save failed: %s", exc)
+                return {
+                    "parsed_intent": intent,
+                    "customer_update_error": (
+                        "I could not save that note to the customer book, so nothing was noted."
+                    ),
+                }
 
         return {
             "parsed_intent": intent,
@@ -245,6 +514,7 @@ class CustomerMemoryAgent:
             "applied_customer_update": {
                 "full_name": instruction.full_name,
                 "phone_number": instruction.phone_number,
+                "note": instruction.note,
                 "customer_id": str(customer_id),
             },
         }
@@ -266,10 +536,10 @@ class CustomerMemoryAgent:
 
     @staticmethod
     def _update_confirmation(state: MemoryAgentState) -> str | None:
-        """A staff-facing sentence describing what an update instruction did, or ``None``.
+        """A staff-facing sentence describing what an instruction did, or ``None``.
 
-        Only reached when the update node short-circuited the run, so it is never produced for an
-        ordinary message.
+        Reports identity changes and a stored note. Only reached when the update node
+        short-circuited the run, so it is never produced for an ordinary message.
         """
         error = state.get("customer_update_error")
         if error:
@@ -285,10 +555,26 @@ class CustomerMemoryAgent:
         if applied.get("phone_number"):
             changed.append(f"number to {applied['phone_number']}")
 
+        note = applied.get("note")
+        # A note is stored verbatim, so it can end in its own punctuation; the sentence must not
+        # then read "tea..".
+        noted: str | None = None
+        if note:
+            noted = f"Noted for this customer: {note}"
+            if not noted.endswith((".", "!", "?")):
+                noted += "."
+
         if not changed:
+            # A note-only instruction must never answer "Nothing was changed.": that sentence is the
+            # silent no-op this path exists to end. The note was written, so it is confirmed.
+            if noted:
+                return noted
             return "Nothing was changed."
 
-        return "Updated this customer's " + " and ".join(changed) + "."
+        confirmation = "Updated this customer's " + " and ".join(changed) + "."
+        if noted:
+            confirmation += f" {noted}"
+        return confirmation
 
     async def check_consent(self, state: MemoryAgentState) -> dict[str, Any]:
         """Refuse to process customers who have revoked consent.
@@ -363,6 +649,60 @@ class CustomerMemoryAgent:
                 exc_info=True,
             )
             return {"semantic_context": []}
+
+    async def extract(self, state: MemoryAgentState) -> dict[str, Any]:
+        """Read the small, durable facts out of an inbound message with the model.
+
+        The deterministic parse covers three shapes and only three: a first-person preference, a
+        dated event, and a quoted complaint. Everything else a customer says that is worth keeping -
+        "nothing nylon, or spandex, I dont like them", "browsing a brown dress seen on Instagram" -
+        matches none of them and was never stored at all. A regex cannot know what "them" is; a
+        model reading the message can. The requirement is that the fact be findable later regardless
+        of which conversation is asking, so each stored fact has to stand alone.
+
+        The bounded transcript is handed over for one job only: resolving what a reference in the
+        newest message points at. The prompt says so out loud, because a model given a conversation
+        will happily summarise it, and a summarised conversation is not a fact about this customer.
+
+        Best-effort by construction. No model, a staff query, an empty message, a provider failure
+        or an unparseable reply all yield no facts, and the deterministic classes write exactly what
+        they wrote before this node existed (I3).
+        """
+        if self.llm is None or state.get("staff_query") or not (state.get("message") or "").strip():
+            return {}
+
+        context_lines = [
+            f"Customer name: {self._customer_name(state)}",
+            f"Newest message: {state.get('message', '')}",
+            _EXTRACTION_INSTRUCTION,
+        ]
+
+        # The bounded conversation window (ADR-023), rendered as the system prompt's fourth fragment
+        # exactly as the draft and staff-answer calls do it: one prompt-assembly mechanism, not a
+        # parallel one for extraction.
+        dialogue_context = render_context_block(
+            history=state.get("history"),
+            thread_summary=state.get("thread_summary"),
+            pinned_slots=state.get("pinned_slots"),
+        )
+        system = assemble_system_prompt(
+            "memory", self.org_context, dialogue_context=dialogue_context
+        )
+
+        try:
+            result = await self.llm.ainvoke(
+                [SystemMessage(content=system), HumanMessage(content="\n".join(context_lines))]
+            )
+        except Exception:  # noqa: BLE001 - extraction is enrichment, never a run dependency
+            logger.warning("Customer fact extraction failed; storing no model facts.", exc_info=True)
+            return {}
+
+        # The call is reported even when it yields no facts: its tokens were spent either way, and a
+        # usage figure that quietly dropped them would understate the turn.
+        return {
+            "_extracted_facts": parse_extracted_facts(getattr(result, "content", None)),
+            "_extraction_usage": _usage_from_result(result),
+        }
 
     async def persist(self, state: MemoryAgentState) -> dict[str, Any]:
         """Save explicit preferences and detected events as memories (consent-granted only).
@@ -476,6 +816,72 @@ class CustomerMemoryAgent:
                     }
                 )
 
+        # The model's own reading of the message, written after the deterministic classes so the
+        # order is stable (rule-derived facts lead) and the two cannot disagree about precedence.
+        # The model is asked for the same small facts the regexes target, so it will often restate
+        # one of them ("prefers cotton"); anything whose normalised content was already written this
+        # turn is skipped. The store's unique index would refuse the duplicate anyway, but skipping
+        # it here keeps the turn's own count honest instead of reporting a write that did not happen.
+        written_keys = {normalise_memory_content(item["content"]) for item in extracted}
+        for fact in state.get("_extracted_facts", []):
+            content = str(fact.get("content") or "").strip()
+            if not content:
+                continue
+            content_key = normalise_memory_content(content)
+            if content_key in written_keys:
+                continue
+
+            category = str(fact.get("category") or "").strip()
+            # `stated` is the model's own distinction and it decides the Known column: a fact the
+            # customer asserted is "Stated", something the boutique noticed is "Inferred". Passing it
+            # through unchanged is what keeps the extraction from decorating every row as the
+            # customer's own words.
+            stated = bool(fact.get("stated"))
+            # Re-clamped here rather than trusted: the node already clamps, but `confidence` ends up
+            # in `ExtractedMemory` (0..1) and a malformed state must not turn the whole output into
+            # the schema-failure fallback.
+            confidence = _clamp_confidence(fact.get("confidence"))
+
+            if not await self._try_save_memory(
+                org_id,
+                customer_id,
+                content,
+                category,
+                source="conversation",
+                is_explicit=stated,
+                confidence=confidence,
+            ):
+                continue
+
+            written_keys.add(content_key)
+            extracted.append(
+                {
+                    "content": content,
+                    "category": category,
+                    "source": "conversation",
+                    "is_explicit": stated,
+                    "confidence": confidence,
+                }
+            )
+
+            # A preference with a key/value pair is mirrored into the preferences table the brief's
+            # summary is assembled from. Without this the note would be on file while the brief said
+            # nothing was recorded - the same class of disagreement the stated-preference mirror was
+            # added to close (gap C4).
+            preference_key = fact.get("key")
+            preference_value = fact.get("value")
+            if category == "preference" and preference_key and preference_value:
+                await self._try_save_preference(
+                    org_id,
+                    customer_id,
+                    {
+                        "preference_key": preference_key,
+                        "preference_value": preference_value,
+                        "confidence": confidence,
+                        "is_explicit": stated,
+                    },
+                )
+
         # Log the inbound interaction with the structured intent the agent extracted (ADR-016).
         # Staff queries are not customer interactions, so only genuine inbound messages are logged.
         if not state.get("staff_query"):
@@ -527,7 +933,19 @@ class CustomerMemoryAgent:
 
         Best-effort like every other write here: the memory row is the record of what was said, and
         a failure to also update the summary must not fail the run.
+
+        The signal's own confidence and explicitness are honoured when it carries them, because a
+        preference the model read out of a message - and may have judged inferred - must not arrive
+        in the brief's summary wearing the stated preference's 0.90 certainty. The deterministic
+        caller passes neither and keeps the stated-preference defaults it has always had.
         """
+        confidence = signal.get("confidence")
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+            confidence = STATED_PREFERENCE_CONFIDENCE
+        is_explicit = signal.get("is_explicit")
+        if not isinstance(is_explicit, bool):
+            is_explicit = True
+
         try:
             await self.registry.save_customer_preference(
                 org_id,
@@ -535,8 +953,8 @@ class CustomerMemoryAgent:
                 key=str(signal.get("preference_key") or "general"),
                 value=str(signal.get("preference_value") or "").strip(),
                 source="conversation",
-                is_explicit=True,
-                confidence=STATED_PREFERENCE_CONFIDENCE,
+                is_explicit=is_explicit,
+                confidence=float(confidence),
             )
         except Exception:  # noqa: BLE001 - best-effort preference save
             logger.warning("Failed to save customer preference (key=%s).", signal.get("preference_key"))
@@ -560,8 +978,9 @@ class CustomerMemoryAgent:
         Two audiences (ADR-019):
         - Inbound CUSTOMER message: a staff-facing ``interaction_brief`` plus a customer-facing
           draft (``draft_response``, surfaced as a Suggestion for staff to approve/send).
-        - STAFF query (no inbound direction): Ava answers the staff directly as text and produces
-          NO customer-facing draft / Suggestion.
+        - STAFF query (no inbound direction): Ava answers the staff directly (the model when one is
+          configured, the grounded template otherwise) and produces NO customer-facing draft /
+          Suggestion.
         """
         profile = state.get("profile") or {}
         intent = state.get("parsed_intent") or {}
@@ -579,14 +998,18 @@ class CustomerMemoryAgent:
             usage = None
             action = None
         elif staff:
-            interaction_brief = self._staff_text(state, name, profile, backend)
+            interaction_brief, usage = await self._staff_answer(state, name, profile, backend)
             draft = None
-            usage = None
             action = None
         else:
             interaction_brief = self._format_brief(state, name, profile, backend)
             draft, usage = await self._generate_draft(state, profile, intent, name)
             action = "send_whatsapp" if intent.get("intent_type") == "item_search" else None
+
+        # A run can make two model calls now (fact extraction, then the draft) and ADR-010 reports one
+        # figure per run. Folding the extraction's tokens in here, once, is what keeps the extraction
+        # from vanishing behind the draft; with one call the sum is that call's figure unchanged.
+        usage = _sum_usage(usage, state.get("_extraction_usage"))
 
         # Only dateable events are emitted as structured DetectedEvents (the schema requires a
         # date); undated signals remain as free-text memories so the output stays schema-valid.
@@ -651,13 +1074,23 @@ class CustomerMemoryAgent:
         profile: dict[str, Any],
         backend: dict[str, Any],
     ) -> str:
-        """Assemble the staff-facing digest (name/status + semantic context + events/tags)."""
+        """Assemble the staff-facing digest (name/status + semantic context + events/tags).
+
+        The customer's own description leads when the backend brief carries one. It is the
+        customer-level prose the brief exists to surface - who this person is - and the mechanical
+        parts that follow are facts about them. The agent fetched it and never read it, so the one
+        sentence an associate needs before making contact was the one line missing from the brief.
+        """
         semantic_context = state.get("semantic_context") or []
         tags = profile.get("tags") or []
         status = backend.get("status") or profile.get("status") or "new"
         display_name = backend.get("customerName") or name
 
-        parts = [f"{display_name} ({status})"]
+        parts: list[str] = []
+        description = backend.get("description")
+        if isinstance(description, str) and description.strip():
+            parts.append(description.strip())
+        parts.append(f"{display_name} ({status})")
         if semantic_context:
             parts.append(f"Context: {semantic_context[0].get('content')}")
         if backend.get("upcomingEvents"):
@@ -668,6 +1101,26 @@ class CustomerMemoryAgent:
             parts.append(f"Tags: {', '.join(merged_tags)}")
         return " | ".join(parts)
 
+    @staticmethod
+    def _grounded_facts(backend: dict[str, Any]) -> list[str]:
+        """The grounded backend facts, in a stable order, shared by the template and the model.
+
+        The stored notes are deliberately absent: they are rendered as their own content block
+        rather than recited here.
+        """
+        prefs = backend.get("preferenceSummary")
+        events = backend.get("upcomingEvents")
+        tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
+
+        facts: list[str] = []
+        if prefs:
+            facts.append(f"preferences: {prefs}")
+        if events:
+            facts.append(f"upcoming events: {events}")
+        if tags:
+            facts.append(f"tags: {', '.join(tags)}")
+        return facts
+
     def _staff_text(
         self,
         state: MemoryAgentState,
@@ -677,16 +1130,16 @@ class CustomerMemoryAgent:
     ) -> str:
         """Answer a STAFF query directly (no customer-facing draft).
 
-        Uses the real backend facts (status, preferences, upcoming events, tags) so the answer is
-        grounded. Event-style queries answer about events; a brand-new customer is announced; other
-        queries summarise what is known, or state when nothing is on file yet.
+        This is the deterministic fallback for :meth:`_staff_answer`, used whenever no LLM is
+        configured or the provider call fails. It uses the real backend facts (status, preferences,
+        upcoming events, tags) so the answer is grounded. Event-style queries answer about events; a
+        brand-new customer is announced; other queries summarise what is known, or state when
+        nothing is on file yet.
         """
         display_name = backend.get("customerName") or name
         status = backend.get("status") or profile.get("status") or "new"
         intent_type = (state.get("parsed_intent") or {}).get("intent_type")
         events = backend.get("upcomingEvents")
-        prefs = backend.get("preferenceSummary")
-        tags = backend.get("tags") if isinstance(backend.get("tags"), list) else []
 
         # What the boutique has actually recorded about this customer. These are semantic memories
         # (events, preferences, complaints), which the interaction brief does not carry - so a
@@ -695,55 +1148,119 @@ class CustomerMemoryAgent:
         # the store itself holds duplicates.
         remembered = [note["content"] for note in _unique_notes(state.get("semantic_context"))]
 
-        def _details() -> list[str]:
-            """The grounded facts, in a stable order.
-
-            The stored notes are deliberately absent: they are rendered as their own content block
-            rather than recited here.
-            """
-            facts: list[str] = []
-            if prefs:
-                facts.append(f"preferences: {prefs}")
-            if events:
-                facts.append(f"upcoming events: {events}")
-            if tags:
-                facts.append(f"tags: {', '.join(tags)}")
-            return facts
-
         if intent_type == "event_query":
             if events:
-                return f"Upcoming events for {display_name}: {events}."
+                answer = f"Upcoming events for {display_name}: {events}."
             # The absence of a dated event stays the headline answer; what else is on file follows
             # as its own block, because it is usually what the staff member actually wanted to know.
-            if remembered:
-                return f"No upcoming events on file for {display_name}. {_notes_sentence(remembered)}"
-            return f"No upcoming events on file for {display_name}."
+            elif remembered:
+                answer = f"No upcoming events on file for {display_name}. {_notes_sentence(remembered)}"
+            else:
+                answer = f"No upcoming events on file for {display_name}."
+        else:
+            # General staff query: a readable, grounded summary. The notes themselves are NOT
+            # recited here - the publisher renders them as their own block (see `memories_on_file`),
+            # because joining them into the sentence produced "on file: X; X; X" for every
+            # near-duplicate the store had accumulated, which reads as a malfunction rather than as
+            # an answer.
+            facts = self._grounded_facts(backend)
+            notes = _notes_sentence(remembered)
 
-        # General staff query: a readable, grounded summary. The notes themselves are NOT recited
-        # here - the publisher renders them as their own block (see `memories_on_file`), because
-        # joining them into the sentence produced "on file: X; X; X" for every near-duplicate the
-        # store had accumulated, which reads as a malfunction rather than as an answer.
-        facts = _details()
-        notes = _notes_sentence(remembered)
+            if status == "new":
+                if not facts and not remembered:
+                    answer = f"{display_name} is a new customer - nothing on file yet."
+                else:
+                    # Announcing "new" stays useful for onboarding even when some memory exists, so
+                    # the framing is kept and the facts are appended rather than replacing it.
+                    sentence = f"{display_name} is a new customer"
+                    if facts:
+                        sentence += f" - {'; '.join(facts)}"
+                    sentence += "."
+                    answer = f"{sentence} {notes}" if notes else sentence
+            elif not facts and not remembered:
+                answer = f"{display_name} ({status}) has no preferences or events on file yet."
+            else:
+                sentence = f"{display_name} ({status})"
+                if facts:
+                    sentence += f" - {'; '.join(facts)}"
+                sentence += "."
+                answer = f"{sentence} {notes}" if notes else sentence
 
-        if status == "new":
-            if not facts and not remembered:
-                return f"{display_name} is a new customer - nothing on file yet."
-            # Announcing "new" stays useful for onboarding even when some memory exists, so the
-            # framing is kept and the facts are appended rather than replacing it.
-            sentence = f"{display_name} is a new customer"
-            if facts:
-                sentence += f" - {'; '.join(facts)}"
-            sentence += "."
-            return f"{sentence} {notes}" if notes else sentence
+        # The customer-level description leads, exactly as it does in the inbound brief: it is who
+        # the customer is, and the mechanical facts that follow are about them.
+        description = backend.get("description")
+        if isinstance(description, str) and description.strip():
+            return f"{description.strip()} {answer}"
+        return answer
 
-        if not facts and not remembered:
-            return f"{display_name} ({status}) has no preferences or events on file yet."
-        sentence = f"{display_name} ({status})"
+    async def _staff_answer(
+        self,
+        state: MemoryAgentState,
+        name: str,
+        profile: dict[str, Any],
+        backend: dict[str, Any],
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Return ``(interaction_brief, usage)`` for a STAFF query.
+
+        A staff query used to be answered only by the ``_staff_text`` template, which counts what is
+        on file ("3 notes are on file") instead of answering the question from it. With a model
+        configured the question is now answered from the same grounded facts and retrieved
+        memories; the template stays as the fallback, so the graph never depends on the provider and
+        the offline answer is byte-for-byte what it was.
+
+        The model is told to use only the supplied facts. This is staff-facing, so it may be more
+        direct than a customer draft, but a fact it invented about a customer would be repeated to
+        that customer - "that is not on file" is always the better answer.
+        """
+        fallback = self._staff_text(state, name, profile, backend)
+        if self.llm is None:
+            return fallback, None
+
+        context_lines = [f"Staff question: {state.get('message', '')}"]
+
+        description = backend.get("description")
+        if isinstance(description, str) and description.strip():
+            context_lines.append(f"Customer description: {description.strip()}")
+
+        facts = self._grounded_facts(backend)
         if facts:
-            sentence += f" - {'; '.join(facts)}"
-        sentence += "."
-        return f"{sentence} {notes}" if notes else sentence
+            context_lines.append("Facts on file:\n" + "\n".join(f"- {fact}" for fact in facts))
+
+        remembered = [note["content"] for note in _unique_notes(state.get("semantic_context"))]
+        if remembered:
+            context_lines.append("Memories on file:\n" + "\n".join(f"- {note}" for note in remembered))
+
+        context_lines.append(
+            "Answer the staff member's question directly, in 1-3 sentences. Use ONLY the facts and "
+            "memories above; if they do not contain the answer, say what is not on file. Never "
+            "invent or guess a fact about the customer. Reply with ONLY the plain text of the "
+            "answer - no JSON, no code fences, no labels. Do not write a message to the customer."
+        )
+
+        # The bounded conversation window (ADR-023), rendered here rather than added to
+        # `context_lines` so it reaches the model as a system-layer fragment: conversation context
+        # is data the model is given, not part of the current turn's instruction.
+        dialogue_context = render_context_block(
+            history=state.get("history"),
+            thread_summary=state.get("thread_summary"),
+            pinned_slots=state.get("pinned_slots"),
+        )
+        system = assemble_system_prompt(
+            "memory", self.org_context, dialogue_context=dialogue_context
+        )
+        try:
+            result = await self.llm.ainvoke(
+                [SystemMessage(content=system), HumanMessage(content="\n".join(context_lines))]
+            )
+        except Exception:  # noqa: BLE001 - provider failure must not break the graph
+            logger.warning("LLM staff answer failed; falling back to template.", exc_info=True)
+            return fallback, None
+
+        answer = _unwrap_reply(getattr(result, "content", None) or "")
+        if not answer:
+            return fallback, None
+
+        return answer, _usage_from_result(result)
 
     async def _generate_draft(
         self,
@@ -798,18 +1315,7 @@ class CustomerMemoryAgent:
         if not draft:
             return self._draft(name, intent), None
 
-        meta = getattr(result, "usage_metadata", None) or {}
-        token_details = meta.get("input_token_details") or {}
-        cached_tokens = int(token_details.get("cache_read") or 0)
-        usage: dict[str, Any] | None = {
-            "input_tokens": int(meta.get("input_tokens") or 0),
-            "output_tokens": int(meta.get("output_tokens") or 0),
-        }
-        if cached_tokens > 0:
-            # Cached prompt tokens are span attributes only today; the cached direction is the
-            # one additive token metric (R-15). Surfaced on state so run metrics can observe it.
-            usage["cached_tokens"] = cached_tokens
-        return draft, usage
+        return draft, _usage_from_result(result)
 
     @staticmethod
     def _skip(reason: str) -> dict[str, Any]:

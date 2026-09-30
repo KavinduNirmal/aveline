@@ -60,8 +60,12 @@ public interface ICustomerMemoryService
         Guid customerId,
         CancellationToken cancellationToken = default);
 
-    /// <summary>Semantically searches a customer's memories by free-text query.
-    /// Returns an empty list when the customer's consent is revoked (or unreadable).</summary>
+    /// <summary>
+    /// Searches a customer's memories by free-text query using <see cref="MemorySearchRequest.Mode"/>
+    /// (<c>hybrid</c> by default; the single-leg modes exist for retrieval evaluation). Returns an
+    /// empty list when the customer's consent is revoked (or unreadable), and throws
+    /// <see cref="ArgumentException"/> for a mode this store cannot run.
+    /// </summary>
     Task<IReadOnlyList<MemorySearchResultDto>> SearchAsync(
         MemorySearchRequest request,
         CancellationToken cancellationToken = default);

@@ -503,23 +503,24 @@ class CommerceAgent:
 
         # 2. Resolve the customer's loyalty tier.
         #
-        # Only the VIP keyword path resolves a tier here. `cde287b` added the default
-        # tier-discount block below but left the API lookup in the else-branch assigning a
-        # local that is never read (ruff F841), so `tier` has always been None for a
-        # non-VIP customer: `tier_norm` falls through every branch, `tier_cap` is 0.0, and
-        # no default tier discount is ever applied -- the block reads as live but is inert.
-        #
-        # Wiring the lookup in is a pricing decision, not a lint fix: resolving "Regular"
-        # starts discounting every non-VIP order by 5%, which changes two assertions in
-        # tests/test_hitl_resume.py (a 75,000 order becomes 71,250). Until that is decided,
-        # the dead call is removed rather than left in place pretending the tier is used.
-        # The other two call sites of get_customer_loyalty_tier do resolve their tier, for
-        # validation and for a cap that is a ceiling rather than an automatic discount.
+        # The VIP keyword is a shortcut for a message that says so outright; everything else
+        # resolves the tier from the customer's own profile. cde287b added the default
+        # tier-discount block below but left this lookup assigning a local that was never
+        # read (ruff F841), so `tier` stayed None for every non-VIP customer: `tier_norm`
+        # fell through every branch, `tier_cap` was 0.0, and the default tier discount the
+        # block documents was never applied. Resolving the tier here is what makes that
+        # block live, and it matches what the other two call sites of
+        # get_customer_loyalty_tier already do.
         tier = state.get("loyalty_tier")
         if not tier:
             message_text = state.get("message", "")
             if re.search(r"\bVIP\b", message_text, re.IGNORECASE):
                 tier = "VIP"
+            else:
+                tier_info = await get_customer_loyalty_tier(
+                    org_id, customer_id, customer_name=customer_name, registry=self.registry
+                )
+                tier = str(tier_info.get("tier") or "Regular")
         tier_norm = (tier or "").strip().lower()
         if tier_norm == "vip":
             tier_cap = 0.10
@@ -595,7 +596,15 @@ class CommerceAgent:
             "total_cost": total_cost,
             "margin": margin,
             "loyalty_tier": tier,
-            "proposed_discount": effective_order_discount,
+            # The rate the associate or buyer *asked for*, not the rate that ended up applied.
+            # `CommerceAgentInput.proposed_discount` is documented as "discount proposed by
+            # associate/buyer", and the discount lane's quote node treats a non-zero value here
+            # as an explicit request, using it in preference to the rate it extracts from the
+            # message. Writing the effective rate (which includes the tier's standing discount)
+            # meant a tier default silently replaced the customer's requested discount: a
+            # message asking for 10% was reported as 5%. The applied rate is carried by
+            # `discount_amount` and `total` below, which are what the money fields mean.
+            "proposed_discount": proposed_discount,
             "is_auto_approved": is_auto_approved,
             "requires_approval": requires_approval,
             "approval_type": approval_type,

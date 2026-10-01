@@ -62,12 +62,17 @@ class ClerkAuthRepository implements AuthRepository {
   Future<String?> signInWithPassword({
     required String identifier,
     required String password,
-  }) =>
-      _run(() => _authState.attemptSignIn(
-            strategy: clerk.Strategy.password,
-            identifier: identifier,
-            password: password,
-          ));
+  }) {
+    final cleanIdentifier = identifier.trim();
+    if (cleanIdentifier.isEmpty || password.isEmpty) {
+      return Future.value('Please provide both an identifier and a password.');
+    }
+    return _run(() => _authState.attemptSignIn(
+          strategy: clerk.Strategy.password,
+          identifier: cleanIdentifier,
+          password: password,
+        ));
+  }
 
   @override
   String? get secondFactorStrategy {
@@ -91,9 +96,13 @@ class ClerkAuthRepository implements AuthRepository {
 
   @override
   Future<String?> verifySecondFactorCode({required String code}) {
+    final cleanCode = code.trim();
+    if (cleanCode.isEmpty) {
+      return Future.value('Please enter the verification code.');
+    }
     return _run(() => _authState.attemptSignIn(
           strategy: _secondFactorStrategy,
-          code: code,
+          code: cleanCode,
         ));
   }
 
@@ -104,27 +113,83 @@ class ClerkAuthRepository implements AuthRepository {
     String? firstName,
     String? lastName,
     required String password,
-  }) =>
-      _run(() => _authState.attemptSignUp(
-            strategy: clerk.Strategy.password,
-            emailAddress: emailAddress,
-            username: username,
-            firstName: firstName,
-            lastName: lastName,
-            password: password,
-            passwordConfirmation: password,
-          ));
+  }) {
+    final cleanEmail = emailAddress.trim();
+    if (cleanEmail.isEmpty || password.isEmpty) {
+      return Future.value('Please provide both an email and a password.');
+    }
+    final cleanUsername =
+        (username == null || username.trim().isEmpty) ? null : username.trim();
+    final cleanFirstName =
+        (firstName == null || firstName.trim().isEmpty) ? null : firstName.trim();
+    final cleanLastName =
+        (lastName == null || lastName.trim().isEmpty) ? null : lastName.trim();
+
+    return _run(() => _authState.attemptSignUp(
+          strategy: clerk.Strategy.password,
+          emailAddress: cleanEmail,
+          username: cleanUsername,
+          firstName: cleanFirstName,
+          lastName: cleanLastName,
+          password: password,
+          passwordConfirmation: password,
+        ));
+  }
 
   @override
   Future<String?> sendEmailVerificationCode() =>
       _run(() => _authState.attemptSignUp(strategy: clerk.Strategy.emailCode));
 
   @override
-  Future<String?> verifyEmailCode({required String code}) =>
-      _run(() => _authState.attemptSignUp(
-            strategy: clerk.Strategy.emailCode,
-            code: code,
-          ));
+  Future<String?> verifyEmailCode({required String code}) {
+    final cleanCode = code.trim();
+    if (cleanCode.isEmpty) {
+      return Future.value('Please enter the verification code.');
+    }
+    return _run(() => _authState.attemptSignUp(
+          strategy: clerk.Strategy.emailCode,
+          code: cleanCode,
+        ));
+  }
+
+  /// Extracts the human-readable error message from a [clerk.ClerkError].
+  ///
+  /// Clerk's server-error template string contains unformatted '{arg}'.
+  /// The actual user-facing reason (e.g. invalid credentials, identifier not found)
+  /// is stored in [clerk.ClerkError.argument] or [clerk.ClerkError.errors].
+  @visibleForTesting
+  static String extractErrorMessage(clerk.ClerkError error) {
+    if (error.argument case final arg? when arg.trim().isNotEmpty && arg != '{arg}') {
+      return arg.trim();
+    }
+    final errors = error.errors?.errors;
+    if (errors != null && errors.isNotEmpty) {
+      final messages = errors
+          .map((e) => e.fullMessage.trim())
+          .where((m) => m.isNotEmpty && m != 'Unknown error')
+          .toList();
+      if (messages.isNotEmpty) {
+        return messages.join('; ');
+      }
+    }
+    final asString = error.toString().trim();
+    if (asString.isNotEmpty &&
+        !asString.contains('{arg}') &&
+        asString != '(ERROR RECEIVED FROM SERVER)') {
+      final stripped = asString.replaceFirst(' (ERROR RECEIVED FROM SERVER)', '').trim();
+      if (stripped.isNotEmpty) {
+        return stripped;
+      }
+    }
+    final cleanMessage = error.message
+        .replaceFirst('{arg}', '')
+        .replaceFirst('(ERROR RECEIVED FROM SERVER)', '')
+        .trim();
+    if (cleanMessage.isNotEmpty && !cleanMessage.contains('{arg}')) {
+      return cleanMessage;
+    }
+    return 'Authentication failed. Please verify your credentials and try again.';
+  }
 
   /// Runs an auth action, translating failures into a human-readable message.
   Future<String?> _run(Future<void> Function() action) async {
@@ -132,8 +197,9 @@ class ClerkAuthRepository implements AuthRepository {
       await action();
       return null;
     } on clerk.ClerkError catch (error) {
-      debugPrint('[clerk auth error] ClerkError: ${error.message} - ${error.code}');
-      return error.message;
+      final message = extractErrorMessage(error);
+      debugPrint('[clerk auth error] ClerkError: $message - ${error.code}');
+      return message;
     } catch (error, stack) {
       debugPrint('[clerk auth error] $error\n$stack');
       return error.toString().replaceFirst('Exception: ', '');

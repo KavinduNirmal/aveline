@@ -1,16 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Maximize2 } from 'lucide-react'
+import { Check, CreditCard, Maximize2, X } from 'lucide-react'
 
 import { WhatsAppIcon } from '@/components/dashboard/BrandIcons'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import {
   DIALOG_CONTENT_WIDE,
   Dialog,
@@ -404,40 +398,63 @@ function SignOffBlock({ block, onSignOff, onRequestPayment }: BlockRendererProps
   }
 
   return (
-    <Card className="border-primary/20 bg-primary/5">
-      <CardHeader className="p-3 pb-1">
-        <CardTitle className="text-sm">Approval needed</CardTitle>
+    <Card className="overflow-hidden rounded-xl border border-lilac/30 bg-lilac/5 py-0 gap-0 shadow-none">
+      <div className="flex flex-col gap-1 p-3.5 pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="size-1.5 rounded-full bg-lilac animate-pulse" />
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-lilac">
+              Approval needed
+            </h4>
+          </div>
+          {typeof block.amount === 'number' && (
+            <span className="text-sm font-bold tabular-nums text-lilac">
+              LKR {block.amount.toLocaleString()}
+            </span>
+          )}
+        </div>
         {block.reason && (
-          <CardDescription className="text-xs">{block.reason}</CardDescription>
-        )}
-      </CardHeader>
-      <CardContent className="p-3 pt-2">
-        {typeof block.amount === 'number' && (
-          <p className="mb-2 text-sm font-semibold text-primary">
-            LKR {block.amount.toLocaleString()}
+          <p className="text-xs text-muted-foreground leading-relaxed pl-3">
+            {block.reason}
           </p>
         )}
-        {onSignOff && (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => onSignOff(true)}>
-              Approve Order
+      </div>
+      {onSignOff && (
+        <div className="flex items-stretch divide-x divide-lilac/20 border-t border-lilac/25 bg-lilac-soft/40 text-xs">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 flex-1 rounded-none text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+            onClick={() => onSignOff(false)}
+          >
+            <X className="size-3.5 mr-1.5" />
+            Reject
+          </Button>
+          {orderId && onRequestPayment && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-9 flex-1 rounded-none text-xs text-lilac hover:bg-lilac/15 transition-colors disabled:opacity-50"
+              disabled={requestingPayment}
+              onClick={() => void handleRequestPayment()}
+            >
+              <CreditCard className="size-3.5 mr-1.5" />
+              {requestingPayment ? 'Requesting...' : 'Request Payment'}
             </Button>
-            {orderId && onRequestPayment && (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={requestingPayment}
-                onClick={() => void handleRequestPayment()}
-              >
-                {requestingPayment ? 'Requesting...' : 'Request Payment'}
-              </Button>
-            )}
-            <Button size="sm" variant="outline" onClick={() => onSignOff(false)}>
-              Reject
-            </Button>
-          </div>
-        )}
-      </CardContent>
+          )}
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 flex-1 rounded-none bg-lilac text-xs font-medium text-white shadow-none hover:bg-lilac/90 transition-colors"
+            onClick={() => onSignOff(true)}
+          >
+            <Check className="size-3.5 mr-1.5" />
+            Approve Order
+          </Button>
+        </div>
+      )}
     </Card>
   )
 }
@@ -752,6 +769,11 @@ export function BlockList({
   const parsed = withoutBorrowedLookImages(blocks ?? []) as ContentBlock[]
   if (parsed.length === 0) return null
 
+  // In conversation flow, explanatory narrative and items lead, while sign-off action cards trail.
+  const nonSignOff = parsed.filter((b) => b.type !== 'sign_off')
+  const signOff = parsed.filter((b) => b.type === 'sign_off')
+  const sortedBlocks = [...nonSignOff, ...signOff]
+
   const renderBlock = (block: ContentBlock, key: number) => (
     <BlockRenderer
       key={key}
@@ -767,7 +789,7 @@ export function BlockList({
     />
   )
 
-  const groups = groupBlocks(parsed)
+  const groups = groupBlocks(sortedBlocks)
 
   return (
     <div className="space-y-2">

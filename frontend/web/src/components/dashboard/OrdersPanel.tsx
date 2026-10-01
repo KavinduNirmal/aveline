@@ -111,6 +111,15 @@ const NEXT_TRANSITION: Record<string, { next: string; label: string }> = {
   delivered: { next: 'completed', label: 'Complete Order' },
 }
 
+const CANCELLATION_REASONS = [
+  "Doesn't need at the moment",
+  "Changed mind / Postponing",
+  "Pricing or budget constraint",
+  "Item unavailable or size issue",
+  "Duplicate or accidental order",
+  "Other",
+] as const
+
 export function OrdersPanel({ organization, role }: OrdersPanelProps) {
   const canManageOrders = hasPermission(role, 'orders:manage')
 
@@ -132,6 +141,8 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
 
   // Cancel reason prompt
   const [cancelModalOpen, setCancelModalOpen] = useState(false)
+  const [selectedReason, setSelectedReason] = useState<string>('')
+  const [customReason, setCustomReason] = useState('')
   const [cancelReason, setCancelReason] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -274,11 +285,14 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
     if (!selectedOrder || !canManageOrders) return
     setIsSubmitting(true)
     setActionError(null)
+    const finalReason = selectedReason === 'Other' ? customReason.trim() : (cancelReason || selectedReason)
     try {
-      await cancelOrder(organization.id, selectedOrder.id, cancelReason)
+      await cancelOrder(organization.id, selectedOrder.id, finalReason)
       toast.success('Order cancelled.')
       setCancelModalOpen(false)
       setSelectedOrder(null)
+      setSelectedReason('')
+      setCustomReason('')
       setCancelReason('')
       await runLoad()
     } catch (err) {
@@ -515,7 +529,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
           </DialogHeader>
 
           {selectedOrder && (
-            <div className="flex flex-col gap-4 py-2">
+            <div className="flex flex-col gap-4 py-2 max-h-[70vh] overflow-y-auto pr-1">
               {/* Order status banner */}
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 bg-muted/40">
                 <div className="flex items-center gap-2">
@@ -551,7 +565,9 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                     ) : (
                       selectedOrder.items.map((item) => (
                         <TableRow key={item.id ?? item.itemId}>
-                          <TableCell className="font-medium">{item.itemName}</TableCell>
+                          <TableCell className="font-medium max-w-[200px] md:max-w-xs truncate" title={item.itemName}>
+                            {item.itemName}
+                          </TableCell>
                           <TableCell className="text-right">{item.quantity}</TableCell>
                           <TableCell className="text-right">{formatMoney(item.unitPrice)}</TableCell>
                           <TableCell className="text-right text-muted-foreground">
@@ -578,8 +594,8 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
                       Subtotal: {formatMoney(selectedOrder.subtotal)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative flex-1 min-w-[140px]">
                       <Input
                         id="edit-discount-input"
                         type="number"
@@ -616,7 +632,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
 
               {/* Financial summary */}
               <div className="flex justify-end">
-                <div className="w-64 flex flex-col gap-1.5 text-sm">
+                <div className="w-full sm:w-64 flex flex-col gap-1.5 text-sm">
                   <div className="flex justify-between text-muted-foreground">
                     <span>Subtotal:</span>
                     <span>{formatMoney(selectedOrder.subtotal)}</span>
@@ -647,7 +663,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
           )}
 
           <DialogFooter className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {canManageOrders && selectedOrder && selectedOrder.status === 'pending_approval' && !isEditing && (
                 <Button
                   type="button"
@@ -683,7 +699,7 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
               )}
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {canManageOrders && selectedOrder && nextTransition && (
                 <Button
                   type="button"
@@ -708,7 +724,17 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
       </Dialog>
 
       {/* Cancel Order Dialog */}
-      <Dialog open={cancelModalOpen} onOpenChange={setCancelModalOpen}>
+      <Dialog
+        open={cancelModalOpen}
+        onOpenChange={(open) => {
+          setCancelModalOpen(open)
+          if (!open) {
+            setSelectedReason('')
+            setCustomReason('')
+            setCancelReason('')
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Cancel Order</DialogTitle>
@@ -716,20 +742,81 @@ export function OrdersPanel({ organization, role }: OrdersPanelProps) {
               Are you sure you want to cancel this order? This action cannot be reversed.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-2 py-2">
-            <Label htmlFor="cancel-reason">Reason for cancellation (optional)</Label>
-            <Input
-              id="cancel-reason"
-              value={cancelReason}
-              onChange={(e) => setCancelReason(e.target.value)}
-              placeholder="e.g. Customer requested cancellation"
-            />
+          <div className="flex flex-col gap-3 py-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="cancel-reason-select">Reason for cancellation (optional)</Label>
+              <Select
+                value={selectedReason}
+                onValueChange={(val) => {
+                  setSelectedReason(val)
+                  if (val !== 'Other') {
+                    setCancelReason(val)
+                  } else {
+                    setCancelReason(customReason)
+                  }
+                }}
+              >
+                <SelectTrigger id="cancel-reason-select" className="w-full">
+                  <SelectValue placeholder="Select a cancellation reason..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {CANCELLATION_REASONS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {CANCELLATION_REASONS.map((r) => (
+                <Button
+                  key={r}
+                  type="button"
+                  size="xs"
+                  variant={selectedReason === r ? 'default' : 'outline'}
+                  className="h-7 rounded-full text-xs"
+                  onClick={() => {
+                    setSelectedReason(r)
+                    if (r !== 'Other') {
+                      setCancelReason(r)
+                    } else {
+                      setCancelReason(customReason)
+                    }
+                  }}
+                >
+                  {r}
+                </Button>
+              ))}
+            </div>
+
+            {selectedReason === 'Other' && (
+              <div className="flex flex-col gap-1.5 pt-1">
+                <Label htmlFor="cancel-reason">Please specify reason</Label>
+                <Input
+                  id="cancel-reason"
+                  value={customReason}
+                  onChange={(e) => {
+                    setCustomReason(e.target.value)
+                    setCancelReason(e.target.value)
+                  }}
+                  placeholder="e.g. Customer requested cancellation"
+                  autoFocus
+                />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setCancelModalOpen(false)}
+              onClick={() => {
+                setCancelModalOpen(false)
+                setSelectedReason('')
+                setCustomReason('')
+                setCancelReason('')
+              }}
               disabled={isSubmitting}
             >
               Back

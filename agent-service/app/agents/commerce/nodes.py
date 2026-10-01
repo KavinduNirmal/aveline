@@ -201,7 +201,8 @@ def _quote_sentence(
                 break
 
     who = f"{name} is" if name else "This customer is"
-    sentences = [f"{who} on the {tier} tier."]
+    tier_label = f" ({cap:.0%} standing discount)" if cap > 0 else ""
+    sentences = [f"{who} on the {tier} tier{tier_label}."]
 
     for item in items[:5]:
         label = str(item.get("item_name") or "This piece")
@@ -222,34 +223,36 @@ def _quote_sentence(
                 prop_amount = line_total * combined_rate
                 discounted_total = max(0.0, line_total - prop_amount)
                 free_combined = min(cap + piece_discount, room)
+                breakdown = f"({tier} {proposed_discount:.0%} + Sp Dis. {piece_discount:.0%} = {combined_rate:.0%})"
                 if combined_rate > free_combined:
                     if combined_rate > room:
                         sentences.append(
                             f"A {proposed_discount:.0%} discount combined with the {piece_discount:.0%} piece promotion "
-                            f"({combined_rate:.0%} total, {_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
+                            f"{breakdown} ({_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
                             f"but requires owner sign-off because it breaches the {floor:.0%} margin floor."
                         )
                     else:
                         sentences.append(
                             f"A {proposed_discount:.0%} discount combined with the {piece_discount:.0%} piece promotion "
-                            f"({combined_rate:.0%} total, {_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
+                            f"{breakdown} ({_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
                             f"but requires owner sign-off."
                         )
                 else:
                     sentences.append(
                         f"A {proposed_discount:.0%} discount combined with the {piece_discount:.0%} piece promotion "
-                        f"({combined_rate:.0%} total, {_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
+                        f"{breakdown} ({_money(prop_amount)}) on {label} brings it to {_money(discounted_total)}, "
                         f"which can be applied without sign-off."
                     )
             else:
                 combined_rate = cap + piece_discount
                 combined_amount = line_total * combined_rate
                 discounted_total = max(0.0, line_total - combined_amount)
+                breakdown = f"({tier} {cap:.0%} + Sp Dis. {piece_discount:.0%} = {combined_rate:.0%})"
                 if combined_rate > room:
                     if cap > 0:
                         sentences.append(
                             f"{label} carries a {piece_discount:.0%} piece promotion, qualifying for a combined "
-                            f"{combined_rate:.0%} discount ({_money(combined_amount)}) to {_money(discounted_total)}, "
+                            f"{combined_rate:.0%} discount {breakdown} ({_money(combined_amount)}) to {_money(discounted_total)}, "
                             f"but requires owner sign-off because the {floor:.0%} margin floor allows a maximum discount of {room:.0%}."
                         )
                     else:
@@ -261,7 +264,7 @@ def _quote_sentence(
                     if cap > 0:
                         sentences.append(
                             f"{label} carries a {piece_discount:.0%} piece promotion, qualifying for a combined "
-                            f"{combined_rate:.0%} discount ({_money(combined_amount)}). Total: {_money(discounted_total)}."
+                            f"{combined_rate:.0%} discount {breakdown} ({_money(combined_amount)}). Total: {_money(discounted_total)}."
                         )
                     else:
                         sentences.append(
@@ -370,10 +373,10 @@ class CommerceAgent:
 
         context_lines = [
             f"Scenario: {scenario}",
-            f"Customer: {customer_name}",
+            f"Customer: {customer_name} ({state.get('loyalty_tier') or 'Regular'} Tier)",
             f"Items: {item_descriptions}",
             f"Subtotal: LKR {subtotal:,.2f}",
-            f"Discount: {discount_pct:.1%}",
+            f"Discount: {discount_pct:.1%} (LKR {state.get('discount_amount', 0.0):,.2f})",
             f"Total: LKR {total:,.2f}",
             f"Profit Margin: {margin:.1%}",
         ]
@@ -501,11 +504,27 @@ class CommerceAgent:
         # 2. Look up customer loyalty tier
         tier = state.get("loyalty_tier")
         if not tier:
-            if re.search(r"\bVIP\b", state.get("message", ""), re.IGNORECASE):
+            message_text = state.get("message", "")
+            if re.search(r"\bVIP\b", message_text, re.IGNORECASE):
                 tier = "VIP"
             else:
-                tier_info = await get_customer_loyalty_tier(org_id, customer_id, registry=self.registry)
-                tier = tier_info.get("tier", "Regular")
+                tier_info = await get_customer_loyalty_tier(
+                    org_id, customer_id, customer_name=customer_name, registry=self.registry
+                )
+        tier_norm = (tier or "").strip().lower()
+        if tier_norm == "vip":
+            tier_cap = 0.10
+        elif tier_norm in ("level 3", "level3"):
+            tier_cap = 0.07
+        elif tier_norm in ("level 2", "level2", "regular", "returning"):
+            tier_cap = 0.05
+        elif tier_norm in ("level 1", "level1"):
+            tier_cap = 0.03
+        else:
+            tier_cap = 0.0
+
+        # Apply customer's default tier loyalty discount when no explicit discount override was requested
+        effective_order_discount = proposed_discount if proposed_discount > 0.0 else tier_cap
 
         # 3. Apply discount & calculate margin
         total_piece_discount = sum(
@@ -513,15 +532,15 @@ class CommerceAgent:
             for item in items
         )
         if total_piece_discount > 0.0:
-            order_discount_amount = subtotal * proposed_discount
+            order_discount_amount = subtotal * effective_order_discount
             discount_amount = order_discount_amount + total_piece_discount
             total = max(0.0, subtotal - discount_amount)
             effective_discount_rate = discount_amount / subtotal if subtotal > 0 else 0.0
         else:
-            discount_res = apply_discount(subtotal, proposed_discount)
+            discount_res = apply_discount(subtotal, effective_order_discount)
             total = discount_res["total"]
             discount_amount = discount_res["discount_amount"]
-            effective_discount_rate = proposed_discount
+            effective_discount_rate = effective_order_discount
 
         margin_res = calculate_margin(total, total_cost)
         margin = margin_res["margin"]
@@ -553,7 +572,7 @@ class CommerceAgent:
                 approval_reason = f"Order margin {margin:.1%} is below minimum requirement of 25%"
             elif "DISCOUNT_LIMIT_EXCEEDED" in triggered_rules:
                 approval_type = "discount"
-                approval_reason = f"Requested discount {proposed_discount:.1%} exceeds {tier} tier cap"
+                approval_reason = f"Requested discount {effective_order_discount:.1%} exceeds {tier} tier cap"
 
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
@@ -567,6 +586,7 @@ class CommerceAgent:
             "total_cost": total_cost,
             "margin": margin,
             "loyalty_tier": tier,
+            "proposed_discount": effective_order_discount,
             "is_auto_approved": is_auto_approved,
             "requires_approval": requires_approval,
             "approval_type": approval_type,
@@ -575,7 +595,7 @@ class CommerceAgent:
             "flags": flags,
             # Carried into state so a quote applies the ceiling this evaluation just read, rather
             # than asking for the house rules a second time and risking two different answers.
-            "max_allowed_discount": float(state.get("max_allowed_discount") if state.get("max_allowed_discount") is not None else (rules_res.get("max_allowed_discount") or 0.0)),
+            "max_allowed_discount": float(state.get("max_allowed_discount") if state.get("max_allowed_discount") is not None else (rules_res.get("max_allowed_discount") or tier_cap)),
             "min_required_margin": float(state.get("min_required_margin") if state.get("min_required_margin") is not None else (rules_res.get("min_required_margin") or 0.0)),
         }
 
@@ -594,11 +614,33 @@ class CommerceAgent:
         if not org_id:
             return self._skip_output("organization context is missing")
 
-        tier_info = await get_customer_loyalty_tier(
-            org_id, state.get("customer_id"), registry=self.registry
-        )
-        tier = str(tier_info.get("tier") or "Regular")
-        cap = _rate(tier_info.get("max_allowed_discount"))
+        tier = state.get("loyalty_tier")
+        cap = _rate(state.get("max_allowed_discount"))
+        if not tier or cap <= 0.0:
+            message_text = state.get("message", "")
+            if not tier and re.search(r"\bVIP\b", message_text, re.IGNORECASE):
+                tier = "VIP"
+            else:
+                tier_info = await get_customer_loyalty_tier(
+                    org_id, state.get("customer_id"), customer_name=state.get("customer_name"), registry=self.registry
+                )
+                if not tier:
+                    tier = str(tier_info.get("tier") or "Regular")
+                if cap <= 0.0:
+                    cap = _rate(tier_info.get("max_allowed_discount"))
+
+        if cap <= 0.0:
+            tier_norm = (tier or "").strip().lower()
+            if tier_norm == "vip":
+                cap = 0.10
+            elif tier_norm in ("level 3", "level3"):
+                cap = 0.07
+            elif tier_norm in ("level 2", "level2", "regular", "returning"):
+                cap = 0.05
+            elif tier_norm in ("level 1", "level1"):
+                cap = 0.03
+            else:
+                cap = 0.0
 
         # Thresholds only, so that *reading* the policy cannot trip it: a zero total cannot exceed the
         # high-value threshold, a full margin cannot fall below the floor, and a zero discount cannot
@@ -612,6 +654,8 @@ class CommerceAgent:
             registry=self.registry,
         )
         floor = _rate(rules.get("min_required_margin"))
+        if floor <= 0.0:
+            floor = 0.25
 
         summary = _ceiling_sentence(
             tier=tier, cap=cap, floor=floor, name=state.get("customer_name")
@@ -648,9 +692,25 @@ class CommerceAgent:
         if not org_id or not items:
             return self._skip_output("no line items to quote")
 
-        tier = str(state.get("loyalty_tier") or "Regular")
+        tier = state.get("loyalty_tier")
+        if not tier:
+            message_text = state.get("message", "")
+            if re.search(r"\bVIP\b", message_text, re.IGNORECASE):
+                tier = "VIP"
+            else:
+                tier_info = await get_customer_loyalty_tier(
+                    org_id, state.get("customer_id"), customer_name=state.get("customer_name"), registry=self.registry
+                )
+                tier = str(tier_info.get("tier") or "Regular")
+
         cap = _rate(state.get("max_allowed_discount"))
+        if cap <= 0.0:
+            cap = 0.10 if tier == "VIP" else (0.05 if tier == "Regular" else 0.0)
+
         floor = _rate(state.get("min_required_margin"))
+        if floor <= 0.0:
+            floor = 0.25
+
         proposed_discount = _rate(state.get("proposed_discount"))
         if proposed_discount <= 0.0:
             extracted = extract_discount_rate(state.get("message", ""))
@@ -699,11 +759,21 @@ class CommerceAgent:
         customer_name = state.get("customer_name")
         tier = state.get("loyalty_tier") or "Regular"
 
+        subtotal = state.get("subtotal", 0.0)
+        discount_amount = state.get("discount_amount", 0.0)
+
         if customer_name:
-            fallback_summary = (
-                f"Order prepared for **{customer_name}** ({tier} Tier)! Total: {_money(total)}. "
-                f"Please choose an action below to proceed: Approve Order, Request Payment, or Reject."
-            )
+            if discount_amount > 0 and subtotal > 0:
+                eff_pct = discount_amount / subtotal
+                fallback_summary = (
+                    f"Order prepared for **{customer_name}** ({tier} Tier) with {eff_pct:.0%} discount! Total: {_money(total)}. "
+                    f"Please choose an action below to proceed: Approve Order, Request Payment, or Reject."
+                )
+            else:
+                fallback_summary = (
+                    f"Order prepared for **{customer_name}** ({tier} Tier)! Total: {_money(total)}. "
+                    f"Please choose an action below to proceed: Approve Order, Request Payment, or Reject."
+                )
         else:
             fallback_summary = (
                 f"Order prepared: {reason} (Total: {_money(total)}). "

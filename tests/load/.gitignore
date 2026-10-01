@@ -1,0 +1,5 @@
+# k6 writes its raw time series and its compact summary into the working
+# directory it is run from. They are per-run evidence, uploaded as a CI
+# artefact, not source.
+k6-results*.json
+k6-critical-workflows-summary.json

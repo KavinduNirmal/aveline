@@ -27,16 +27,18 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Validate config, init tracing + metrics, start the Redis bus, and stop cleanly."""
-    validate_startup_settings(settings)
-    init_tracing(settings)
-    init_metrics(settings)
+    current_settings = get_settings()
+    validate_startup_settings(current_settings)
+    init_tracing(current_settings)
+    init_metrics(current_settings)
     event_bus: RedisEventBus | None = None
-    if settings.redis_url:
-        redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    if current_settings.redis_url:
+        redis = aioredis.from_url(current_settings.redis_url, decode_responses=True)
         event_bus = RedisEventBus(redis)
-        app.state.event_bus = event_bus
-        await event_bus.start(settings.subscribe_event_types)
-        logger.info("Redis event bus started (subscribing to %s).", settings.subscribe_event_types)
+        if app is not None:
+            app.state.event_bus = event_bus
+        await event_bus.start(current_settings.subscribe_event_types)
+        logger.info("Redis event bus started (subscribing to %s).", current_settings.subscribe_event_types)
     else:
         logger.warning("REDIS_URL is not configured; Redis event bus is disabled.")
 

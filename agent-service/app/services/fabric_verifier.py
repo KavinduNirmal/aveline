@@ -9,14 +9,14 @@ from app.schemas.atelier_scraper import ScrapedAtelierProduct
 
 _COLOR_FAMILIES: dict[str, set[str]] = {
     "red": {"red", "crimson", "deep crimson", "maroon", "deep maroon", "ruby", "ruby red", "burgundy", "royal burgundy", "scarlet", "wine", "cherry", "vermilion", "rust"},
-    "blue": {"blue", "navy", "midnight navy", "sapphire", "midnight sapphire", "cobalt", "royal blue", "indigo", "sky blue", "powder blue", "baby blue", "teal", "peacock teal", "aqua", "turquoise", "peacock"},
-    "green": {"green", "emerald", "emerald green", "sage", "sage green", "mint", "mint green", "olive", "deep olive", "jade", "forest green", "bottle green", "bottle", "forest", "dark green"},
-    "pink": {"pink", "blush", "blush pink", "rose", "dusty rose", "rose pink", "magenta", "fuchsia", "coral", "peach", "apricot", "salmon"},
-    "yellow": {"yellow", "gold", "champagne gold", "antique gold", "rose gold", "zari gold", "mustard", "mustard ochre", "ochre", "buttercup", "butter yellow"},
-    "purple": {"purple", "violet", "lavender", "lilac", "amethyst", "deep amethyst", "plum"},
+    "blue": {"blue", "navy", "midnight navy", "sapphire", "midnight sapphire", "cobalt", "royal blue", "indigo", "sky blue", "skyblue", "powder blue", "baby blue", "teal", "peacock teal", "aqua", "turquoise", "peacock", "darkblue", "lightblue"},
+    "green": {"green", "emerald", "emerald green", "emeraldgreen", "sage", "sage green", "sagegreen", "mint", "mint green", "mintgreen", "olive", "deep olive", "jade", "forest green", "bottle green", "bottlegreen", "forest", "dark green", "darkgreen", "chartreuse", "lime"},
+    "pink": {"pink", "blush", "blush pink", "rose", "dusty rose", "dustyrose", "rose pink", "rosepink", "magenta", "fuchsia", "coral", "peach", "apricot", "salmon"},
+    "yellow": {"yellow", "gold", "champagne gold", "antique gold", "rose gold", "zari gold", "mustard", "mustard ochre", "mustard yellow", "mustardyellow", "ochre", "buttercup", "butter yellow", "chartreuse", "lemon", "canary", "marigold", "amber", "golden", "lime", "lightyellow"},
+    "purple": {"purple", "violet", "lavender", "lilac", "amethyst", "deep amethyst", "plum", "mauve"},
     "white": {"white", "ivory", "heirloom ivory", "off-white", "cream", "pearl"},
-    "black": {"black", "midnight black", "charcoal", "slate grey", "grey", "gray"},
-    "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso"},
+    "black": {"black", "midnight black", "charcoal", "slate grey", "grey", "gray", "noir"},
+    "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso", "beige", "tan"},
 }
 
 
@@ -36,7 +36,7 @@ class FabricVerifierService:
             return []
 
         ranked: list[ScrapedAtelierProduct] = []
-        q_tokens = set(query.lower().replace("-", " ").split())
+        q_tokens = set(query.lower().replace("-", " ").replace("–", " ").split())
         target_fab = (detected_fabric or "").lower().strip()
         target_col = (detected_color or "").lower().strip()
         target_cat = (detected_category or "").lower().strip()
@@ -45,43 +45,61 @@ class FabricVerifierService:
         allowed_shades: set[str] = set()
         conflicting_shades: set[str] = set()
         if target_col:
+            target_words = [w for w in re.findall(r"\b\w+\b", target_col) if len(w) > 2]
+            matched_fams: set[str] = set()
             for fam_key, shades in _COLOR_FAMILIES.items():
-                if target_col == fam_key or target_col in shades:
+                if target_col == fam_key or target_col in shades or any(w in shades or w == fam_key for w in target_words):
+                    matched_fams.add(fam_key)
                     allowed_shades.update(shades)
-                else:
+
+            for fam_key, shades in _COLOR_FAMILIES.items():
+                if fam_key not in matched_fams:
                     conflicting_shades.update(shades)
 
         for p in products:
-            title_lower = p.title.lower()
+            title_lower = p.title.lower().replace("-", " ").replace("–", " ")
             score = 0.70  # Baseline catalog match score
 
             # 1. Strict Color Verification
-            if target_col:
+            if target_col and allowed_shades:
                 has_matching_color = any(
-                    re.search(r"\b" + re.escape(shade) + r"\b", title_lower)
+                    (shade in title_lower or re.search(r"\b" + re.escape(shade) + r"\b", title_lower))
                     for shade in allowed_shades
                 )
                 has_conflicting_color = any(
-                    re.search(r"\b" + re.escape(shade) + r"\b", title_lower)
+                    (shade in title_lower or re.search(r"\b" + re.escape(shade) + r"\b", title_lower))
                     for shade in conflicting_shades
-                    if len(shade) > 3
+                    if len(shade) > 3 and shade not in allowed_shades
                 )
 
                 if has_matching_color:
                     score += 0.20
                 elif has_conflicting_color:
-                    # Active color mismatch (e.g. asked for red, title is "Blue Soft Organza Saree")
+                    # Active color mismatch (e.g. asked for yellow, title is "Skyblue - silver Lehenga")
                     score -= 0.35
 
             # 2. Fabric alignment bonus
             if target_fab and target_fab in title_lower:
                 score += 0.15
 
-            # 3. Category alignment bonus / check
+            # 3. Category alignment and silhouette conflict check
             if target_cat:
-                cat_singular = target_cat.rstrip("s")
-                if cat_singular in title_lower or target_cat in title_lower:
-                    score += 0.10
+                cat_lower = target_cat.lower()
+                if "lehenga" in cat_lower or "choli" in cat_lower or "ghagra" in cat_lower:
+                    if any(w in title_lower for w in ("lehenga", "choli", "ghagra")):
+                        score += 0.15
+                    elif any(w in title_lower for w in ("saree", "sari", "gown", "dress", "kurti", "tunic")):
+                        score -= 0.30
+                elif "saree" in cat_lower or "sari" in cat_lower:
+                    if any(w in title_lower for w in ("saree", "sari", "kanjeevaram", "banaras", "banarasi", "chanderi")):
+                        score += 0.15
+                    elif any(w in title_lower for w in ("lehenga", "gown", "dress", "jumpsuit")):
+                        score -= 0.30
+                elif "gown" in cat_lower or "dress" in cat_lower:
+                    if any(w in title_lower for w in ("gown", "dress", "maxi", "midi", "frock")):
+                        score += 0.15
+                    elif any(w in title_lower for w in ("saree", "sari", "lehenga")):
+                        score -= 0.30
                 elif any(incompatible in title_lower for incompatible in ("earring", "necklace", "bangle", "footwear", "clutch", "bag")):
                     score -= 0.30
 
@@ -95,7 +113,7 @@ class FabricVerifierService:
                 continue
 
             notes = f"Verified by Elle: Partner piece '{p.title}' from {p.atelier_name}."
-            if target_col and any(re.search(r"\b" + re.escape(shade) + r"\b", title_lower) for shade in allowed_shades):
+            if target_col and allowed_shades and any(re.search(r"\b" + re.escape(shade) + r"\b", title_lower) for shade in allowed_shades):
                 notes += f" Matches requested {detected_color} color palette."
             if target_fab and target_fab in title_lower:
                 notes += f" Matches requested {detected_fabric} weave."

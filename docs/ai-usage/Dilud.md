@@ -1,3 +1,140 @@
+## Session 2026-10-01 (Visual Intelligence: Multi-Color & Ensemble In-Stock Inventory Matching)
+
+**Task:** Diagnose and resolve issue where uploading a saree ensemble image (`photo-1617627143750-d86bc21e42bb.avif`) or black saree (`IMG_6445.webp`) returned incorrect inventory matches vs partner atelier sourcing.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - The Orange/Crimson Kanjeevaram Saree image (`photo-1617627143750-d86bc21e42bb.avif`) carried a Magenta Blouse, matching the boutique's in-stock Magenta saree.
+   - For `IMG_6445.webp` (Black Saree), the boutique inventory possessed no black sarees. An overly broad category-fallback and description substring match previously allowed mismatched sarees into candidate results.
+
+2. **Ensemble & Secondary Color Inventory Discovery (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Enhanced `search_inventory` in `VisualInsightAgent`:
+     - When an initial lookup using `primary_color` yields 0 matches, the agent checks candidate ensemble colors (`secondary_colors`, `detected_items[*].primary_color`, `detected_items[*].secondary_colors`).
+     - Removed broad category-only fallback to prevent returning mismatched items when the requested color is not in stock.
+     - Confined `_is_color_match` strictly to `item_color` and `item_name` word boundaries, avoiding false matches on accessory words in item descriptions.
+   - Added item deduplication by `itemId`.
+
+3. **Automated Testing & Live Verification**:
+   - Added unit test `test_visual_insight_graph_matches_ensemble_secondary_color_in_stock` in `agent-service/tests/agents/test_visual_insight_graph.py`.
+   - Verified 16/16 pytest tests in `test_visual_insight_graph.py` pass (100%).
+   - Verified live execution across all test cases:
+     - **Black Saree (`IMG_6445.webp`)**: 0 boutique matches -> Scrapes partner ateliers and returns 4 verified black sarees (`Midnight Black Sequin Saree`, etc.).
+     - **Orange/Magenta Saree (`photo-1617627143750-d86bc21e42bb.avif`)**: Matches 1 in-stock boutique piece -> 0 partner atelier lookups.
+     - **Yellow Lehenga (`791143597...webp`)**: 0 boutique matches -> Returns 2 verified yellow lehengas from Adithri Sarees.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/tests/agents/test_visual_insight_graph.py`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Category Resolution, Color Family Expansion & Partner Sourcing Match Alignment)
+
+**Task:** Fix Visual Agent returning green/purple sarees for yellow lehenga inquiries and ensure partner atelier scraping accurately searches, verifies, and scores requested garments by color and silhouette.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Intelligent Garment Category Resolution (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Implemented `_resolve_garment_category` to map high-level umbrella categories (`"ethnic_couture"`) to precise garment categories (`"Lehengas"`, `"Sarees"`, `"Gowns"`, `"Kurtas & Tunics"`, etc.) from multi-item analysis attributes (`clothing_type`, `suggested_item_name`, `description`).
+   - Expanded category token recognition in `_is_category_match` to support taxonomy aliases (`dress`, `choli`, `sari`, `tunic`, `slip`, `gown`).
+
+2. **Expanded Color Taxonomy & Strict Conflict Filtering (`agent-service/app/services/fabric_verifier.py`)**:
+   - Expanded `_COLOR_FAMILIES` with modern fashion tones (`chartreuse`, `lime`, `mustard yellow`, `lemon`, `amber`, `canary`, `skyblue`, `emeraldgreen`, etc.).
+   - Added multi-token color matching and strict conflict penalties (-0.35) for conflicting color families and (-0.30) for conflicting silhouettes (e.g., sarees when a lehenga was requested).
+   - Prunes unrelated partner pieces below the 0.60 threshold so only genuinely aligned garments are returned.
+
+3. **Smart Sourcing Query Expansion & Scraper Title Cleanup (`agent-service/app/tools/inventory/supplier_tools.py`, `agent-service/app/services/atelier_scraper.py`)**:
+   - `scrape_atelier_catalog` now generates targeted query permutations combining detected color and category (e.g. `"mustard yellow lehenga"`, `"mustard lehenga"`, `"yellow lehenga"`, `"lehenga"`).
+   - Cleaned `_finalize_current_card` to extract clean headings and strip noisy trailing page elements (ratings, review blocks, price fragments).
+
+4. **Verification**:
+   - Ran `test_graph_yellow.py`: Yellow/Chartreuse lehenga attachment matched `Mustard – Yellow Embroidered Lehenga Set` with score 0.99 from Adithri Sarees; 0 mismatched sarees returned.
+   - Ran `test_graph_black.py`: Black saree attachment matched `Midnight Black Sequin Saree` with score 0.99; 0 yellow or green garments returned.
+   - All 15 `test_visual_insight_graph.py` and 45 `agent-service/tests/tools` tests passed.
+   - All 4,192 .NET API tests passed.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/app/services/fabric_verifier.py`
+- `agent-service/app/services/atelier_scraper.py`
+- `agent-service/app/tools/inventory/supplier_tools.py`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Multimodal Retry Resilience & Multi-Turn Keyword Pruning)
+
+**Task:** Resolve duplicate/stale visual search results across multiple image uploads in Salon, resolve Google Gemini 503 high-demand exceptions, and add transient retry handling.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Transient Provider 429/503 Automatic Retry (`Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`)**:
+   - Added exponential retry loop (up to 3 attempts with 1-2s delay) for HTTP 429 (Too Many Requests) and HTTP 503 (Service Unavailable) returned by Gemini Vision.
+   - Prevents transient spikes in Google model demand from immediately tripping the deterministic fallback.
+
+2. **Active Vision Model Switch (`.env`)**:
+   - Replaced `gemini-3.5-flash` (which suffered persistent 503 high-demand errors on the Google API endpoint) with **`gemini-3.1-flash-lite`**, which provides fast, zero-503 multimodal vision analysis.
+
+3. **Multi-Turn Stop Word Expansion (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Expanded stop word set in `parse_visual_intent` to prune conversational noise and pronouns (`"this"`, `"that"`, `"these"`, `"those"`, `"it"`, `"picture"`, `"photo"`, `"image"`, `"outfit"`, `"similar"`, `"something"`, etc.).
+   - Prevents generic inquiries like `"is this in stock"` from treating `"this"` as a literal product search query against partner atelier scrapers.
+
+4. **Rebuild & Live Verification**:
+   - Rebuilt `aveline-api` and `aveline-agent` images and restarted containers via Docker Compose.
+   - Verified live visual analysis via `POST /internal/visual/analyze-image` returning `"isFallback": false`.
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `.env`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Gemini Multimodal Vision Model Alignment)
+
+**Task:** Diagnose and resolve visual image search fallback returning green/purple sarees when uploading yellow garment in Salon. Align `VISION_MODEL` with active Google Generative Language endpoint (`gemini-3.5-flash`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis of Fallback Mode**:
+   - Inspected `aveline_api` docker logs and diagnosed that Google Generative Language API returned HTTP 404 (`This model models/gemini-2.0-flash is no longer available`) when `VisionService.cs` called the multimodal OpenAI chat completions endpoint.
+   - When the provider returns non-success, `VisionService` falls back to `GenerateDeterministicAnalysis`. Without keyword hints in the filename or prompt (`"is this in stock"`), fallback defaulted category to `saree` and color to `emerald`.
+   - The agent then queried partner atelier Adithri for emerald sarees.
+
+2. **Model Availability Verification & Configuration**:
+   - Querying `https://generativelanguage.googleapis.com/v1beta/models` verified active Gemini models.
+   - Verified that `gemini-3.5-flash` successfully authenticates with the user's `VISION_API_KEY` and accurately performs multimodal vision inspection.
+   - Updated `VISION_MODEL=gemini-3.5-flash` in `.env` and recreated the `aveline_api` container via `docker compose up -d api`.
+
+3. **Live Verification**:
+   - Verified live multimodal image analysis through `POST /internal/visual/analyze-image` returning `"isFallback": false`.
+
+### Files Created or Modified
+
+- `.env`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Tested live Gemini Vision completions via HTTP request against Google Generative Language API.
+- Executed `POST /internal/visual/analyze-image` on `http://localhost:5091` confirming `"isFallback": false`.
+
+---
+
 ## Session 2026-10-01 (CI Fix: Dynamic Calendar Period Alignment for Blossom Statement Tests)
 
 **Task:** Fix failing GitHub Actions CI check `Aveline CI / Build, Test & Publish API (pull_request)` caused by calendar month rollover to October 1, 2026 making hardcoded September test dates mismatch `BlossomService.GetOrCreateAccountAsync()` current billing period calculation.

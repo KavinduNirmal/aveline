@@ -525,3 +525,79 @@ async def test_visual_insight_graph_skips_customer_memory_context_messages():
     assert output["partner_sourcing_options"] is None
     # Registry inventory search must not have even been called
     registry.search_inventory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_visual_insight_graph_matches_ensemble_secondary_color_in_stock():
+    """When an uploaded image has ensemble/secondary colors (e.g. Orange Saree + Magenta Blouse),
+
+    if boutique inventory has a piece matching the secondary color (Magenta), it must match
+    in-stock inventory directly and completely bypass partner atelier sourcing.
+    """
+    registry = MagicMock()
+
+    # When querying primary color 'Crimson Red' return empty; when querying secondary color 'Magenta' return in-stock saree
+    async def mock_search(criteria):
+        col = (criteria.get("color") or "").lower()
+        if col == "magenta":
+            return {
+                "items": [
+                    {
+                        "itemId": "saree-magenta-01",
+                        "name": "Kanjeevaram Saree",
+                        "category": "Sarees",
+                        "color": "Magenta",
+                        "price": 45000.0,
+                        "stock": 4,
+                        "imageUrl": "https://images.aveline.luxury/saree.jpg",
+                    }
+                ]
+            }
+        return {"items": []}
+
+    registry.search_inventory = AsyncMock(side_effect=mock_search)
+    registry.analyze_product_image = AsyncMock(
+        return_value={
+            "category": "ethnic_couture",
+            "primary_color": "Crimson Red",
+            "secondary_colors": ["Golden Yellow", "Magenta"],
+            "garmentType": "Kanjeevaram Saree",
+            "detected_items": [
+                {
+                    "clothing_type": "Kanjeevaram Saree",
+                    "category": "ethnic_couture",
+                    "primary_color": "Crimson Red",
+                    "secondary_colors": ["Golden Yellow", "Magenta"],
+                },
+                {
+                    "clothing_type": "Blouse",
+                    "category": "top",
+                    "primary_color": "Magenta",
+                    "secondary_colors": ["Gold"],
+                },
+            ],
+            "confidenceScore": 0.98,
+        }
+    )
+
+    graph = build_visual_graph(registry)
+
+    state = {
+        "org_id": REAL_ORG,
+        "customer_id": "cust-nirmal",
+        "message": "is this saree in stock?",
+        "image_ref_kind": "attachment",
+        "image_ref_id": REAL_ATTACHMENT,
+        "staff_query": False,
+    }
+
+    result = await graph.ainvoke(state)
+    output = result["output"]
+
+    assert output["status"] == "success"
+    assert len(output["items"]) == 1
+    assert output["items"][0]["name"] == "Kanjeevaram Saree"
+    assert output["items"][0]["color"] == "Magenta"
+    assert output["partner_sourcing_options"] is None
+    assert output["sourcing_request"] is None
+

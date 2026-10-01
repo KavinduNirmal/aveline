@@ -205,29 +205,42 @@ public class VisionService : IVisionService
                 ? "chat/completions"
                 : "v1/chat/completions";
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, relativePath)
+            HttpResponseMessage? response = null;
+            string content = string.Empty;
+
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                Content = JsonContent.Create(payload)
-            };
-            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_apiKey}");
-            request.Headers.TryAddWithoutValidation("x-goog-api-key", _apiKey);
+                using var request = new HttpRequestMessage(HttpMethod.Post, relativePath)
+                {
+                    Content = JsonContent.Create(payload)
+                };
+                request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_apiKey}");
+                request.Headers.TryAddWithoutValidation("x-goog-api-key", _apiKey);
 
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            // The body is read before anything else parses it. The request has already been sent, so
-            // the provider has already billed it, and usage must be recorded from whatever came back
-            // - including an error body, and including a reply whose JSON is truncated and makes
-            // `JsonDocument.Parse` below throw. Recording after that parse lost the charge for
-            // exactly the truncated replies this class documents DeepSeek returning in practice.
-            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+                response = await _httpClient.SendAsync(request, cancellationToken);
+                content = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            if (!response.IsSuccessStatusCode)
+                if (!response.IsSuccessStatusCode && ((int)response.StatusCode == 429 || (int)response.StatusCode == 503) && attempt < 2)
+                {
+                    _logger.LogWarning(
+                        "Vision API returned transient status {StatusCode}; retrying attempt {Attempt}/2 after backoff...",
+                        response.StatusCode,
+                        attempt + 1);
+                    await Task.Delay(1000 * (attempt + 1), cancellationToken);
+                    continue;
+                }
+
+                break;
+            }
+
+            if (response is null || !response.IsSuccessStatusCode)
             {
                 // The body names the actual fault ("max_tokens too large", "unsupported content
                 // type", ...). Without it a 400/404 is indistinguishable from a bad key, which is
                 // how a misconfiguration stays invisible across many uploads.
                 _logger.LogWarning(
                     "Vision API returned status {StatusCode}; falling back to deterministic analysis. Provider said: {ErrorBody}",
-                    response.StatusCode,
+                    response?.StatusCode,
                     Truncate(content, 800));
 
                 // A failed call is still a billed call when the provider returned a usage block.

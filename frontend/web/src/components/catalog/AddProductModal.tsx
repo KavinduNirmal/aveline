@@ -351,9 +351,7 @@ export function AddProductModal({
         styling = 'Drape gracefully over tailored sherwanis, classic silk sarees, or sleeveless evening gowns.'
         break
       case 'Jewelry & Accessories':
-        narrative = `Bespoke ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} fashioned in ${activeFabric.toLowerCase()}, adorned with brilliant ${activePattern.toLowerCase()} craftsmanship. Designed to elevate luxury evening ensembles with radiant elegance.`
-        styling = 'Pair as the focal statement piece with deep neckline silks or classic monochromatic silhouettes.'
-        break
+        return ''
       case 'Footwear':
         narrative = `Handcrafted ${activeColor.toLowerCase()} ${cleanGarment.toLowerCase()} in fine ${activeFabric.toLowerCase()}, highlighted with signature ${activePattern.toLowerCase()} detailing and comfort engineering.`
         styling = 'Pair with bespoke couture tailoring or celebratory celebratory ensembles.'
@@ -368,6 +366,18 @@ export function AddProductModal({
 
   const handleCategoryChange = (newCategory: string) => {
     setCategory(newCategory)
+
+    if (newCategory === 'Jewelry & Accessories') {
+      setGarmentType('')
+      setFabric('')
+      setPattern('')
+      setStyle('')
+      setColor('')
+      setColorHex('')
+      setAiConfidence(null)
+      setDescription('')
+      return
+    }
 
     let nextGarment = garmentType
     const gLower = (garmentType || '').toLowerCase()
@@ -396,7 +406,7 @@ export function AddProductModal({
         case 'Trousers & Pants': nextGarment = 'Tailored Formal Trousers'; break;
         case 'Outerwear': nextGarment = 'Tailored Boutique Blazer'; break;
         case 'Drapes & Shawls': nextGarment = 'Handwoven Cashmere Shawl'; break;
-        case 'Jewelry & Accessories': nextGarment = 'Heirloom Kundan Necklace'; break;
+        case 'Jewelry & Accessories': nextGarment = ''; break;
         case 'Footwear': nextGarment = 'Handcrafted Artisan Footwear'; break;
         default: nextGarment = `${newCategory} Piece`;
       }
@@ -574,6 +584,17 @@ export function AddProductModal({
         throw new Error('Analysis yielded no attributes')
       }
 
+      if (resolvedCategory === 'Jewelry & Accessories') {
+        resolvedGarment = ''
+        resolvedFabric = ''
+        resolvedPattern = ''
+        resolvedStyle = ''
+        resolvedColor = ''
+        resolvedHex = ''
+        resolvedConfidence = null
+        resolvedDesc = ''
+      }
+
       // Update state hooks to refresh all form inputs immediately
       if (backendResult?.items && backendResult.items.length > 0) {
         setDetectedGarments(backendResult.items)
@@ -598,7 +619,9 @@ export function AddProductModal({
 
       setAnalyzing(false)
       toast.success('Visual attributes extracted via Vision AI', {
-        description: `${resolvedGarment} · ${resolvedFabric} · ${resolvedColor}`,
+        description: resolvedCategory === 'Jewelry & Accessories'
+          ? 'Jewelry & Accessories piece'
+          : `${resolvedGarment} · ${resolvedFabric} · ${resolvedColor}`,
       })
       return
     } catch {
@@ -1093,14 +1116,14 @@ export function AddProductModal({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="detected-garment" className="text-xs font-medium text-foreground/80">
-                      Cloth / Garment
+                      {category === 'Jewelry & Accessories' ? 'Piece / Item Type' : 'Cloth / Garment'}
                     </Label>
                     <Input
                       id="detected-garment"
-                      value={garmentType !== null ? garmentType : category}
+                      value={garmentType !== null ? garmentType : (category === 'Jewelry & Accessories' ? '' : category)}
                       onChange={(e) => handleGarmentTypeChange(e.target.value)}
-                      placeholder="e.g. Banarasi Silk Brocade Saree"
-                      title={garmentType !== null ? garmentType : category}
+                      placeholder={category === 'Jewelry & Accessories' ? 'e.g. Gold Necklace' : 'e.g. Banarasi Silk Brocade Saree'}
+                      title={garmentType !== null ? garmentType : (category === 'Jewelry & Accessories' ? '' : category)}
                       className="h-8 text-xs bg-background/90"
                     />
                   </div>
@@ -1127,7 +1150,7 @@ export function AddProductModal({
                           const hex = getColorHex(val, '')
                           if (hex) setColorHex(hex)
                         }}
-                        placeholder="e.g. Emerald Green"
+                        placeholder={category === 'Jewelry & Accessories' ? 'e.g. Antique Gold' : 'e.g. Emerald Green'}
                         title={color}
                         className="h-8 text-xs min-w-0 flex-1 bg-background/90"
                       />
@@ -1136,14 +1159,14 @@ export function AddProductModal({
 
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="detected-fabric" className="text-xs font-medium text-foreground/80">
-                      Detected Fabric
+                      {category === 'Jewelry & Accessories' ? 'Material' : 'Detected Fabric'}
                     </Label>
                     <Input
                       id="detected-fabric"
                       value={fabric}
                       onChange={(e) => setFabric(e.target.value)}
                       aria-label="Detected fabric"
-                      placeholder="e.g. Pure Mulberry Silk"
+                      placeholder={category === 'Jewelry & Accessories' ? 'e.g. 22K Gold / Kundan' : 'e.g. Pure Mulberry Silk'}
                       title={fabric}
                       className="h-8 text-xs bg-background/90"
                     />
@@ -1151,7 +1174,7 @@ export function AddProductModal({
 
                   <div className="flex flex-col gap-1.5">
                     <Label htmlFor="detected-pattern" className="text-xs font-medium text-foreground/80">
-                      Style / Pattern
+                      {category === 'Jewelry & Accessories' ? 'Craftsmanship / Details' : 'Style / Pattern'}
                     </Label>
                     <Input
                       id="detected-pattern"
@@ -1161,7 +1184,7 @@ export function AddProductModal({
                         setStyle(e.target.value)
                       }}
                       aria-label="Style and pattern"
-                      placeholder="e.g. Gold Zari Brocade"
+                      placeholder={category === 'Jewelry & Accessories' ? 'e.g. Kundan / Polki Embellishment' : 'e.g. Gold Zari Brocade'}
                       title={pattern || style}
                       className="h-8 text-xs bg-background/90"
                     />

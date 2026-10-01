@@ -458,6 +458,33 @@ describe('the add/edit piece drawer', () => {
       expect(descTextarea.value).toMatch(/Sculpted midnight blue luminous evening gown in luminous georgette/i)
       expect(descTextarea.value).toMatch(/Styling: Complement with diamond drop earrings/i)
     })
+
+    it('clears and keeps all garment attributes empty when switching to Jewelry & Accessories', async () => {
+      const user = userEvent.setup()
+      renderDrawer({
+        editingItem: item({
+          category: 'Lehengas',
+          color: 'Mustard Ochre',
+          fabric: 'Pure Mulberry Silk',
+          pattern: 'Gold Zari Brocade',
+          description: 'Flared silk lehenga description',
+        }),
+      })
+
+      // Switch category to Jewelry & Accessories
+      await user.click(screen.getByRole('combobox', { name: /category/i }))
+      await user.click(screen.getByRole('option', { name: /jewelry & accessories/i }))
+
+      // Garment attributes should be cleared and kept empty
+      expect(screen.getByLabelText(/piece \/ item type/i)).toHaveValue('')
+      expect(screen.getByLabelText(/detected fabric|material/i)).toHaveValue('')
+      expect(screen.getByLabelText(/craftsmanship \/ details|style and pattern/i)).toHaveValue('')
+      expect(screen.getByLabelText(/colour name/i)).toHaveValue('')
+
+      const descTextarea = screen.getByPlaceholderText(/detailed description, weave information/i) as HTMLTextAreaElement
+      expect(descTextarea.value).toBe('')
+    })
   })
 })
+
 

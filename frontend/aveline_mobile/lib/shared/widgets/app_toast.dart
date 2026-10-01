@@ -5,6 +5,10 @@ import 'package:flutter/material.dart';
 /// [message] is the text to show; when [error] is true it uses the theme's error
 /// palette so failures stand out.
 ///
+/// [title] adds a short headline above [message]. A failure needs to say what
+/// happened *and* what to do about it, and one line cannot carry both, so errors
+/// are shown as a title plus a sentence.
+///
 /// [actionLabel] and [onAction] add an action to the right of the message - the
 /// Undo an inbox offers after a delete. Both are needed: a label with nothing
 /// behind it is a dead end, and a callback with no label is invisible.
@@ -12,25 +16,51 @@ abstract final class AppToast {
   static void show(
     BuildContext context,
     String message, {
+    String? title,
     bool error = false,
     String? actionLabel,
     VoidCallback? onAction,
-    Duration duration = const Duration(seconds: 3),
+    Duration? duration,
   }) {
     final messenger = ScaffoldMessenger.maybeOf(context);
     if (messenger == null) {
       return;
     }
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final foreground = error ? scheme.onErrorContainer : scheme.onInverseSurface;
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(message, style: TextStyle(color: foreground)),
+          content: title == null
+              ? Text(message, style: TextStyle(color: foreground))
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        color: foreground,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      message,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: foreground,
+                      ),
+                    ),
+                  ],
+                ),
           behavior: SnackBarBehavior.floating,
           backgroundColor: error ? scheme.errorContainer : scheme.inverseSurface,
-          duration: duration,
+          // An error carries more to read than a confirmation, so it stays up
+          // long enough to be read rather than being dismissed mid-sentence.
+          duration: duration ??
+              (error ? const Duration(seconds: 6) : const Duration(seconds: 3)),
           action: actionLabel != null && onAction != null
               ? SnackBarAction(
                   label: actionLabel,

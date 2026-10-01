@@ -142,6 +142,7 @@ async def _pause(saver: InMemorySaver, thread_id: str = THREAD_ID):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.golden_behaviour  # GC-07: an over-threshold purchase pauses for approval
 async def test_a_purchase_over_the_threshold_pauses_for_approval(shared_saver):
     """The bug ADR-024 was written for: this message produced no pause and no order."""
     response = await _pause(shared_saver)
@@ -202,6 +203,7 @@ async def test_a_message_with_no_items_never_pauses(shared_saver):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.golden_behaviour  # GC-07: an approval settles the deal
 async def test_an_approval_settles_the_deal(shared_saver):
     await _pause(shared_saver)
 
@@ -217,6 +219,7 @@ async def test_an_approval_settles_the_deal(shared_saver):
     assert commerce["needs_approval"] is False
 
 
+@pytest.mark.golden_behaviour  # GC-07: a rejection cancels the deal
 async def test_a_rejection_cancels_the_deal(shared_saver):
     await _pause(shared_saver)
 

@@ -13,3 +13,10 @@ known-first-party = ["app"]
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# The eight golden behaviour cases of `tab:ai-golden`
+# (docs/final_document/se3110/chapters/11-agentic-ai.tex:81-105). The marker is applied to the
+# specific test functions the table names; `scripts/run_behaviour_cases.py` selects exactly those
+# node ids and writes a pass-rate report. `pytest -m golden_behaviour` runs the same set.
+markers = [
+    "golden_behaviour: carries one of the eight named golden behaviour cases (GC-01..GC-08)",
+]

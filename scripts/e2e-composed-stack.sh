@@ -105,11 +105,14 @@ case "${REDIS_HOST:-}" in
   postgres|redis|"") REDIS_HOST=127.0.0.1 ;;
 esac
 
-# docker-compose.yml marks four values `${VAR:?required}`, and compose resolves every service's
+# docker-compose.yml marks five values `${VAR:?required}`, and compose resolves every service's
 # environment even when only postgres/redis are selected. CI has no repo `.env` (it is
 # gitignored), so `up` is self-contained here: generate what is missing and EXPORT it, so the
 # compose invocation, the API connection string and `down` all see the same values. A real
 # `.env` still wins.
+#
+# GRAFANA_ADMIN_PASSWORD counts even though this script never starts Grafana: interpolation
+# happens for the whole file, so `docker compose up postgres redis` fails outright without it.
 ensure_compose_env() {
   if [ -z "${POSTGRES_PASSWORD:-}" ]; then
     POSTGRES_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
@@ -127,6 +130,18 @@ ensure_compose_env() {
     CREDENTIALS_ENCRYPTION_KEY="$(python3 -c 'import base64,secrets;print(base64.b64encode(secrets.token_bytes(32)).decode())')"
   fi
   export CREDENTIALS_ENCRYPTION_KEY
+  if [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+    GRAFANA_ADMIN_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
+  fi
+  export GRAFANA_ADMIN_PASSWORD
+
+  # The published ports must be exported too, or compose falls back to ITS defaults while this
+  # script uses its own: compose maps `${POSTGRES_PORT:-5432}`, this script waits on 5433, so
+  # an unexported POSTGRES_PORT starts a container on 5432 and then times out waiting for a
+  # connection that will never come. Exporting what the script already resolved keeps the
+  # container, the port wait and the connection strings pointed at the same socket.
+  export POSTGRES_PORT
+  export REDIS_PORT="${REDIS_PORT:-6379}"
 }
 
 log()  { printf '[e2e-stack] %s\n' "$*" >&2; }

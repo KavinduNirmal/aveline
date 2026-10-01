@@ -17,6 +17,7 @@ checkpointer when a ``thread_id`` is supplied.
 import functools
 import inspect
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypedDict
@@ -520,11 +521,22 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
 
     customer_id = org_context.get("customer_id")
     customer_name = org_context.get("customer_name")
+    loyalty_tier = org_context.get("loyalty_tier")
     resolution = state.get("resolution") or {}
     if resolution.get("kind") == "resolved":
         customer_id = customer_id or resolution.get("customer_id")
         profile = resolution.get("profile") or {}
         customer_name = customer_name or profile.get("fullName")
+        if not loyalty_tier:
+            status = (profile.get("status") or "").upper()
+            tags = [str(t).upper() for t in (profile.get("tags") or [])]
+            if "VIP" in status or profile.get("isVip") or "VIP" in tags:
+                loyalty_tier = "VIP"
+            elif "REGULAR" in status or "RETURNING" in status:
+                loyalty_tier = "Regular"
+
+    if not loyalty_tier and re.search(r"\bVIP\b", state.get("message", ""), re.IGNORECASE):
+        loyalty_tier = "VIP"
 
     items = org_context.get("items") or []
     proposed_discount = float(org_context.get("proposed_discount") or 0.0)
@@ -539,6 +551,7 @@ async def run_commerce_agent(state: ConciergeState) -> dict[str, Any]:
         "order_id": org_context.get("order_id"),
         "customer_id": str(customer_id) if customer_id else None,
         "customer_name": customer_name,
+        "loyalty_tier": loyalty_tier,
         "items": items,
         "proposed_discount": proposed_discount,
         "delivery_address": delivery_address,

@@ -493,7 +493,10 @@ public class OrderService : IOrderService
     {
         var percentage = tier.Trim().ToLowerInvariant() switch
         {
-            "vip" => 0.05m,
+            "vip" => 0.10m,
+            "level3" or "level 3" => 0.07m,
+            "level2" or "level 2" or "regular" or "returning" => 0.05m,
+            "level1" or "level 1" => 0.03m,
             "bronze" => 0.03m,
             "silver" => 0.07m,
             "gold" => 0.10m,

@@ -317,9 +317,6 @@ class VisualInsightAgent:
             # If initial inventory lookup with primary criteria returned empty, check ensemble & secondary colors
             raw_attrs = state.get("image_attributes")
             if not items and isinstance(raw_attrs, dict):
-                org_id = state.get("org_id") or criteria.get("organizationId")
-                target_cat = criteria.get("category")
-
                 # Collect secondary and detected items colors
                 candidate_colors: list[str] = []
                 for sc in raw_attrs.get("secondary_colors") or []:

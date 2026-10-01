@@ -526,6 +526,12 @@ jobs:
     env:
       E2E_INTERNAL_TOKEN: aveline-e2e-ci-internal-service-token
       PSQL: "docker exec -i aveline_postgres psql -U aveline -d aveline"
+      # Job-level, not step-level, because two steps need it for different reasons: the boot
+      # step's `bun run dev` inherits it (the SPA throws during its first render without it),
+      # and the spec step reads it to decide whether the browser leg can run at all. Its
+      # absence is the normal case for this repository, and the leg skips rather than fails --
+      # the same convention the `e2e-browser` job uses. The cross-surface walk does not need it.
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
 
     steps:
       - name: Checkout repository

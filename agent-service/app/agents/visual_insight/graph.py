@@ -44,9 +44,12 @@ def build_visual_graph(registry: Any, llm: Any = None) -> Any:
 def _route_after_looks(state: VisualAgentState) -> str:
     """If in-stock items were matched, proceed to compose output; otherwise check sourcing.
 
-    A failed lookup never reaches sourcing: "we could not check" must not become "we do not have
-    it", because the sourcing path turns an empty result into exactly that claim.
+    A failed lookup, search failure, or skipped state never reaches sourcing: "we could not check"
+    must not become "we do not have it", because the sourcing path turns an empty result into exactly
+    that claim.
     """
+    if state.get("status") == "skipped":
+        return "compose"
     if state.get("search_failed"):
         return "compose"
     if state.get("matched_items") and len(state["matched_items"]) > 0:

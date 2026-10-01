@@ -38,8 +38,9 @@ public class BlossomStatementDetailTests
         public void Dispose() { }
     }
 
-    private static readonly DateTime From = new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
-    private static readonly DateTime To = new(2026, 12, 1, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime PeriodStart = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime From = PeriodStart;
+    private static readonly DateTime To = PeriodStart.AddMonths(3);
 
     private static BlossomService CreateService(AppDbContext context) =>
         new(

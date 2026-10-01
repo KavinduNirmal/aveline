@@ -129,7 +129,7 @@ def build_elle_blocks(visual_output: Any) -> list[dict[str, Any]]:
     as ``piece``, ``look``, and ``suggestion`` blocks respectively.
     """
     visual = _as_dict(visual_output)
-    if visual.get("status") == "stub":
+    if visual.get("status") in ("stub", "skipped"):
         return []
 
     blocks: list[dict[str, Any]] = []

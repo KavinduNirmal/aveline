@@ -253,6 +253,100 @@ def is_customer_history_query(message: str) -> bool:
     return any(pattern.search(message) for pattern in _CUSTOMER_HISTORY_PATTERNS)
 
 
+#: High-precision shapes for customer memory context, notes, preferences, or event statements.
+#: These represent notes/updates meant for Ava (the Customer Memory Agent) rather than inventory searches.
+#: Checked before the item/pricing/order vocabulary so messages like "Context: The customer has a wedding",
+#: "Kavindu has a wedding in December and prefers cotton gowns", or "Add a note: she likes green silk sarees"
+#: route exclusively to Ava (customer_preference or event_query) without dispatching Elle (visual).
+_CUSTOMER_NOTE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        # Explicit context/note prefixes or commands
+        r"\bcontext:\s*",
+        r"\b(?:add|record|save|store|log)\s+(?:a\s+)?note\b",
+        r"\b(?:customer|client)\s+note\b",
+        r"\b(?:note|remember)\s+for\s+(?:this\s+)?customer\b",
+        r"\b(?:about|for)\s+this\s+customer\b",
+        r"\bthe\s+customer\s+(?:has|is|prefers|likes|dislikes|wants|wears|stated|mentioned|attended|attending)\b",
+        r"\bthis\s+customer\s+(?:has|is|prefers|likes|dislikes|wants|wears|stated|mentioned)\b",
+        # Explicit preference/constraint phrasing
+        r"\b(?:remember\s+(?:that|she|he|they)?|keep\s+in\s+mind\s+that)\b",
+        r"\b(?:i|he|she|they)\s+(?:only\s+)?(?:prefer|prefers|preferred|like|likes|dislike|dislikes|hate|hates)\b",
+        r"\b(?:i|he|she|they)\s+(?:only\s+wears?|never\s+wears?)\b",
+        r"\b(?:keep|stick)\s+to\s+[^.?!]{1,30}\s+(?:only|exclusively)\b",
+        r"\bleave\s+[^.?!]{1,30}\s+(?:out|aside|entirely)\b",
+        r"\b(?:allergic|sensitive)\s+to\b",
+        # Inquiries about the customer's profile / preferences
+        r"\b(?:what|tell me)\b[^.?!]{0,30}\b(?:do we know|are the preferences|likes|dislikes|profile|notes?)\b",
+        r"\b(?:who is|tell me about)\s+@?[a-z\s]+\b",
+    )
+)
+
+#: Search/shopping actions that indicate a genuine item search query rather than a pure memory note
+_EXPLICIT_SEARCH_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:do\s+you\s+have|are\s+there\s+any|is\s+there\s+any|have\s+you\s+got)\b",
+        r"\b(?:show\s+me|find\s+(?:me\s+)?|search\s+for|look\s+for|can\s+(?:i|you)\s+see)\b",
+        r"\b(?:in\s+stock|available\s+in\s+stock|in\s+your\s+collection|in\s+inventory)\b",
+        r"\b(?:send\s+(?:me\s+)?(?:pictures?|photos?|images?|options?|pieces?))\b",
+        r"\b(?:what\s+(?:sarees?|dresses?|gowns?|blouses?|outfits?)\s+do\s+you\s+have)\b",
+    )
+)
+
+_EVENT_WORDS: tuple[str, ...] = (
+    "wedding",
+    "birthday",
+    "anniversary",
+    "gala",
+    "reception",
+    "cocktail",
+    "event",
+    "occasion",
+)
+
+_PREFERENCE_WORDS: tuple[str, ...] = (
+    "prefer",
+    "prefers",
+    "preferred",
+    "preference",
+    "like",
+    "likes",
+    "dislike",
+    "dislikes",
+    "hate",
+    "hates",
+    "allergic",
+    "sensitive",
+    "wear",
+    "wears",
+    "cotton",
+    "silk",
+    "linen",
+    "nylon",
+    "spandex",
+    "synthetic",
+)
+
+
+def is_customer_note_or_preference(message: str) -> bool:
+    """Whether ``message`` is a customer note, preference statement, or memory context."""
+    return any(pattern.search(message) for pattern in _CUSTOMER_NOTE_PATTERNS)
+
+
+def has_explicit_search(message: str) -> bool:
+    """Whether ``message`` explicitly requests searching, viewing, or checking stock of items."""
+    return any(pattern.search(message) for pattern in _EXPLICIT_SEARCH_PATTERNS)
+
+
+def is_event_declaration(message: str) -> bool:
+    """Whether a memory message is purely an event declaration rather than a preference statement."""
+    lowered = message.lower()
+    has_event = any(w in lowered for w in _EVENT_WORDS)
+    has_pref = any(w in lowered for w in _PREFERENCE_WORDS)
+    return has_event and not has_pref
+
+
 #: Shapes that point at the *interface* rather than asking for a value. "Where can I see my Blossom
 #: balance?" is documentation - the handbook says which screen - while "what is my Blossom balance?"
 #: is a question about the account. Both carry the same possessive phrase, so the tense of the verb
@@ -388,6 +482,18 @@ def classify_by_rules(message: str) -> IntentGateOutput:
             suggested_agents=_AGENT_ROUTING["customer_preference"],
         )
 
+    # A customer memory context, note, preference statement, or event update outranks the item
+    # search vocabulary below when there is no explicit search command. This ensures messages like
+    # "Context: The customer has a wedding", "Kavindu has a wedding in December and prefers cotton gowns",
+    # or "Add a note: she likes green silk sarees" route exclusively to Ava (customer_preference / event_query)
+    # rather than dispatching Elle (visual) for an item search.
+    if is_customer_note_or_preference(lowered) and not has_explicit_search(lowered):
+        intent: IntentType = "event_query" if is_event_declaration(lowered) else "customer_preference"
+        return IntentGateOutput(
+            intent_type=intent,
+            suggested_agents=_AGENT_ROUTING[intent],
+        )
+
     for intent_type, keywords in _RULE_KEYWORDS:
         if any(keyword in lowered for keyword in keywords):
             return IntentGateOutput(
@@ -485,6 +591,12 @@ _SUPERVISOR_INSTRUCTION = (
     "the answer, and keep the detail to what they actually need. Never recite an excerpt or a "
     "table back at them, and do not list the sources in your text - they are shown beside your "
     "reply already."
+    "\n\nWhen the message is a customer note, preference statement, event declaration, context "
+    "update, or question about a customer's profile (e.g. 'The customer has a wedding', 'Customer "
+    "prefers cotton gowns', 'Remember she likes pastel sarees', 'Context: ...'), route it to "
+    "`customer_preference` or `event_query` with agents: [\"memory\"]. Do NOT route `visual` or "
+    "`commerce` for customer notes or memory updates unless the person explicitly asks to search "
+    "or view products (e.g. 'show me', 'find', 'do you have in stock') or make a purchase."
     "\n\nWhen SPEAKER says boutique staff, the newest message may be an *instruction* about a "
     "customer rather than a question: to record something about them (\"add a note for this "
     "customer: he prefers green tea\"), to correct a detail, or to update their name or number. "

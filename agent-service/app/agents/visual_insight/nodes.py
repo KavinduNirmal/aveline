@@ -11,6 +11,7 @@ from typing import Any
 from app.agents.visual_insight.state import VisualAgentState
 from app.context import render_context_block
 from app.core.config import get_settings
+from app.gate import has_explicit_search, is_customer_note_or_preference
 from app.llm.replies import unwrap_reply
 from app.prompts.assembly import assemble_system_prompt
 from app.schemas.visual_insight import (
@@ -96,6 +97,20 @@ class VisualInsightAgent:
         """Extract visual search hints and occasion parameters from customer input."""
         msg = state.get("message", "").lower()
         org_id = state.get("org_id", "")
+        intent_type = state.get("intent_type")
+        has_image = bool(state.get("image_url") or state.get("image_ref_id") or state.get("image_attributes"))
+
+        # Skip visual processing on customer memory notes/preferences or non-visual intents without an image
+        if not has_image and (
+            intent_type in ("customer_preference", "event_query", "general_inquiry", "tenant_account", "aveline_help")
+            or (is_customer_note_or_preference(msg) and not has_explicit_search(msg))
+        ):
+            logger.info("Visual agent skipping turn: customer memory/context message with no explicit visual search.")
+            return {
+                "search_criteria": {},
+                "status": "skipped",
+                "reason": "customer_memory_context",
+            }
 
         # Extract occasion keywords
         occasion = None
@@ -267,6 +282,9 @@ class VisualInsightAgent:
         which would turn a transport error into a confident, false claim about the boutique's
         stock.
         """
+        if state.get("status") == "skipped":
+            return {"matched_items": [], "search_failed": False}
+
         criteria = state.get("search_criteria") or {
             "organizationId": state.get("org_id", ""),
             "query": state.get("message", ""),
@@ -344,6 +362,9 @@ class VisualInsightAgent:
 
     async def compose_looks(self, state: VisualAgentState) -> dict[str, Any]:
         """Assemble matched pieces into styled lookbooks."""
+        if state.get("status") == "skipped":
+            return {"composed_looks": [], "status": "skipped"}
+
         raw_items = state.get("matched_items") or []
         items = [PieceItem(**item) for item in raw_items]
         occasion = (state.get("search_criteria") or {}).get("occasion") or "Boutique Collection"
@@ -448,6 +469,16 @@ class VisualInsightAgent:
         succeeded and matched nothing. Raising a sourcing request after a transport error would
         tell a customer a piece is unavailable when the truth is that nobody looked properly.
         """
+        if state.get("status") == "skipped":
+            return {
+                "sourcing_request": None,
+                "partner_sourcing_options": None,
+                "suggestion": None,
+                "summary": None,
+                "text": None,
+                "status": "skipped",
+            }
+
         if state.get("search_failed"):
             reason = state.get("search_error") or "inventory lookup failed"
             logger.warning("Skipping sourcing: the inventory lookup failed (%s).", reason)
@@ -472,7 +503,10 @@ class VisualInsightAgent:
         if criteria.get("color"):
             search_terms.append(str(criteria["color"]))
         if criteria.get("category"):
-            search_terms.append(str(criteria["category"]))
+            cat_str = str(criteria["category"])
+            if cat_str.endswith("s") and not cat_str.endswith("ss"):
+                cat_str = cat_str[:-1]
+            search_terms.append(cat_str)
         if criteria.get("query"):
             search_terms.append(str(criteria["query"]))
 
@@ -480,6 +514,7 @@ class VisualInsightAgent:
 
         detected_fabric = (state.get("image_attributes") or {}).get("fabric")
         detected_color = (state.get("image_attributes") or {}).get("primary_color") or criteria.get("color")
+        detected_category = criteria.get("category")
 
         # 2. First scrape partner atelier websites for matching garments
         scraped_options: list[dict[str, Any]] = []
@@ -490,67 +525,101 @@ class VisualInsightAgent:
                 org_id=org_id,
                 detected_fabric=detected_fabric,
                 detected_color=detected_color,
+                detected_category=detected_category,
             )
 
-        # 3. Create backend sourcing request recording the inquiry and any atelier findings
+        # 3. Formulate response based on whether partner atelier matches were found
         partner_names = ", ".join(sorted({opt["atelier_name"] for opt in scraped_options if "atelier_name" in opt})) if scraped_options else ""
-        notes = f"Sourcing request initiated from inquiry: '{msg}'"
-        if partner_names:
-            notes += f" (Found {len(scraped_options)} partner option(s) at: {partner_names})"
 
-        req: SourcingRequestDto = await create_sourcing_request(
-            self._registry,
-            org_id=org_id,
-            customer_id=customer_id,
-            image_url=image_url,
-            notes=notes,
-        )
-
-        # 4. Formulate response based on whether partner atelier matches were found
-        if staff_query:
-            if scraped_options:
+        if scraped_options:
+            # Present discovered partner pieces as interactive visual proposals (ticket created only upon selection)
+            if staff_query:
                 summary_text = (
                     f"No in-stock pieces matched in boutique inventory. "
                     f"Found {len(scraped_options)} matching partner atelier option(s) from {partner_names}."
                 )
+                return {
+                    "sourcing_request": None,
+                    "partner_sourcing_options": scraped_options,
+                    "suggestion": None,
+                    "summary": summary_text,
+                    "text": summary_text,
+                    "status": "pending",
+                }
             else:
-                summary_text = "No in-stock pieces matched. Sourcing request created with partner ateliers."
-
-            return {
-                "sourcing_request": req.model_dump() if req else None,
-                "partner_sourcing_options": scraped_options or None,
-                "suggestion": None,
-                "summary": summary_text,
-                "text": summary_text,
-                "status": "pending",
-            }
+                seen = _describe_what_was_seen(state)
+                item_desc = seen or (query_text.lower() if query_text else "piece")
+                suggestion = (
+                    f"We don't currently have this {item_desc} in boutique stock, but Elle found {len(scraped_options)} "
+                    f"option(s) at {partner_names} ready to custom-source for you."
+                )
+                return {
+                    "sourcing_request": None,
+                    "partner_sourcing_options": scraped_options,
+                    "suggestion": suggestion,
+                    "summary": None,
+                    "text": None,
+                    "status": "success",
+                }
         else:
-            seen = _describe_what_was_seen(state)
-            item_desc = seen or (query_text.lower() if query_text else "piece")
-            if scraped_options:
-                suggestion = (
-                    f"We do not have that {item_desc} in stock right now, but Elle found {len(scraped_options)} matching "
-                    f"pieces at our partner ateliers ({partner_names}) and initiated a sourcing ticket."
-                )
+            # When 0 options exist across boutique and partner ateliers, initiate a pending ticket
+            notes = f"Custom sourcing request for unavailable inquiry: '{msg}'"
+            req: SourcingRequestDto = await create_sourcing_request(
+                self._registry,
+                org_id=org_id,
+                customer_id=customer_id,
+                image_url=image_url,
+                notes=notes,
+            )
+
+            if staff_query:
+                summary_text = "No in-stock or partner atelier pieces matched. Sourcing request created with partner ateliers."
+                return {
+                    "sourcing_request": req.model_dump() if req else None,
+                    "partner_sourcing_options": None,
+                    "suggestion": None,
+                    "summary": summary_text,
+                    "text": summary_text,
+                    "status": "pending",
+                }
             else:
+                seen = _describe_what_was_seen(state)
+                item_desc = seen or (query_text.lower() if query_text else "piece")
                 suggestion = (
-                    f"We do not have that {item_desc} in stock right now, but Elle has initiated a custom "
-                    "sourcing request with our partner ateliers."
+                    f"We do not have that {item_desc} in boutique stock right now. "
+                    f"Elle has initiated a custom sourcing request with our partner ateliers to locate one for you."
                 )
-            return {
-                "sourcing_request": req.model_dump() if req else None,
-                "partner_sourcing_options": scraped_options or None,
-                "suggestion": suggestion,
-                "summary": None,
-                "text": None,
-                "status": "pending",
-            }
+                return {
+                    "sourcing_request": req.model_dump() if req else None,
+                    "partner_sourcing_options": None,
+                    "suggestion": suggestion,
+                    "summary": None,
+                    "text": None,
+                    "status": "pending",
+                }
 
     async def compose_output(self, state: VisualAgentState) -> dict[str, Any]:
         """Format final output payload conforming to VisualAgentOutput contract."""
         status = state.get("status") or "success"
         if status not in ("success", "no_results", "pending", "out_of_scope", "skipped", "stub", "error"):
             status = "success"
+
+        if status == "skipped":
+            output = coerce_visual_output({
+                "status": "skipped",
+                "agent": "visual",
+                "ran": True,
+                "suggestion": None,
+                "summary": None,
+                "text": None,
+                "items": [],
+                "looks": [],
+                "sourcing_request": None,
+                "partner_sourcing_options": None,
+                "image_attributes": None,
+                "reason": state.get("reason") or "customer_memory_context",
+            })
+            return {"output": output.model_dump()}
 
         items = [PieceItem(**i) for i in state.get("matched_items", [])]
         looks = [LookDto(**look) for look in state.get("composed_looks", [])]

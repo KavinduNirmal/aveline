@@ -973,11 +973,16 @@ public class MockPaymentProviderTests
     {
         using var listener = new MeterListener();
         var published = new List<string>();
+        var gate = new object();
         listener.InstrumentPublished = (instrument, current) =>
         {
             if (instrument.Meter.Name == PaymentMetrics.MeterName)
             {
-                published.Add(instrument.Name);
+                lock (gate)
+                {
+                    published.Add(instrument.Name);
+                }
+
                 current.EnableMeasurementEvents(instrument);
             }
         };
@@ -985,7 +990,28 @@ public class MockPaymentProviderTests
 
         using var metrics = new PaymentMetrics();
 
-        published.Should().Contain(Section12Instruments);
+        // Creating the instruments is synchronous, but MeterListener raises InstrumentPublished on
+        // its own notification thread, so the constructor above can return while these callbacks
+        // are still arriving. Asserting straight away raced them and lost intermittently with
+        // "Collection was modified; enumeration operation may not execute" thrown from inside
+        // FluentAssertions. Wait for the expected set instead of assuming the constructor drained it.
+        for (var waited = 0; waited < 500; waited++)
+        {
+            lock (gate)
+            {
+                if (Section12Instruments.All(published.Contains))
+                {
+                    break;
+                }
+            }
+
+            Thread.Sleep(10);
+        }
+
+        lock (gate)
+        {
+            published.Should().Contain(Section12Instruments);
+        }
     }
 
     [Fact]

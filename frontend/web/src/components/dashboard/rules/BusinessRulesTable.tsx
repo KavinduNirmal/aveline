@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Plus, RefreshCw, SlidersHorizontal } from 'lucide-react'
+import { Info, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
 import {
   Dialog,
   DialogContent,
@@ -69,6 +70,37 @@ const RULE_TYPE_LABELS: Record<string, string> = {
   discount: 'Discount Limit',
   loyalty_tier: 'Discount Limit',
 }
+
+const DEFAULT_TIERS = [
+  {
+    tier: 'VIP',
+    rate: '10%',
+    badgeVariant: 'default' as const,
+    badgeClass: 'bg-primary text-primary-foreground font-semibold',
+    description: 'Premier patrons. Default 10% auto-approved standing discount on all orders. Stacks with piece promotions.',
+  },
+  {
+    tier: 'Level 3',
+    rate: '7%',
+    badgeVariant: 'secondary' as const,
+    badgeClass: 'font-semibold',
+    description: 'Frequent clients. Default 7% auto-approved standing discount on orders.',
+  },
+  {
+    tier: 'Level 2',
+    rate: '5%',
+    badgeVariant: 'outline' as const,
+    badgeClass: 'font-semibold',
+    description: 'Regular clients. Default 5% auto-approved standing discount on orders.',
+  },
+  {
+    tier: 'Level 1',
+    rate: '3%',
+    badgeVariant: 'outline' as const,
+    badgeClass: 'font-semibold text-muted-foreground',
+    description: 'Introductory grading tier. Default 3% auto-approved standing discount on orders.',
+  },
+] as const
 
 /** The JSON property the evaluator reads for a given rule type. */
 function ruleValueKey(ruleType: string): string {
@@ -220,15 +252,106 @@ export function BusinessRulesTable({
   }
 
   return (
-    <Card className="shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <CardTitle className="font-serif text-lg font-medium">Business Rules & Thresholds</CardTitle>
-            <CardDescription>
-              Configure policy thresholds that trigger the Human-in-the-Loop approval queue.
-            </CardDescription>
+    <div className="flex flex-col gap-6">
+      {/* Default Loyalty & Safety Policy Card */}
+      <Card className="shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle className="font-serif text-lg font-medium flex items-center gap-2">
+                <Sparkles className="size-4.5 text-primary" aria-hidden />
+                Default Loyalty & Baseline Safety Policy
+              </CardTitle>
+              <CardDescription>
+                Standing customer discount caps and safety guardrails automatically enforced by the AI Concierge and checkout engine. Custom rules below take precedence when active.
+              </CardDescription>
+            </div>
+            <Badge variant="secondary" className="font-mono text-xs">
+              System Baseline
+            </Badge>
           </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-6">
+          {/* Customer Loyalty Tiers */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+              Customer Grading Levels (Standing Discounts)
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {DEFAULT_TIERS.map((tier) => (
+                <div
+                  key={tier.tier}
+                  className="rounded-lg border border-border/80 bg-card p-3.5 flex flex-col gap-2 justify-between"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-sm">{tier.tier}</span>
+                    <Badge variant={tier.badgeVariant} className={tier.badgeClass}>
+                      {tier.rate} Off
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {tier.description}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Safety Guardrails */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+              House Safety Guardrails
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-border/70 bg-muted/30 p-3.5 flex items-start gap-3">
+                <ShieldCheck className="size-5 text-primary shrink-0 mt-0.5" aria-hidden />
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Minimum Profit Margin Floor</span>
+                    <Badge variant="outline" className="font-mono text-xs">25% Min</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Every garment and order must clear at least 25% profit margin. Any discount that breaches this floor triggers the Manager Approval Queue.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-border/70 bg-muted/30 p-3.5 flex items-start gap-3">
+                <SlidersHorizontal className="size-5 text-primary shrink-0 mt-0.5" aria-hidden />
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">High-Value Order Threshold</span>
+                    <Badge variant="outline" className="font-mono text-xs">LKR 40,000</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Orders exceeding LKR 40,000 are paused for manager review before payment or fulfillment can proceed.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground flex items-center gap-2">
+            <Info className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span>
+              Ungraded and New clients have a 0% standing discount. Any discount applied for an ungraded client requires boutique manager sign-off.
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Custom Rules & Threshold Overrides Card */}
+      <Card className="shadow-[0_4px_20px_rgba(122,48,63,0.06)]">
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle className="font-serif text-lg font-medium">Custom Overrides & Approval Rules</CardTitle>
+              <CardDescription>
+                Configure boutique-specific thresholds that override system defaults or trigger the Human-in-the-Loop approval queue.
+              </CardDescription>
+            </div>
           {canManage && (
             <Button
               type="button"
@@ -319,8 +442,9 @@ export function BusinessRulesTable({
           </Table>
         )}
       </CardContent>
+    </Card>
 
-      {/* Edit Rule Dialog */}
+    {/* Edit Rule Dialog */}
       <Dialog open={targetRule !== null} onOpenChange={(open) => !open && setTargetRule(null)}>
         <DialogContent>
           <DialogHeader>
@@ -441,6 +565,6 @@ export function BusinessRulesTable({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </div>
   )
 }

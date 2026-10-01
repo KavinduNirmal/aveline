@@ -15,7 +15,10 @@ public class BusinessRulesService : IBusinessRulesService
     private const decimal DefaultHighValueThreshold = 40000.00m; // LKR 40,000
     private const decimal DefaultMinMargin = 0.2500m;             // 25% minimum profit margin
     private const decimal DefaultVipDiscountCap = 0.1000m;        // 10% max for VIP
-    private const decimal DefaultRegularDiscountCap = 0.0500m;    // 5% max for Regular
+    private const decimal DefaultLevel3DiscountCap = 0.0700m;     // 7% max for Level 3
+    private const decimal DefaultLevel2DiscountCap = 0.0500m;     // 5% max for Level 2
+    private const decimal DefaultLevel1DiscountCap = 0.0300m;     // 3% max for Level 1
+    private const decimal DefaultRegularDiscountCap = 0.0500m;    // 5% max for Regular (legacy alias)
     private const decimal DefaultNewDiscountCap = 0.0000m;        // 0% for New customers
 
     public BusinessRulesService(
@@ -165,9 +168,10 @@ public class BusinessRulesService : IBusinessRulesService
 
                     case "discount":
                     case "loyalty_tier":
-                        var tier = (request.CustomerTier ?? "regular").ToLowerInvariant();
+                        var tier = (request.CustomerTier ?? "regular").ToLowerInvariant().Replace(" ", "");
                         if (TryGetDecimalProperty(root, $"{tier}_discount_cap", out var tierCap) ||
                             TryGetDecimalProperty(root, $"{tier}Discount", out tierCap) ||
+                            TryGetDecimalProperty(root, $"{tier}_discount", out tierCap) ||
                             TryGetDecimalProperty(root, "max_discount", out tierCap) ||
                             TryGetDecimalProperty(root, "maxDiscount", out tierCap))
                         {
@@ -222,9 +226,11 @@ public class BusinessRulesService : IBusinessRulesService
         return (tier?.Trim().ToLowerInvariant()) switch
         {
             "vip" => DefaultVipDiscountCap,
-            "regular" => DefaultRegularDiscountCap,
+            "level3" or "level 3" => DefaultLevel3DiscountCap,
+            "level2" or "level 2" or "regular" or "returning" => DefaultLevel2DiscountCap,
+            "level1" or "level 1" => DefaultLevel1DiscountCap,
             "new" => DefaultNewDiscountCap,
-            _ => DefaultRegularDiscountCap
+            _ => DefaultNewDiscountCap
         };
     }
 

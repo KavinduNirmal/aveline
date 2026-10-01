@@ -181,9 +181,23 @@ public sealed class ConversationOrderBridge : IConversationOrderBridge
         }
 
         var subtotal = items.Sum(i => i.TotalPrice);
-        var discount = context.ProposedDiscount.HasValue && context.ProposedDiscount.Value > 0
-            ? Math.Round(subtotal * context.ProposedDiscount.Value, 2)
-            : (decimal?)null;
+        var totalPieceDiscount = items.Sum(i => Math.Round(i.TotalPrice * i.PieceDiscountRate, 2));
+        decimal? discount = null;
+        if (context.ProposedDiscount.HasValue && context.ProposedDiscount.Value > 0)
+        {
+            discount = Math.Round(subtotal * context.ProposedDiscount.Value, 2) + totalPieceDiscount;
+        }
+        else if (totalPieceDiscount > 0 || !string.IsNullOrWhiteSpace(resolvedCustomer?.Tier))
+        {
+            var tierRate = (resolvedCustomer?.Tier?.Trim().ToLowerInvariant()) switch
+            {
+                "vip" => 0.10m,
+                "regular" or "returning" => 0.05m,
+                _ => 0.00m
+            };
+            var tierDiscount = Math.Round(subtotal * tierRate, 2);
+            discount = tierDiscount + totalPieceDiscount;
+        }
 
         var dto = new CreateOrderDto
         {

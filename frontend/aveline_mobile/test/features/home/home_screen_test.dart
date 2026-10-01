@@ -56,20 +56,24 @@ class _FakeAuthRepository implements AuthRepository {
   Future<void> signOut() async {}
 
   @override
-  Future<String?> signInWithPassword({
+  AuthCapabilities get capabilities => AuthCapabilities.unknown;
+
+  @override
+  Future<AuthFailure?> signInWithPassword({
     required String identifier,
     required String password,
   }) async =>
       null;
 
   @override
-  Future<String?> sendSecondFactorCode() async => null;
+  Future<AuthFailure?> sendSecondFactorCode() async => null;
 
   @override
-  Future<String?> verifySecondFactorCode({required String code}) async => null;
+  Future<AuthFailure?> verifySecondFactorCode({required String code}) async =>
+      null;
 
   @override
-  Future<String?> signUpWithPassword({
+  Future<AuthFailure?> signUpWithPassword({
     required String emailAddress,
     String? username,
     String? firstName,
@@ -79,10 +83,10 @@ class _FakeAuthRepository implements AuthRepository {
       null;
 
   @override
-  Future<String?> sendEmailVerificationCode() async => null;
+  Future<AuthFailure?> sendEmailVerificationCode() async => null;
 
   @override
-  Future<String?> verifyEmailCode({required String code}) async => null;
+  Future<AuthFailure?> verifyEmailCode({required String code}) async => null;
 }
 
 /// A phone-shaped viewport, so the whole Home column (including the deck's

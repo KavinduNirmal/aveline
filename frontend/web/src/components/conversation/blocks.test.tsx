@@ -86,4 +86,17 @@ describe('BlockList', () => {
     expect(html).toContain('Three pieces match.')
     expect(html).toContain('Dress')
   })
+
+  it('renders sign_off block after text block even if passed first in blocks array', () => {
+    const blocks = [
+      { type: 'sign_off', reason: 'High value order', amount: 45000 },
+      { type: 'text', text: 'Here is the prepared order details.' },
+    ]
+    const html = renderToString(<BlockList blocks={blocks} onSignOff={() => undefined} />)
+    const textIdx = html.indexOf('Here is the prepared order details.')
+    const signOffIdx = html.indexOf('Approval needed')
+    expect(textIdx).toBeGreaterThan(-1)
+    expect(signOffIdx).toBeGreaterThan(-1)
+    expect(textIdx).toBeLessThan(signOffIdx)
+  })
 })

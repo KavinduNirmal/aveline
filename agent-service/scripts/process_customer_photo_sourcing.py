@@ -14,7 +14,7 @@ async def process_customer_photo_sourcing():
     print("=" * 80)
     print("ELLE (VISUAL INSIGHT AGENT) - INBOUND WHATSAPP PHOTO DECOMPOSITION")
     print("=" * 80)
-    
+
     # 1. Multimodal AI Image Decomposition
     detected_attributes = {
         "category": "Sarees",

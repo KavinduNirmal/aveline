@@ -1,8 +1,9 @@
 """Probe rithihi product category pages."""
 
 import asyncio
-import httpx
 import re
+
+import httpx
 
 
 async def check_categories():
@@ -15,12 +16,12 @@ async def check_categories():
         "https://rithihi.com/product-category/silk-sarees-sri-lanka/benaras-silk/",
         "https://rithihi.com/product-category/cotton-sarees/jamdani-weave/",
     ]
-    
+
     async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0) as client:
         for cat in categories:
             res = await client.get(cat)
             print(f"Cat: {cat} -> HTTP {res.status_code}")
-            
+
             # Find all product titles and images
             # WooCommerce usually has class="woocommerce-loop-product__title" or <h2 class="woocommerce-loop-product__title">
             matches = re.findall(r'<li[^>]*class="[^"]*product[^"]*"[^>]*>(.*?)</li>', res.text, re.DOTALL)
@@ -32,9 +33,7 @@ async def check_categories():
                 price = re.sub(r'<[^>]+>', '', p_match.group(1)).strip() if p_match else "Inquire"
                 l_match = re.search(r'<a[^>]*href="([^"]+)"', m)
                 link = l_match.group(1) if l_match else ""
-                i_match = re.search(r'<img[^>]*src="([^"]+)"', m)
-                img = i_match.group(1) if i_match else ""
-                
+
                 print(f"    [{idx}] {title} | Price: {price} | Link: {link}")
 
 

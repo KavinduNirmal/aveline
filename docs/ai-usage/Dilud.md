@@ -1,3 +1,34 @@
+## Session 2026-10-01 (Visual Intelligence & CI: Ruff Lint Cleanup and Test Pipeline Stabilization)
+
+**Task:** Diagnose and fix GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service` and stabilize repository scripts against ruff lint rules.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Ruff Linter Fixes (`agent-service/`)**:
+   - Fixed unused local variables (`org_id`, `target_cat`, `img`) across `app/agents/visual_insight/nodes.py` and `scripts/probe_rithihi_products.py`.
+   - Renamed ambiguous variable names `l` -> `link_url` in `scripts/inspect_rithihi.py` and `scripts/probe_adithri.py` to conform to Ruff rule `E741`.
+   - Formatted and organized imports across `agent-service/scripts/` (`test_live_adithri.py`, `test_rithihi_live.py`, `test_elle_adithri_flow.py`, `test_elle_rithihi_flow.py`, `process_customer_photo_sourcing.py`).
+   - Verified 100% clean check with `ruff check agent-service/app/ agent-service/scripts/ agent-service/tests/`.
+
+2. **Automated Test & Coverage Verification**:
+   - Ran `pytest tests/ --cov=app --cov-fail-under=90` in `agent-service`: 1,048 passed, 0 failures, 92.06% coverage (exceeding the 90% CI gate).
+
+### Files Created or Modified
+
+- `agent-service/scripts/inspect_rithihi.py`
+- `agent-service/scripts/probe_adithri.py`
+- `agent-service/scripts/probe_rithihi_products.py`
+- `agent-service/scripts/process_customer_photo_sourcing.py`
+- `agent-service/scripts/test_elle_adithri_flow.py`
+- `agent-service/scripts/test_elle_rithihi_flow.py`
+- `agent-service/scripts/test_live_adithri.py`
+- `agent-service/scripts/test_rithihi_live.py`
+- `docs/ai-usage/Dilud.md`
+
+---
+
 ## Session 2026-10-01 (Visual Intelligence: Multi-Color & Ensemble In-Stock Inventory Matching)
 
 **Task:** Diagnose and resolve issue where uploading a saree ensemble image (`photo-1617627143750-d86bc21e42bb.avif`) or black saree (`IMG_6445.webp`) returned incorrect inventory matches vs partner atelier sourcing.

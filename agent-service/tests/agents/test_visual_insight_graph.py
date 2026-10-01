@@ -493,3 +493,35 @@ async def test_visual_history_reaches_the_styling_prompt():
     assert "Any pinkish gowns?" in prompt
     assert "December wedding" in prompt
     assert "budget: 50k" in prompt
+
+
+@pytest.mark.asyncio
+async def test_visual_insight_graph_skips_customer_memory_context_messages():
+    """Visual agent must skip execution and emit 0 suggestions/tickets on customer context notes."""
+    registry = MagicMock()
+    registry.search_inventory = AsyncMock(return_value={"items": []})
+
+    graph = build_visual_graph(registry)
+
+    # Context note mentioning garments & event
+    state = {
+        "org_id": REAL_ORG,
+        "customer_id": "cust-kavindu",
+        "message": "Kavindu Nirmal (new) | Context: The customer has a wedding",
+        "intent_type": "event_query",
+    }
+
+    result = await graph.ainvoke(state)
+    output = result["output"]
+
+    assert output["status"] == "skipped"
+    assert output["agent"] == "visual"
+    assert output["suggestion"] is None
+    assert output["summary"] is None
+    assert output["text"] is None
+    assert output["items"] == []
+    assert output["looks"] == []
+    assert output["sourcing_request"] is None
+    assert output["partner_sourcing_options"] is None
+    # Registry inventory search must not have even been called
+    registry.search_inventory.assert_not_called()

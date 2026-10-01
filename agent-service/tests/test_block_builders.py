@@ -571,6 +571,10 @@ def test_categories_are_rendered_as_reader_facing_labels():
         {"content": "Has a wedding", "category": "event"},
         {"content": "Delivery was late", "category": "complaint"},
         {"content": "Loved the fitting", "category": "experience"},
+        # The two categories model-driven extraction added: an observation and an operational
+        # boundary. Both are first-class now, so they are mapped rather than left to the fallback.
+        {"content": "Browsed a brown dress", "category": "observation"},
+        {"content": "Allergic to wool", "category": "constraint"},
         {"content": "He prefers green tea over coffee", "category": "note"},
         {"content": "Known for years", "category": "memory"},
         {"content": "Seemed tired", "category": "sentiment"},
@@ -586,6 +590,8 @@ def test_categories_are_rendered_as_reader_facing_labels():
         "Event",
         "Complaint",
         "Experience",
+        "Observation",
+        "Constraint",
         "Note",
         "Memory",
         "Sentiment",

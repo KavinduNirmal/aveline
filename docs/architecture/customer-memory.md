@@ -22,7 +22,7 @@ Intent Gate (agent-service/app/gate.py)
       │  intent_type + routing
       ▼
 Customer Memory Agent sub-graph (agent-service/app/agents/customer_memory/)
-  resolve_customer → check_consent → parse → retrieve → persist → compose_output
+  resolve_customer → check_consent → parse → retrieve → extract → persist → compose_output
       │                (ToolRegistry → HTTP → ASP.NET Core internal endpoints)
       ▼
 /orgs/{orgId}/...  clients / Salon (staff review the draft)
@@ -309,13 +309,29 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
    (`MEMORY_SIMILARITY_FLOOR = 0.25`) bounds **the dense leg only**, so an unrelated note is not
    handed back as context while an exact-token match still is, and each hit's `source`, `isExplicit`,
    `confidence`, `similarity`, `vectorRank` and `lexicalRank` are preserved.
-6. **persist** — saves explicit preferences, detected events and the quoted complaint/sentiment as
+6. **extract** — with a model configured, reads the small, durable facts ("nitbits") out of an
+   inbound message: the ones no deterministic shape covers, such as an observation ("browsing a
+   brown dress seen on Instagram") or a fact whose object is a pronoun the regex had to drop
+   ("nothing nylon, or spandex, I dont like them"). The bounded transcript is supplied so the model
+   can resolve what a reference points at, and the prompt labels it as being for that **reference
+   resolution only** — it is never itself a source of facts. Each stored fact is one self-contained
+   sentence that starts with the customer's name, so retrieval does not depend on which conversation
+   is asking. The category is a closed set (`preference`, `event`, `observation`, `complaint`,
+   `constraint`); an unknown category, a malformed entry, an empty or over-long sentence is dropped,
+   facts are capped per turn, confidence is clamped to 0..1, and `stated` records whether the
+   customer asserted the fact about themselves or the boutique observed it. Best-effort throughout:
+   no model, a staff query, an empty message, a provider failure or an unparseable reply all yield
+   no facts and never fail the run.
+7. **persist** — saves explicit preferences, detected events and the quoted complaint/sentiment as
    `Customer_Memory` rows **with their provenance** (`source="conversation"`, `IsExplicit=true`,
    `confidence=0.90`), mirrors a stated preference into `Customer_Preferences` (the table the
    brief's summary is assembled from), records the inbound interaction with its parsed intent
    (`Customer_Interactions`), and creates a **structured `Customer_Event` row** for each dated
-   event (undated signals stay text-only).
-7. **compose_output** — enriches the `interaction_brief` from the backend
+   event (undated signals stay text-only). The model-extracted facts are written **after** the
+   deterministic classes, under the model's own provenance (`is_explicit=stated`, its clamped
+   confidence), skipping any fact whose normalised content a class already wrote this turn; an
+   extracted preference carrying a `key`/`value` is mirrored into `Customer_Preferences` too.
+8. **compose_output** — enriches the `interaction_brief` from the backend
    `CustomerMemoryService.GenerateBriefAsync` (real events/tags/status), **leads it with the
    customer's own `description`** when one is on file, and adds the semantic context. An inbound
    customer message also gets a draft reply via the LLM (falling back to a deterministic template
@@ -354,9 +370,19 @@ The metrics are `aveline_otp_{issued,verified,failed,start_refused}_total`
   rather than a count of notes; its prompt confines it to the supplied facts, and "that is not on
   file" is preferred over an invented detail. Without a model, or on provider failure, both paths
   fall back to their deterministic templates — CI and keyless dev never require a live model.
+- **Fact extraction (the "nitbits").** An inbound turn also asks the model to record the small facts
+  the deterministic classes cannot express — an observation, a constraint, a fact whose object was a
+  pronoun. The transcript is given for reference resolution only and each stored sentence is
+  self-contained, so a fact is findable later "regardless of her context". The node is best-effort:
+  no model, a staff query, an empty message, a provider failure or an unparseable reply yields no
+  facts, so the offline/CI writes are byte-identical to the pre-extraction agent. Extraction is a
+  task contract beside the node, not a new agent persona: it reuses the memory system prompt through
+  `assemble_system_prompt`, the same layer the draft and staff-answer calls use.
 - **Usage (Issue #165).** Every completed `/agents/query` run reports usage to
   `/internal/usage/record` (ADR-010) — real provider/model + token split when the LLM ran, else a
-  `rule-based` sentinel with zero tokens. Reporting is best-effort and never fails a query.
+  `rule-based` sentinel with zero tokens. An inbound LLM turn now makes two calls (extraction, then
+  the draft) and the reported figure is their **sum**, because the contract is per run, not per
+  call. Reporting is best-effort and never fails a query.
 - **Schema validation (Issue #167).** The composed output is validated against
   `MemoryAgentOutput` (extra fields forbidden); drift yields a safe `error` status.
 

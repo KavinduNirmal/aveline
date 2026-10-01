@@ -504,8 +504,8 @@ class CommerceAgent:
             if re.search(r"\bVIP\b", state.get("message", ""), re.IGNORECASE):
                 tier = "VIP"
             else:
-                tier_info = await get_customer_loyalty_tier(org_id, customer_id, registry=self.registry)
-                tier = tier_info.get("tier", "Regular")
+                loyalty_data = await get_customer_loyalty_tier(org_id, customer_id, registry=self.registry)
+                tier = loyalty_data.get("tier", "Regular")
 
         # 3. Apply discount & calculate margin
         total_piece_discount = sum(

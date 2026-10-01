@@ -23,6 +23,7 @@
 
 ### Files Created or Modified
 
+- `agent-service/app/agents/commerce/nodes.py`
 - `.github/workflows/ci.yml`
 - `ruff.toml`
 - `agent-service/scripts/inspect_rithihi.py`

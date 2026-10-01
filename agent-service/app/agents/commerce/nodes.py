@@ -584,6 +584,23 @@ class CommerceAgent:
                 approval_type = "discount"
                 approval_reason = f"Requested discount {effective_order_discount:.1%} exceeds {tier} tier cap"
 
+        # Every order raised through the conversation queues for owner review, even one that
+        # breached nothing. ADR-024's rules decide *why* a deal needs a decision; this is the
+        # floor underneath them, and it is deliberately reached only when no rule fired, so a
+        # breached rule still names itself (high_value_order, low_margin, discount) rather than
+        # being flattened into the generic type. `tests/test_commerce_graph.py` pins both halves.
+        #
+        # A quote cannot be caught here: the graph routes `purpose == QUOTE_PURPOSE` to the
+        # pricing arm before it ever consults `requires_approval`, and this node is only on the
+        # order path.
+        if not requires_approval:
+            requires_approval = True
+            is_auto_approved = False
+            approval_type = "order_approval"
+            approval_reason = (
+                "Every order placed through the conversation is queued for owner review."
+            )
+
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
             org_id, subtotal, total, margin, requires_approval

@@ -145,10 +145,15 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   }, [isLoaded, isSignedIn, getToken])
 
   // Latest settled status, read by the 403 handler without re-registering it.
+  //
+  // Written during render, NOT in an effect. The handler below is registered once and must
+  // learn the current status through a ref, but an effect runs *after* the commit that renders
+  // "ready": there is a window in which the DOM already says ready while a ref synced by an
+  // effect still says "loading". A 403 arriving in that window refreshes a session that has
+  // already settled, which is precisely the loop this guard exists to prevent. CI caught it as
+  // `fetchAuthClaims` called four times where the test expects one, while passing locally.
   const statusRef = useRef(state.status)
-  useEffect(() => {
-    statusRef.current = state.status
-  }, [state.status])
+  statusRef.current = state.status
 
   const refresh = useCallback(async () => {
     if (!isSignedIn) {

@@ -501,16 +501,25 @@ class CommerceAgent:
         subtotal = sum(float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1)))) for item in items)
         total_cost = sum(float(item.get("wholesale_cost", 0.0)) * int(item.get("quantity", 1)) for item in items)
 
-        # 2. Look up customer loyalty tier
+        # 2. Resolve the customer's loyalty tier.
+        #
+        # Only the VIP keyword path resolves a tier here. `cde287b` added the default
+        # tier-discount block below but left the API lookup in the else-branch assigning a
+        # local that is never read (ruff F841), so `tier` has always been None for a
+        # non-VIP customer: `tier_norm` falls through every branch, `tier_cap` is 0.0, and
+        # no default tier discount is ever applied -- the block reads as live but is inert.
+        #
+        # Wiring the lookup in is a pricing decision, not a lint fix: resolving "Regular"
+        # starts discounting every non-VIP order by 5%, which changes two assertions in
+        # tests/test_hitl_resume.py (a 75,000 order becomes 71,250). Until that is decided,
+        # the dead call is removed rather than left in place pretending the tier is used.
+        # The other two call sites of get_customer_loyalty_tier do resolve their tier, for
+        # validation and for a cap that is a ceiling rather than an automatic discount.
         tier = state.get("loyalty_tier")
         if not tier:
             message_text = state.get("message", "")
             if re.search(r"\bVIP\b", message_text, re.IGNORECASE):
                 tier = "VIP"
-            else:
-                tier_info = await get_customer_loyalty_tier(
-                    org_id, customer_id, customer_name=customer_name, registry=self.registry
-                )
         tier_norm = (tier or "").strip().lower()
         if tier_norm == "vip":
             tier_cap = 0.10

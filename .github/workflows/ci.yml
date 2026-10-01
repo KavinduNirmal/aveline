@@ -56,11 +56,25 @@ jobs:
           fi
           echo "✓ No .env files found"
 
+      # The stage ordering is a contract, and this repository's ordering requirement is
+      # explicit: file-based tests -> E2E -> k6 -> application builds. It is expressed
+      # entirely with `needs:`, so a new build job that forgets one entry would look fine
+      # and quietly ship an artifact from a run whose tests never passed. This step makes
+      # the contract executable, and it runs before any test job is scheduled.
+      - name: Verify the CI stage ordering contract
+        run: python3 scripts/verify_ci_ordering.py
+
   # ---------------------------------------------------------------------------
-  # Job 2: Build, Test & Publish — ASP.NET Core API
+  # Job 2: Test — ASP.NET Core API (file-based test stage)
+  #
+  # Split out of the old combined build-and-test job. The repository's CI ordering
+  # contract is: file-based tests -> E2E integration -> k6 performance -> application
+  # builds. Publishing a shippable API artifact is now its own job (`build-api`) that
+  # `needs` every test stage, so a failing test can no longer be followed by a
+  # publishable artifact from the same job.
   # ---------------------------------------------------------------------------
-  build-api:
-    name: Build, Test & Publish API
+  test-api:
+    name: Test API (.NET)
     runs-on: ubuntu-latest
     needs: hygiene
 
@@ -76,7 +90,10 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore Aveline.Api/Aveline.Api.sln
 
-      - name: Build API
+      # Compiling is a prerequisite for running the suite, not the application build
+      # step the ordering contract talks about. The publishable artifact is produced
+      # only in `build-api`, after every test stage has passed.
+      - name: Build API (compile for test)
         run: dotnet build Aveline.Api/Aveline.Api.sln --no-restore -c Release
 
       # One run, not two. This used to be a plain `dotnet test` followed by an identical
@@ -117,6 +134,26 @@ jobs:
           name: aveline-api-coverage
           path: coverage-report
 
+  # ---------------------------------------------------------------------------
+  # Job 2b (stage 4): Publish the API artifact - ONLY after every test stage passes
+  # ---------------------------------------------------------------------------
+  build-api:
+    name: Publish API Artifact
+    runs-on: ubuntu-latest
+    needs: [test-api, e2e-integration, k6-performance]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore Aveline.Api/Aveline.Api.sln
+
       - name: Publish API
         run: dotnet publish Aveline.Api/Aveline.Api.csproj -c Release --no-restore -o api-publish
 
@@ -125,6 +162,38 @@ jobs:
         with:
           name: aveline-api
           path: api-publish
+
+  # ---------------------------------------------------------------------------
+  # Job 4c (stage 4): Build the web dashboard - ONLY after every test stage passes
+  # ---------------------------------------------------------------------------
+  build-web:
+    name: Build Web Dashboard Artifact
+    runs-on: ubuntu-latest
+    needs: [test-web, perf-web, e2e-integration, k6-performance]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: frontend/web
+
+      - name: Build
+        env:
+          # Optional: enables a fully functional bundle when the secret is set.
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+        run: bun run build
+        working-directory: frontend/web
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-web
+          path: frontend/web/dist
 
   # ---------------------------------------------------------------------------
   # Job 3: Lint & Test — Python Agent Service
@@ -155,11 +224,28 @@ jobs:
         run: pytest tests/ --cov=app --cov-report=xml:coverage.xml --cov-report=term --cov-fail-under=90
         working-directory: agent-service
 
+      # Gap A2. The chapter lists eight golden behaviour cases and records that nothing
+      # aggregates them: eight named tests are a checklist, not a measurement. This step runs
+      # exactly those node ids through the ``golden_behaviour`` marker and writes a pass-rate
+      # report. It exits non-zero when a case fails **or** does not run, so it is a gate and not
+      # a print statement; the JSON is the measurement a reviewer can cite.
+      - name: Run the eight golden behaviour cases (scored report)
+        run: python scripts/run_behaviour_cases.py --stdout
+        working-directory: agent-service
+
       - name: Upload agent coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-agent-coverage
           path: agent-service/coverage.xml
+
+      - name: Upload the golden behaviour-case report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-agent-behaviour-cases
+          path: agent-service/reports/behaviour-cases.json
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # Job 4: Build, Test & Lint — Vite Web Dashboard
@@ -209,18 +295,58 @@ jobs:
           name: aveline-web-coverage
           path: frontend/web/coverage
 
-      - name: Build
+  # ---------------------------------------------------------------------------
+  # Job 4b (stage 1): Bundle ratchets - the byte-level performance gate (gap N2)
+  #
+  # `tests/performance/budgets.spec.ts` carries five byte budgets and had no CI
+  # job, so the row's "a real byte-level gate" claim was only true on a laptop.
+  # This job builds a bundle, serves `dist` with the same compression and cache
+  # headers Vercel uses (`tests/performance/serve.cjs`), and runs the budget spec
+  # against it. The build here is a test fixture, not the shipped artifact:
+  # `build-web` below is what publishes `frontend/web/dist`.
+  # ---------------------------------------------------------------------------
+  perf-web:
+    name: Web Bundle Budgets (bytes)
+    runs-on: ubuntu-latest
+    needs: hygiene
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: frontend/web
+
+      - name: Build the bundle under test
         env:
-          # Optional: enables a fully functional bundle when the secret is set.
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
         run: bun run build
         working-directory: frontend/web
 
-      - name: Upload web artifact
+      - name: Install Playwright Chromium
+        run: bun run test:e2e:install
+        working-directory: frontend/web
+
+      - name: "Run bundle budget ratchets"
+        # The package script sets NODE_PATH (so @playwright/test resolves from
+        # frontend/web) and a writable HOME (Chrome writes its profile there).
+        # Tests that need to actually paint the app skip themselves when headless
+        # Chrome cannot mount it, so this job is a deterministic byte gate on CI.
+        run: bun run test:perf
+        working-directory: frontend/web
+
+      - name: Upload bundle budget report
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: aveline-web
-          path: frontend/web/dist
+          name: aveline-web-bundle-budgets
+          path: |
+            frontend/web/test-results
+          if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
   # Job 5: Analyze & Test — Flutter Mobile App
@@ -252,11 +378,437 @@ jobs:
         run: flutter test --coverage
         working-directory: frontend/aveline_mobile
 
+      # Gap M1. The suite ran coverage and gated nothing: the lcov file was uploaded and
+      # never read. The floor below is a RATCHET set just under the rate measured on
+      # 2026-10-01 with the full post-M5 suite: 15,773 hit of 19,364 found = 81.46%,
+      # identical across two consecutive runs. Sum the LH/LF records and divide; do not
+      # read a single record or a pre-computed TOTAL line, because lcov emits one block
+      # per file and no summary.
+      #
+      # Note the number went DOWN from the 86.00% an earlier tree measured, and that is
+      # instrumentation surface rather than lost coverage: `flutter test --coverage`
+      # counts every library that gets loaded, and the new real-router test imports
+      # app_router.dart, which imports every screen. That pulled ~14 previously
+      # untested-and-uninstrumented files into the report (the largest,
+      # owner_onboarding_screen.dart, is LF=321 LH=1). Raising the floor to 84 requires
+      # testing those screens; it is not a wiring change.
+      - name: "Enforce Flutter coverage floor (line >= 81%)"
+        working-directory: frontend/aveline_mobile
+        env:
+          MOBILE_COVERAGE_FLOOR: "81"
+        run: |
+          python3 - <<'EOF'
+          import os, re, sys
+
+          FLOOR = float(os.environ["MOBILE_COVERAGE_FLOOR"])
+          path = "coverage/lcov.info"
+          try:
+              text = open(path, encoding="utf-8").read()
+          except FileNotFoundError:
+              print(f"::error::{path} not found; did `flutter test --coverage` run?")
+              raise SystemExit(1)
+
+          found = sum(int(m) for m in re.findall(r"^LF:(\d+)", text, re.M))
+          hit = sum(int(m) for m in re.findall(r"^LH:(\d+)", text, re.M))
+          rate = (hit / found * 100) if found else 0.0
+          print(f"Flutter line coverage: {hit}/{found} = {rate:.2f}% (floor {FLOOR:.2f}%)")
+          if rate < FLOOR:
+              print(f"::error::Flutter line coverage {rate:.2f}% is below the {FLOOR:.2f}% floor")
+              raise SystemExit(1)
+          EOF
+
       - name: Upload Flutter coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aveline-mobile-coverage
           path: frontend/aveline_mobile/coverage/lcov.info
+
+  # ===========================================================================
+  # STAGE 2 - E2E INTEGRATION
+  #
+  # Every job in this stage `needs` every stage-1 test job. GitHub Actions does
+  # not schedule a job whose `needs` are unmet, so a failure anywhere in stage 1
+  # means no E2E job is even started. That is the fail-fast half of the ordering
+  # contract; the `needs` lists on the stage-4 build jobs are the other half.
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # Job 10 (stage 2): the existing repository browser suite
+  #
+  # The plan's gap E2: `frontend/web/package.json` already carried `test:e2e` and
+  # `test:e2e:install`, and no workflow invoked either of them. The specs live
+  # above the web package, so the package script is the only correct entry point
+  # (`NODE_PATH` is what lets `tests/e2e/**` resolve `@playwright/test`).
+  # ---------------------------------------------------------------------------
+  e2e-browser:
+    name: "E2E (stage 2): browser suite"
+    runs-on: ubuntu-latest
+    needs: [test-api, test-python, test-web, test-flutter, perf-web]
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: frontend/web
+
+      - name: Install Playwright Chromium
+        run: bun run test:e2e:install
+        working-directory: frontend/web
+
+      # The SPA calls `clerkPublishableKey()` during its first render and throws
+      # without it (frontend/web/src/lib/env.ts), so no spec — not even a
+      # signed-out walk — can run without the key. Fork pull requests never
+      # receive secrets, so the suite is skipped there with a warning rather than
+      # failed for a reason that has nothing to do with the change; the same
+      # convention build-flutter-apk already uses for the Firebase config.
+      - name: Check for the Clerk publishable key
+        id: clerk-key
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          if [ -n "$VITE_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::VITE_CLERK_PUBLISHABLE_KEY is not set, so the SPA cannot boot and the browser suite is skipped. This is expected on fork pull requests, where secrets are never provided."
+          fi
+
+      - name: Run the browser suite
+        if: steps.clerk-key.outputs.available == 'true'
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+          HOME: /tmp
+        run: bun run test:e2e
+        working-directory: frontend/web
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-e2e-browser-report
+          path: |
+            frontend/web/playwright-report
+            frontend/web/test-results
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Job 11 (stage 2): the cross-surface workflow - gap E1
+  #
+  # This is the test that closes the two `Not met` rows. It drives a real
+  # composed stack: PostgreSQL, the real ASP.NET Core API process, the real
+  # Python agent service and the real Redis event round-trip. Nothing about the
+  # system under test is stubbed. The only non-production component is the
+  # identity provider: the API validates a real RS256 bearer token against a
+  # committed stub OIDC issuer, because the alternative is a human clicking
+  # through Clerk's hosted sign-in page.
+  # ---------------------------------------------------------------------------
+  e2e-integration:
+    name: "E2E (stage 2): cross-surface workflow"
+    runs-on: ubuntu-latest
+    needs: [test-api, test-python, test-web, test-flutter, perf-web]
+    timeout-minutes: 45
+    # Pinned so the retrieval evaluation below can authenticate against the API the
+    # same script started. It must not be one of the agent's refused placeholders
+    # (`_WEAK_INTERNAL_TOKENS` in agent-service/app/core/config.py).
+    #
+    # PSQL is pointed at the compose container rather than the runner's `psql`. The
+    # seeder shells out to Postgres to insert the `Users` and `Customers` rows (the
+    # org itself is created through the real `POST /api/v1/orgs`), and using the
+    # container's own client removes a dependency on what the runner image happens to
+    # ship. The seeder uses a custom PSQL command verbatim instead of appending
+    # -h/-p/-U/-d, which is exactly what this form needs.
+    env:
+      E2E_INTERNAL_TOKEN: aveline-e2e-ci-internal-service-token
+      PSQL: "docker exec -i aveline_postgres psql -U aveline -d aveline"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install web dependencies
+        run: bun install --frozen-lockfile
+        working-directory: frontend/web
+
+      - name: Install Playwright Chromium
+        run: bun run test:e2e:install
+        working-directory: frontend/web
+
+      - name: Install agent-service dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r agent-service/requirements.txt
+
+      # `up` starts Postgres + Redis in Docker and the stub issuer, API and agent
+      # as host processes, then waits for readiness. `seed` creates the
+      # organisation, the identity, the membership and the customer and writes a
+      # state JSON. `web` starts the dashboard the browser leg loads.
+      - name: Boot the composed stack and seed it
+        env:
+          AGENT_LLM_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          mkdir -p test-results
+          scripts/e2e-composed-stack.sh up
+          scripts/e2e-composed-stack.sh seed
+          scripts/e2e-composed-stack.sh web
+          echo "--- stack state ---"
+          cat test-results/e2e-composed-stack/stack.env
+
+      - name: Run the cross-surface workflow spec
+        env:
+          E2E_STATE_FILE: ${{ github.workspace }}/test-results/e2e-composed-stack/e2e-composed-stack.json
+        run: |
+          set -euo pipefail
+          set -a; . test-results/e2e-composed-stack/stack.env; set +a
+          # stack.env names the origins by role (`E2E_WEB_BASE_URL`), while the spec gates
+          # on `E2E_BASE_URL` for the web origin and `E2E_API_BASE_URL` for the API. Both
+          # must be present or the spec self-skips and the stage passes having tested
+          # nothing -- which is exactly the failure mode a green E2E job must not have.
+          export E2E_BASE_URL="${E2E_WEB_BASE_URL}"
+          test -n "$E2E_BASE_URL" && test -n "$E2E_API_BASE_URL"
+          cd frontend/web
+          bun run test:e2e -- tests/e2e/integration/salon-cross-surface.spec.ts tests/e2e/integration/api-key-conversation-gap.spec.ts
+
+      # Gap A3. The retrieval evaluation used to print and store nothing, so the
+      # recall figures lived only in the ADR that quoted them. `--out` makes the
+      # number a tracked artefact. It is only meaningful against a populated
+      # handbook index served with an embeddings credential, so the step probes
+      # the index first and records that it was skipped rather than writing a 0%
+      # that means "not measured" rather than "retrieves badly".
+      #
+      # Both prerequisites are real and were observed, not assumed: a fresh CI
+      # database has no `HandbookChunk` rows, and `POST /internal/handbook/search`
+      # answers 500 `Embeddings:ApiKey is not configured.` when the key is absent
+      # (even for `mode: lexical`). Provide `EMBEDDINGS_API_KEY` and seed the
+      # handbook to turn this step into a tracked metric.
+      - name: Handbook retrieval evaluation (tracked artefact)
+        run: |
+          set -euo pipefail
+          set -a; . test-results/e2e-composed-stack/stack.env; set +a
+          PROBE=$(curl -s -o /tmp/handbook-probe.json -w '%{http_code}' \
+            -X POST "$E2E_API_BASE_URL/internal/handbook/search" \
+            -H "X-Internal-Token: $E2E_INTERNAL_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"query":"handbook","mode":"lexical","audience":"staff","topK":1}' || true)
+          if [ "$PROBE" != "200" ] || ! python3 -c "
+          import json,sys
+          data = json.load(open('/tmp/handbook-probe.json'))
+          sys.exit(0 if isinstance(data, list) and len(data) > 0 else 1)
+          " 2>/dev/null; then
+            echo "::warning::the handbook index is empty or unreachable (probe HTTP $PROBE), so the retrieval evaluation is skipped rather than recording a misleading 0%. A 500 here means Embeddings:ApiKey is unset; otherwise seed the index with agent-service/scripts/seed_handbook.py."
+            python3 - <<'EOF' || true
+          import json
+          try:
+              body = json.load(open('/tmp/handbook-probe.json'))
+              print('probe body:', json.dumps(body)[:300])
+          except Exception as exc:
+              print('probe body was not JSON:', exc)
+          EOF
+            exit 0
+          fi
+          cd agent-service
+          python scripts/eval_handbook.py \
+            --base-url "$E2E_API_BASE_URL" \
+            --token "$E2E_INTERNAL_TOKEN" \
+            --out reports/handbook-eval.json
+          echo "--- tracked metric ---"
+          cat reports/handbook-eval.json
+
+      - name: Stop the composed stack
+        if: always()
+        run: scripts/e2e-composed-stack.sh down || true
+
+      - name: Upload E2E integration report and service logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-e2e-integration-report
+          path: |
+            frontend/web/playwright-report
+            frontend/web/test-results
+            test-results
+            agent-service/reports/handbook-eval.json
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Job 12 (stage 2): the Flutter device run - gap M3
+  #
+  # `flutter test` runs widget tests in a headless Dart VM. `integration_test`
+  # pumps the real application on a real device, which is the only thing that
+  # would catch a response-shape change the widget suite cannot see. The plan
+  # names the Android emulator as the CI path.
+  # ---------------------------------------------------------------------------
+  test-flutter-integration:
+    name: "E2E (stage 2): Flutter integration test (emulator)"
+    runs-on: ubuntu-latest
+    needs: [test-api, test-python, test-web, test-flutter, perf-web]
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Java
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: frontend/aveline_mobile
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run the integration test on an Android emulator
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          # The app is built once by the runner; `-d emulator-5554` pins the
+          # device so a second attached device cannot make the run ambiguous.
+          script: cd frontend/aveline_mobile && flutter test integration_test -d emulator-5554
+
+      - name: Upload Flutter integration results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-flutter-integration
+          path: frontend/aveline_mobile/build/app/outputs/androidTest-results
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # STAGE 3 - PERFORMANCE (k6)
+  #
+  # Runs only after both stage-2 jobs pass, and before any stage-4 build.
+  # ===========================================================================
+  k6-performance:
+    name: "Performance (stage 3): k6 budgets"
+    runs-on: ubuntu-latest
+    needs: [e2e-browser, e2e-integration, test-flutter-integration]
+    timeout-minutes: 35
+    # Same reason as the E2E job: the seeder's SQL half runs through the compose
+    # container's own psql, not whatever the runner image ships.
+    env:
+      PSQL: "docker exec -i aveline_postgres psql -U aveline -d aveline"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install agent-service dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r agent-service/requirements.txt
+
+      # k6 does not need the dashboard, so this job boots the stack without `web`.
+      # A pre-flight (SMOKE=1) is used on pull requests; a push to a stable
+      # branch runs the full stages.
+      - name: Boot the composed stack and seed it
+        env:
+          AGENT_LLM_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          mkdir -p test-results
+          scripts/e2e-composed-stack.sh up
+          scripts/e2e-composed-stack.sh seed
+          cat test-results/e2e-composed-stack/e2e-composed-stack.json
+
+      - name: Write the k6 credential environment
+        run: |
+          set -euo pipefail
+          python3 - <<'EOF' > k6.env
+          import json
+          state = json.load(open('test-results/e2e-composed-stack/e2e-composed-stack.json'))
+          print(f"ORG_ID={state['organizationId']}")
+          print(f"AUTH_TOKEN={state['bearerToken']}")
+          print("API_BASE_URL=http://127.0.0.1:5091")
+          EOF
+          # Never print the token; show only the keys that were written.
+          cut -d= -f1 k6.env
+
+      - name: "k6 gate 1: telemetry-middleware budget"
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v "$PWD:/w" -w /w \
+            --env-file k6.env -e SMOKE="${{ github.event_name == 'pull_request' && '1' || '0' }}" \
+            grafana/k6@sha256:e66db15b860113878fa74670e31f5e274830b7b6e42c8bff28b2f2d86a257603 \
+            run --out json=/w/k6-results-telemetry.json tests/load/k6-telemetry-overhead.js
+
+      - name: "k6 gate 2: critical endpoints and the salon workflow"
+        run: |
+          set -euo pipefail
+          docker run --rm --network host -v "$PWD:/w" -w /w \
+            --env-file k6.env -e SMOKE="${{ github.event_name == 'pull_request' && '1' || '0' }}" \
+            grafana/k6@sha256:e66db15b860113878fa74670e31f5e274830b7b6e42c8bff28b2f2d86a257603 \
+            run --out json=/w/k6-results-critical-workflows.json tests/load/k6-critical-workflows.js
+
+      - name: Stop the composed stack
+        if: always()
+        run: scripts/e2e-composed-stack.sh down || true
+
+      # Gap N3: the evidence index recorded k6 output as "Not retained". Both the
+      # raw per-request series and the compact human-readable summary are attached
+      # here, so a performance number exists to cite after the run.
+      - name: Upload k6 results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: aveline-k6-performance
+          path: |
+            k6-results-*.json
+            k6-critical-workflows-summary.json
+            k6.env
+            test-results
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # STAGE 4 - APPLICATION BUILDS
+  #
+  # Nothing below may start until every test stage has passed. Each build job's
+  # `needs` list contains `e2e-integration` and `k6-performance`.
+  # ===========================================================================
 
   # ---------------------------------------------------------------------------
   # Job 5b: Build the release Android APK
@@ -269,7 +821,9 @@ jobs:
   build-flutter-apk:
     name: Build Flutter APK
     runs-on: ubuntu-latest
-    needs: test-flutter
+    # Stage 4: the APK is a shipped artifact, so it waits for every test stage -
+    # file-based tests, E2E integration and k6 performance - not just the Flutter unit suite.
+    needs: [test-flutter, e2e-integration, k6-performance]
     timeout-minutes: 30
 
     steps:
@@ -550,7 +1104,8 @@ jobs:
     # iOS builds need a macOS runner. The repository is public, so macOS minutes are free.
     runs-on: macos-latest
     timeout-minutes: 60
-    needs: test-flutter
+    # Stage 4: same rule as the Android release - every test stage must pass first.
+    needs: [test-flutter, e2e-integration, k6-performance]
     permissions:
       contents: write
     steps:

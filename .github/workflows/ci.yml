@@ -149,11 +149,11 @@ jobs:
           pip install -r agent-service/requirements.txt -r agent-service/requirements-dev.txt
 
       - name: Run Ruff Lint
-        run: ruff check app/
+        run: python -m ruff check --output-format=github app/
         working-directory: agent-service
 
       - name: Run Pytest (coverage gate >= 90%)
-        run: pytest tests/ --cov=app --cov-report=xml:coverage.xml --cov-report=term --cov-fail-under=90
+        run: python -m pytest tests/ --cov=app --cov-report=xml:coverage.xml --cov-report=term --cov-fail-under=90
         working-directory: agent-service
 
       - name: Upload agent coverage report

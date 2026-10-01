@@ -107,6 +107,12 @@ public static class VisualEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/suppliers", GetSuppliersInternalAsync)
+            .WithName("GetSuppliersInternal")
+            .WithSummary("List integrated suppliers for an organization.")
+            .Produces<IReadOnlyList<SupplierDto>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         group.MapGet("/suppliers/{supplierId:guid}/catalog", GetSupplierCatalogAsync)
             .WithName("GetSupplierCatalog")
             .WithSummary("Query an external supplier catalog.")
@@ -150,6 +156,7 @@ public static class VisualEndpoints
         apiGroup.MapPost("/customer-matches/{itemId:guid}/generate", GenerateCustomerMatchesAsync);
         apiGroup.MapPost("/outfits/compose", ComposeOutfitAsync);
         apiGroup.MapPost("/sourcing-requests", CreateSourcingRequestAsync);
+        apiGroup.MapGet("/suppliers", GetSuppliersInternalAsync);
         apiGroup.MapGet("/suppliers/{supplierId:guid}/catalog", GetSupplierCatalogAsync);
         apiGroup.MapGet("/inventory/{itemId:guid}/qr", GetInventoryItemQrAsync);
         apiGroup.MapPost("/inventory/scan-qr", ScanInventoryQrAsync);
@@ -349,6 +356,17 @@ public static class VisualEndpoints
     {
         var request = await visualService.CreateSourcingRequestAsync(dto, cancellationToken);
         return Results.Created($"/internal/visual/sourcing-requests/{request.Id}?organizationId={request.OrganizationId}", request);
+    }
+
+    private static async Task<IResult> GetSuppliersInternalAsync(
+        [FromQuery] Guid? organizationId,
+        [FromQuery] Guid? orgId,
+        [FromServices] IVisualService visualService,
+        CancellationToken cancellationToken)
+    {
+        var targetOrgId = organizationId ?? orgId ?? Guid.Empty;
+        var suppliers = await visualService.GetSuppliersByOrgIdAsync(targetOrgId, cancellationToken);
+        return Results.Ok(suppliers);
     }
 
     private static async Task<IResult> GetSupplierCatalogAsync(

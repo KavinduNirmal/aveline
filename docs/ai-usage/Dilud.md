@@ -1,33 +1,3 @@
-## Session 2026-10-01 (Jewelry & Accessories Attribute Clearing in Catalog Drawer)
-
-**Task:** When an item is classified or selected as `Jewelry & Accessories` in the Add/Edit piece drawer, keep all garment-specific attributes (Cloth/Garment, Detected Fabric, Style/Pattern, Dominant Color, and narrative description) empty rather than showing or inventing textile attributes (e.g. Flared Silk Lehenga, Pure Mulberry Silk, Gold Zari Brocade).
-**Tool used:** Antigravity AI Assistant
-**Status:** Completed
-
-### Work Performed
-
-1. **AddProductModal Attribute Clearing (`frontend/web/src/components/catalog/AddProductModal.tsx`)**:
-   - Updated `handleCategoryChange`: when `newCategory === 'Jewelry & Accessories'`, clears `garmentType`, `fabric`, `pattern`, `style`, `color`, `colorHex`, `aiConfidence`, and `description`.
-   - Updated `buildBespokeDescription`: returns `''` for `Jewelry & Accessories` to prevent inventing textile weave sentences.
-   - Updated `runVisionAnalysis`: clears resolved attributes when category is `Jewelry & Accessories`.
-   - Updated Section 3 labels and placeholders to be appropriate for jewelry and accessories without displaying textile defaults.
-
-2. **Automated Vitest Suite**:
-   - Added unit and DOM test in `AddProductModal.dom.test.tsx` verifying all garment fields and descriptions are cleared and kept empty when switching to `Jewelry & Accessories`.
-   - Verified 1432/1432 frontend tests pass.
-
-### Files Created or Modified
-
-- `frontend/web/src/components/catalog/AddProductModal.tsx`
-- `frontend/web/src/components/catalog/AddProductModal.dom.test.tsx`
-- `docs/ai-usage/Dilud.md`
-
-### Verification Performed
-
-- `npm test -- --run`: 1432/1432 tests passed (100%).
-
----
-
 ## Session 2026-10-01 (Customer Memory Isolation & Visual Agent Routing Safeguards)
 
 **Task:** Prevent the Visual Insight Agent (Elle) from erroneously answering questions, profile updates, preference statements, or context notes intended exclusively for the Customer Memory Agent (Ava).

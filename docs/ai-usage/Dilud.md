@@ -25,6 +25,7 @@
 
 ### Files Created or Modified
 
+- `agent-service/app/services/fabric_verifier.py`
 - `agent-service/app/gate.py`
 - `agent-service/app/agents/visual_insight/nodes.py`
 - `agent-service/app/agents/visual_insight/graph.py`
@@ -35,6 +36,7 @@
 
 ### Verification Performed
 
+- `ruff check agent-service/app/`: passed with 0 errors (all checks passed).
 - `pytest tests/test_intent_gate.py tests/test_supervisor.py tests/agents/test_visual_insight_graph.py tests/test_block_builders.py tests/test_customer_memory_agent.py`: 209/209 passed (100%).
 - Live test on container: `"Kavindu Nirmal (new) | Context: The customer has a wedding"` -> Gate: `event_query` with `['memory']`, Visual Agent: `status: skipped, suggestion: None, sourcing: None`.
 - Live test on container: `"The customer has a wedding in December and prefers cotton gowns"` -> Gate: `customer_preference` with `['memory']`.

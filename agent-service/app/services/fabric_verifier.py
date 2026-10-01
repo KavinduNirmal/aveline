@@ -4,6 +4,7 @@ Verifies whether a scraped partner product aligns with the client's visual attri
 """
 
 import re
+
 from app.schemas.atelier_scraper import ScrapedAtelierProduct
 
 _COLOR_FAMILIES: dict[str, set[str]] = {

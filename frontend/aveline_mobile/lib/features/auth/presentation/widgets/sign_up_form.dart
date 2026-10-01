@@ -47,11 +47,14 @@ class _SignUpFormState extends State<SignUpForm> {
 
     try {
       final auth = context.read<AuthRepository>();
+      final username = _usernameController.text.trim();
+      final firstName = _firstNameController.text.trim();
+      final lastName = _lastNameController.text.trim();
       final error = await auth.signUpWithPassword(
         emailAddress: _emailController.text.trim(),
-        username: _usernameController.text.trim(),
-        firstName: _firstNameController.text.trim(),
-        lastName: _lastNameController.text.trim(),
+        username: username.isEmpty ? null : username,
+        firstName: firstName.isEmpty ? null : firstName,
+        lastName: lastName.isEmpty ? null : lastName,
         password: _passwordController.text,
       );
 

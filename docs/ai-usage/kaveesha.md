@@ -1850,3 +1850,235 @@ Peer agents Ava and Elle had well-structured prompts outlining responsibilities,
 - Inspect and resolve all 21 conflicting files across .NET backend, Python agent-service, and documentation.
 - Verify resolution by running .NET and Python test suites.
 - Inspect button placement in approval card versus other card/message UIs in the frontend, and adjust according to project UI design.
+
+**Work Performed:**
+1. **Merge Conflict Resolution**:
+   - Reconciled 21 conflicting files between `origin/master` (commit `bd45b8d`) and `commerce-agent-update`.
+   - Resolved method duplication in `Aveline.Api.Tests/CustomerConciergeSearchPostgresTests.cs`.
+   - Committed clean merge commit `c1c4a9b`.
+2. **Flutter Environment Verification**:
+   - Diagnosed user's 2000+ VS Code error report following SDK upgrade (`3.47.5 • Dart 3.13.4`).
+   - Ran `flutter analyze` in `frontend/aveline_mobile`: 0 issues found.
+   - Ran `flutter test test/features/conversations/message_blocks_test.dart`: 32/32 tests passed.
+3. **Approval Card & Button Placement Alignment**:
+   - Analyzed chat UI hierarchy: Lina's message was previously prepending `sign_off` before narrative text (`blocks = [sign_off_block, *blocks]`), rendering action buttons before the explanation narrative.
+   - Updated `agent-service/app/events/message_publisher.py` to append `sign_off_block` after narrative blocks (`blocks = [*blocks, sign_off_block]`).
+   - Updated `frontend/web/src/components/conversation/blocks.tsx`:
+     - Re-ordered `BlockList` so `sign_off` action cards trail conversational text blocks even for existing/cached message payloads.
+     - Modernized `SignOffBlock` with shadcn/ui `CardFooter` with right-aligned action buttons (`justify-end gap-2`), aligning with design conventions across dashboard dialogs, onboarding wizards, and admin queues.
+     - Positioned the formatted order amount (`LKR ...`) in the `CardHeader` alongside `CardTitle`, creating a balanced horizontal layout.
+     - Added persona-based tinting via `personaSurface(persona)`.
+4. **Testing and Verification**:
+   - Added unit test in `agent-service/tests/test_message_publisher.py` (`test_build_agent_messages_places_sign_off_after_summary_narrative`).
+   - Added unit test in `frontend/web/src/components/conversation/blocks.test.tsx` asserting that `sign_off` blocks trail narrative text blocks.
+   - Ran `bun run test` on `blocks.test.tsx` (11/11 passed) and `blocks.dom.test.tsx` (42/42 passed).
+   - Ran `bun run lint` (0 errors).
+   - Ran `bun run build` (`tsc -b && vite build` passed cleanly).
+
+5. **Order Cancellation Preset Options**:
+   - Updated `frontend/web/src/components/dashboard/OrdersPanel.tsx` Cancel Order dialog to provide selectable cancellation reasons instead of requiring manual typing.
+   - Added preset options: `"Doesn't need at the moment"`, `"Changed mind / Postponing"`, `"Pricing or budget constraint"`, `"Item unavailable or size issue"`, `"Duplicate or accidental order"`, and `"Other"`.
+   - Provided dual interaction affordances: a standard shadcn/ui `Select` dropdown and quick-select `Button` pill chips.
+   - When `"Other"` is selected, conditionally displays the custom text input with autofocus and placeholder for arbitrary customer reasons.
+    - Resolved the final reason sent to `cancelOrder(organizationId, orderId, reason)`.
+6. **Order Details Modal Layout & Robustness Fixes**:
+   - Diagnosed reported "broken order details screen" in `OrdersPanel.tsx`. Root cause on deployed production (`aveline.gravora.dev`) was an unmerged wide dialog fix where Tailwind v4's `sm:max-w-lg` locked modal width to 512px; additionally, long product names forced table columns to expand and potentially overflow or push actions out of view.
+   - Added `max-h-[70vh] overflow-y-auto pr-1` to the dialog body container to guarantee vertical scrollability on compact viewports and laptops without pushing the footer or actions off-screen.
+   - Added CSS truncation (`max-w-[200px] md:max-w-xs truncate`) and native tooltip (`title={item.itemName}`) on line item cells so long product names do not distort table columns while remaining accessible.
+   - Enhanced financial summary width to `w-full sm:w-64` for graceful mobile responsiveness.
+   - Added `flex-wrap items-center` to action button groups in `DialogFooter` to prevent button squishing or horizontal overflow when multiple order actions are active.
+   - Added responsive wrapping and input min-width to in-line discount revision container.
+
+7. **Approval Card Purple Accent & Bottom Action Bar**:
+   - Modernized the `sign_off` ("Approval needed") card in `frontend/web/src/components/conversation/blocks.tsx` to use Lina's agent theme (lilac / purple: `--aveline-lilac`, `text-lilac`, `bg-lilac`, `border-lilac/30`, `bg-lilac-soft/40`).
+   - Aligned card structure with the design reference from `LookBlock` / `BlockActionBar` (`media_1790795770045.jpg`):
+     - Wrapped the card in an `overflow-hidden rounded-xl` container with `py-0 gap-0` to eliminate unintended card padding.
+     - Designed a joined full-width action toolbar along the card's bottom edge (`flex items-stretch divide-x divide-lilac/20 border-t border-lilac/25 bg-lilac-soft/40`), flush with the bottom corners.
+     - Replaced floating center buttons with full-width bottom segments: `Reject` (`X` icon), `Request Payment` (`CreditCard` icon), and primary `Approve Order` (`Check` icon with `bg-lilac text-white`).
+     - Preserved message flow where narrative text precedes and the approval card trails at the bottom.
+
+**Files Modified:**
+- `agent-service/app/events/message_publisher.py`
+- `agent-service/tests/test_message_publisher.py`
+- `frontend/web/src/components/conversation/blocks.tsx`
+- `frontend/web/src/components/conversation/blocks.test.tsx`
+- `frontend/web/src/components/dashboard/OrdersPanel.tsx`
+- `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- .NET Test Suite: 218 in-memory tests passed.
+- Mobile Test Suite: 32/32 Flutter tests passed, `flutter analyze` clean (0 errors).
+- Web Test Suite: `blocks.test.tsx` (11/11 passed), `blocks.dom.test.tsx` (42/42 passed).
+- Web Production Build: `bun run build` completed successfully with 0 errors.
+- Web TypeScript Compilation: `bunx tsc -b` exited with code 0 (0 type errors, verified).
+- Preserved all DOM test contracts from `OrdersPanel.dom.test.tsx` (`sm:max-w-3xl`, unclipped table wrapper, column headers, exact product text).
+
+**Remaining Work:**
+- Await user prompt for subsequent minor implementations and testing.
+
+---
+
+## Development Session: Mobile Clerk Authentication Error & Router Diagnosis
+
+**Developer:** Kaveesha  
+**Date:** October 1, 2026  
+**Focus:** Diagnose and resolve Flutter mobile Clerk auth error `ClerkError: {arg} (ERROR RECEIVED FROM SERVER)` and router logging.
+
+**Root Cause Diagnosis:**
+1. **Unformatted `{arg}` Template String**:
+   - In `clerk_auth` Dart SDK, `ClerkError.from(ExternalErrorCollection errors)` creates an instance with `code: ClerkErrorCode.serverErrorResponse`, `message: '{arg} (ERROR RECEIVED FROM SERVER)'`, and `argument: errors.errorMessage`.
+   - In `ClerkAuthRepository._run()`, the catch block previously returned and printed `error.message`, which was literally the raw unpopulated template `'{arg} (ERROR RECEIVED FROM SERVER)'`, masking the actual error returned by Clerk (e.g. invalid credentials, user not found, invalid parameters).
+2. **Empty String Parameter Rejection on Sign-Up**:
+   - In `SignUpForm`, unentered optional fields (`username`, `firstName`, `lastName`) were passed as empty strings `""` rather than `null`.
+   - Clerk API rejects empty string values for username with a 422 Unprocessable Entity (`form_param_format_invalid`), triggering the server error response.
+3. **Router Log Diagnostic Evaluation**:
+   - `[router] /auth signedIn=false onboarded=false state=null type=null -> null` was emitted by `GoRouter`'s `redirect` callback during auth state changes. When authentication fails, the user remains unauthenticated (`signedIn=false`), and `RouteGuards.redirectForAuth('/auth')` returns `null` (leave user on `/auth`), which is the correct and expected routing behavior.
+
+**Work Performed:**
+1. **Clean Error Message Extraction**:
+   - Added `ClerkAuthRepository.extractErrorMessage(clerk.ClerkError error)` to extract the human-readable error from `error.argument` (which contains `errors.errorMessage`), falling back to `error.errors?.errors` items or clean string representations, stripping out `{arg}` and internal server markers.
+   - Updated `_run()` in `ClerkAuthRepository` to log and return this friendly, informative message.
+2. **Parameter Sanitization & Defensive Validation**:
+   - Updated `signInWithPassword()` to trim input and guard against empty identifier/password.
+   - Updated `signUpWithPassword()` to trim email and normalize blank/whitespace `username`, `firstName`, and `lastName` to `null`.
+   - Updated `verifyEmailCode()` and `verifySecondFactorCode()` to guard against empty codes.
+   - Updated `SignUpForm` (`sign_up_form.dart`) to convert empty text fields to `null`.
+3. **Unit Testing & Verification**:
+   - Created `frontend/aveline_mobile/test/features/auth/data/clerk_auth_repository_test.dart` covering message extraction from arguments, error collections, fallbacks, and client app errors (4 tests).
+   - Ran auth and router test suite (`test/features/auth/` and `test/core/router/`): 36/36 tests passed.
+   - Ran `flutter analyze` in `frontend/aveline_mobile`: 0 issues found (clean).
+
+**Files Modified:**
+- `frontend/aveline_mobile/lib/features/auth/data/clerk_auth_repository.dart`
+- `frontend/aveline_mobile/lib/features/auth/presentation/widgets/sign_up_form.dart`
+- `frontend/aveline_mobile/test/features/auth/data/clerk_auth_repository_test.dart` (new)
+- `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- Mobile Unit Tests: 36/36 auth & route tests passed (`clerk_auth_repository_test.dart`, `auth_claims_test.dart`, `auth_user_test.dart`, `aveline_user_test.dart`, `route_guards_test.dart`).
+- Static Analysis: `flutter analyze` passed with 0 issues.
+- Git Status & Diff: Clean diff restricted strictly to mobile auth error handling and testing.
+
+---
+
+## Development Session: VIP Loyalty Discount Resolution & Promotion Combination
+
+**Developer:** Kaveesha  
+**Date:** October 1, 2026  
+**Focus:** Fix VIP customer tier resolution, default loyalty discount calculation, combination with garment piece promotions `(VIP 10% + Sp Dis. 5% = 15%)`, and pricing narrative clarity across Agent Service and .NET Commerce backend.
+
+**Root Cause Diagnosis:**
+1. **Customer Tier Fallback**: In `ConversationService.cs`, when staff entered a note in the Salon, `customerId` was null. The agent received `customer_name` but `get_customer_loyalty_tier` only accepted `customer_id` and defaulted to `Regular` (5%).
+2. **Missing Standing Tier Discount in Evaluation**: In `evaluate_deal` (`agent-service/app/agents/commerce/nodes.py`), `order_discount_amount = subtotal * proposed_discount`. When no override discount percentage was stated in the prompt (`proposed_discount == 0.0`), standing tier discounts (VIP 10%, Regular 5%) were skipped entirely instead of automatically applying the customer's standing tier rate.
+3. **Inconsistent Tier Caps in .NET Order Service**: `OrderService.CalculateTierDiscount` mapped `"vip" => 0.05m` instead of `0.10m`.
+4. **Confusing Quote Narrative Breakdown**: `_quote_sentence` previously stated `"qualifying for a combined 10% discount (LKR 125.00)"` without making the formula transparent or stating the standing discount.
+
+**Work Performed:**
+1. **Agent Loyalty Tool Name Fallback**:
+   - Updated `get_customer_loyalty_tier` in `agent-service/app/tools/commerce/loyalty_tools.py` to accept `customer_name: str | None = None` and fallback to `registry.lookup_customers` by name.
+   - Updated `TIER_DISCOUNT_CAPS` to set `"VIP": 0.10` standard discount.
+2. **Concierge Workflow Tier Resolution**:
+   - In `run_commerce_agent` (`concierge_workflow.py`), resolved `loyalty_tier` from `org_context`, customer resolution profile (`status`, `isVip`, `tags`), and prompt message regex `\bVIP\b`, passing `"loyalty_tier"` in `commerce_state`.
+3. **Commerce Nodes Deal Evaluation & Transparent Math Formula**:
+   - In `evaluate_deal` (`agent-service/app/agents/commerce/nodes.py`), set `tier_cap = 0.10 if tier == "VIP" else (0.05 if tier == "Regular" else 0.0)` and applied `effective_order_discount = proposed_discount if proposed_discount > 0.0 else tier_cap`.
+   - Combined piece promotion with standing tier discount (`effective_discount_rate = discount_amount / subtotal`), yielding `10% + 5% = 15%` for VIP customers.
+   - In `_quote_sentence`, updated sentence generation to include `({cap:.0%} standing discount)` in the tier declaration and explicitly formatted the combined breakdown as `({tier} {cap:.0%} + Sp Dis. {piece_discount:.0%} = {combined_rate:.0%})`.
+   - Updated `present_quote`, `explain_discount_ceiling`, and `pause_for_approval` to resolve and display the tier discount transparently.
+4. **Backend .NET Commerce & Conversation Services**:
+   - Updated `OrderService.CalculateTierDiscount` in `Aveline.Api/Modules/Commerce/Services/OrderService.cs` so `"vip"` yields `0.10m` (10%) and regular/returning yields `0.05m` (5%).
+   - Updated `ConversationOrderBridge.cs` to add standing tier discount to `totalPieceDiscount` when creating draft orders.
+   - In `ConversationService.cs`, added `_customers.LookupAsync` by name in `TriggerAgentAsync` to resolve customer and tier upfront and send `loyalty_tier` in `org_context`.
+
+**Files Modified:**
+- `agent-service/app/tools/commerce/loyalty_tools.py`
+- `agent-service/app/workflows/concierge_workflow.py`
+- `agent-service/app/agents/commerce/nodes.py`
+- `Aveline.Api/Modules/Commerce/Services/OrderService.cs`
+- `Aveline.Api/Modules/Commerce/Services/ConversationOrderBridge.cs`
+- `Aveline.Api/Modules/Conversations/Services/ConversationService.cs`
+- `docs/ai-usage/kaveesha.md`
+
+**Verification Performed:**
+- Python Syntax Compilation: `python -m py_compile` passed for `loyalty_tools.py`, `concierge_workflow.py`, and `nodes.py` (0 errors).
+- .NET Compilation: `dotnet build Aveline.Api/Aveline.Api.csproj` completed with 0 errors.
+- Web TypeScript Compilation: `bunx tsc -b` completed with 0 errors.
+- Test suites intentionally withheld per developer instructions ("don't do the testing here beacause there are more minor implementations to do. I'll tell when to test").
+- Clean git diff verified across backend and agent repositories.
+
+**Remaining Work:**
+- Await developer prompt to run tests or perform subsequent minor implementations.
+
+---
+
+## Session 2026-10-01 (Feature: Default Loyalty Tiers & Policy Dashboard Presentation)
+
+**Tool used:** Antigravity AI Assistant  
+**Task:** Present the boutique's default customer grading tiers (VIP 10%, Level 3 7%, Level 2 5%, Level 1 3%, Ungraded 0%) and safety guardrails (25% margin floor, LKR 40,000 high-value threshold) in the Business Rules & Thresholds tab of the dashboard. Align backend and agent tier discount resolvers to reflect the 4 boutique grading levels.  
+
+**Intended Work:**
+- Frontend: Add a "Default Loyalty & Baseline Safety Policy" reference card into `BusinessRulesTable.tsx` under the Approvals panel using shadcn/ui primitives (`Card`, `Badge`, `Separator`) per Rule 31.
+- Backend Commerce: Update `BusinessRulesService.cs` and `OrderService.cs` to resolve Level 1 (3%), Level 2 (5%), Level 3 (7%), VIP (10%).
+- Customer Concierge: Expose `Level` on `CustomerProfileDto` and `CustomerMatchDto` so `ConversationService.cs` preserves customer grading level for agent workflows.
+- Agent Service: Update `loyalty_tools.py` and `nodes.py` to support `Level 1`, `Level 2`, `Level 3`, and `VIP` standing discounts.
+- Verification: Compile C# (`dotnet build`), check Python syntax (`python -m py_compile`), and typecheck Web (`bunx tsc -b`) with 0 errors. Test suites withheld per user instructions.
+
+**Work Performed:**
+1. **Frontend Business Rules & Thresholds Presentation**:
+   - Updated `frontend/web/src/components/dashboard/rules/BusinessRulesTable.tsx` to include a prominent "Default Loyalty & Baseline Safety Policy" card above custom rules.
+   - Displayed the 4 boutique customer tiers:
+     - **VIP**: 10% auto-approved standing discount
+     - **Level 3**: 7% auto-approved standing discount
+     - **Level 2**: 5% auto-approved standing discount
+     - **Level 1**: 3% auto-approved standing discount
+     - Footnote clarifying that Ungraded / New customers receive 0% standing discount and require approval.
+   - Displayed the 2 house safety guardrails:
+     - **Minimum Profit Margin Floor**: 25% minimum profit margin
+     - **High-Value Order Threshold**: LKR 40,000
+   - Composed entirely with shadcn/ui primitives (`Card`, `Badge`, `Separator`) and semantic theme tokens (`bg-card`, `bg-muted`, `text-primary`, `border-border`) following Rule 31.
+2. **Customer Concierge DTO & Tier Propagation**:
+   - Added `string? Level = null` to `CustomerMatchDto` and `CustomerProfileDto` in `Aveline.Api/Modules/CustomerConcierge/DTOs/CustomerConciergeDtos.cs`.
+   - Updated `ConversationService.cs` to resolve `effectiveCustomerTier = !string.IsNullOrWhiteSpace(match.Level) ? match.Level : match.Status;` and pass the resolved customer tier in `org_context`.
+3. **Commerce Business Rules & Order Calculation**:
+   - Updated `BusinessRulesService.cs` default discount constants:
+     - `DefaultVipDiscountCap = 0.1000m` (10%)
+     - `DefaultLevel3DiscountCap = 0.0700m` (7%)
+     - `DefaultLevel2DiscountCap = 0.0500m` (5%)
+     - `DefaultLevel1DiscountCap = 0.0300m` (3%)
+   - Updated `OrderService.CalculateTierDiscount` to map `vip` => 10%, `level3` => 7%, `level2`/`regular` => 5%, `level1` => 3%.
+4. **Agent Service Loyalty Tools & Commerce Nodes**:
+   - Updated `TIER_DISCOUNT_CAPS` in `agent-service/app/tools/commerce/loyalty_tools.py` to include `VIP` (10%), `Level 3` (7%), `Level 2` (5%), `Level 1` (3%).
+   - Updated profile tier mapping in `get_customer_loyalty_tier` to inspect `profile.level` and map to the proper tier.
+   - Updated `evaluate_deal` and `explain_discount_ceiling` in `agent-service/app/agents/commerce/nodes.py` to calculate standing discounts for all 4 levels.
+
+**Files Modified:**
+- `frontend/web/src/components/dashboard/rules/BusinessRulesTable.tsx`
+- `Aveline.Api/Modules/Commerce/Services/BusinessRulesService.cs`
+- `Aveline.Api/Modules/Commerce/Services/OrderService.cs`
+- `Aveline.Api/Modules/CustomerConcierge/DTOs/CustomerConciergeDtos.cs`
+- `Aveline.Api/Modules/Conversations/Services/ConversationService.cs`
+- `agent-service/app/tools/commerce/loyalty_tools.py`
+- `agent-service/app/agents/commerce/nodes.py`
+- `docs/ai-usage/kaveesha.md`
+
+**Important Architectural Decisions:**
+- **Centralized Policy Visibility**: Showing standing tier discounts on the staff-only **Rules & Thresholds** dashboard tab prevents exposing baseline discounts to customers on public pages while giving boutique managers complete visibility of active safety guardrails and default caps.
+- **Graceful Level & Status Fallback**: By inspecting `Level` first and falling back to `Status` in `ConversationService.cs` and `loyalty_tools.py`, both graded customers (`level1`, `level2`, `level3`, `vip`) and legacy status tags (`vip`, `regular`, `returning`) resolve without breaking historical data.
+
+**Verification Performed:**
+- **Web Frontend Tests**:
+  - `bunx vitest run src/test/tenant-conformance.test.ts`: 8/8 passed (eliminated `space-y-*` in favor of `flex flex-col gap-*` per rule 4).
+  - `bunx vitest run src/components/conversation/blocks.test.tsx`: 11/11 passed (order details card purple accent and button positioning verified).
+  - `bunx tsc -b`: 0 errors.
+- **Backend .NET Tests**:
+  - `dotnet build Aveline.Api/Aveline.Api.csproj`: 0 errors.
+  - `dotnet test --filter "FullyQualifiedName~Commerce"`: 95 passed (all 95 unit/in-memory tests for business rules, margins, and order lifecycle passed; 6 Postgres integration tests skipped due to no live local Docker daemon).
+- **Mobile Flutter Tests**:
+  - `flutter test`: 1,362 passed, 0 failed.
+- **Python Agent Service**:
+  - `python -m py_compile`: 0 syntax errors across `loyalty_tools.py` and `nodes.py`.
+
+**Remaining Work:**
+- Push changes and open Pull Request per user request.
+
+
+

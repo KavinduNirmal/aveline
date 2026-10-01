@@ -1,22 +1,30 @@
-## Session 2026-10-01 (Visual Intelligence & CI: Ruff Lint Cleanup and Test Pipeline Stabilization)
+## Session 2026-10-01 (Visual Intelligence & CI: Ruff Lint Configuration & Pipeline Stabilization)
 
-**Task:** Diagnose and fix GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service` and stabilize repository scripts against ruff lint rules.
+**Task:** Diagnose and fix GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service` and stabilize repository scripts and workflow against ruff lint rules.
 **Tool used:** Antigravity AI Assistant
 **Status:** Completed
 
 ### Work Performed
 
-1. **Ruff Linter Fixes (`agent-service/`)**:
+1. **CI Workflow & Configuration Alignment (`.github/workflows/ci.yml`, `ruff.toml`)**:
+   - Diagnosed root cause of the 33-second fast failure in GitHub Actions: `Run Ruff Lint` ran at the repository root without `working-directory: agent-service`, causing Ruff to bypass `agent-service/pyproject.toml` (which configures `ignore = ["E501"]` and `known-first-party = ["app"]`) and evaluate with default unconfigured rules.
+   - Updated `.github/workflows/ci.yml` to run `ruff check app/` with `working-directory: agent-service`, matching the pattern used in the Pytest step.
+   - Added a repository root `ruff.toml` mirroring the `agent-service/pyproject.toml` configuration so root-level invocations remain consistent and resilient.
+
+2. **Ruff Linter Fixes (`agent-service/`)**:
    - Fixed unused local variables (`org_id`, `target_cat`, `img`) across `app/agents/visual_insight/nodes.py` and `scripts/probe_rithihi_products.py`.
    - Renamed ambiguous variable names `l` -> `link_url` in `scripts/inspect_rithihi.py` and `scripts/probe_adithri.py` to conform to Ruff rule `E741`.
    - Formatted and organized imports across `agent-service/scripts/` (`test_live_adithri.py`, `test_rithihi_live.py`, `test_elle_adithri_flow.py`, `test_elle_rithihi_flow.py`, `process_customer_photo_sourcing.py`).
    - Verified 100% clean check with `ruff check agent-service/app/ agent-service/scripts/ agent-service/tests/`.
 
-2. **Automated Test & Coverage Verification**:
+3. **Automated Test & Coverage Verification**:
    - Ran `pytest tests/ --cov=app --cov-fail-under=90` in `agent-service`: 1,048 passed, 0 failures, 92.06% coverage (exceeding the 90% CI gate).
+   - Verified .NET API test suite: 4,192 passed, 0 failures.
 
 ### Files Created or Modified
 
+- `.github/workflows/ci.yml`
+- `ruff.toml`
 - `agent-service/scripts/inspect_rithihi.py`
 - `agent-service/scripts/probe_adithri.py`
 - `agent-service/scripts/probe_rithihi_products.py`

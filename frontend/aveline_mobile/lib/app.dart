@@ -28,50 +28,27 @@ import 'core/providers/boutique_provider.dart';
 import 'core/providers/onboarding_provider.dart';
 import 'core/providers/owner_onboarding_provider.dart';
 import 'core/providers/user_provider.dart';
+import 'core/router/app_router.dart';
 import 'core/router/route_guards.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/data/clerk_auth_repository.dart';
 import 'features/auth/domain/auth_repository.dart';
-import 'features/auth/domain/aveline_user.dart';
-import 'features/auth/presentation/screens/auth_screen.dart';
-import 'core/auth/permission_guard.dart';
-import 'core/auth/permissions.dart';
 import 'features/catalog/data/api_catalog_product_repository.dart';
 import 'features/catalog/data/catalog_product_repository.dart';
-import 'features/catalog/domain/catalog_filters.dart';
-import 'features/catalog/presentation/screens/catalog_filter_screen.dart';
-import 'features/catalog/presentation/screens/catalog_product_screen.dart';
-import 'features/catalog/presentation/screens/catalog_screen.dart';
 import 'features/conversations/data/api_conversation_repository.dart';
 import 'features/conversations/data/api_thread_repository.dart';
 import 'features/conversations/data/conversation_repository.dart';
 import 'features/conversations/data/thread_repository.dart';
-import 'features/conversations/presentation/screens/conversations_screen.dart';
-import 'features/conversations/presentation/screens/thread_route_screen.dart';
 import 'features/customers/data/api_customer_repository.dart';
 import 'features/customers/data/customer_repository.dart';
-import 'features/customers/presentation/screens/customer_screen.dart';
-import 'features/customers/presentation/screens/customers_screen.dart';
 import 'features/home/data/api_home_repository.dart';
 import 'features/home/presentation/home_controller.dart';
-import 'features/home/presentation/screens/main_shell.dart';
 import 'features/notifications/data/api_notification_repository.dart';
 import 'features/notifications/presentation/notifications_controller.dart';
-import 'features/notifications/presentation/screens/notifications_screen.dart';
 import 'features/commerce/data/repositories/api_commerce_repository.dart';
 import 'features/commerce/domain/repositories/commerce_repository.dart';
-import 'features/commerce/presentation/screens/create_order_screen.dart';
-import 'features/commerce/presentation/screens/order_detail_screen.dart';
-import 'features/commerce/presentation/screens/orders_list_screen.dart';
-import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/onboarding/data/onboarding_preferences.dart';
 import 'features/onboarding/data/owner_onboarding_api.dart';
-import 'features/onboarding/presentation/screens/account_type_screen.dart';
-import 'features/onboarding/presentation/screens/invite_screen.dart';
-import 'features/onboarding/presentation/screens/onboarding_screen.dart';
-import 'features/onboarding/presentation/screens/org_setup_screen.dart';
-import 'features/onboarding/presentation/screens/owner_onboarding_screen.dart';
-import 'features/onboarding/presentation/screens/suspended_screen.dart';
 import 'shared/widgets/aveline_loading_screen.dart';
 
 /// Root widget: bootstraps Clerk behind an opening screen, wires DI, and
@@ -629,270 +606,26 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
     super.dispose();
   }
 
-  String _initialLocation() {
-    if (!_authRepository.isSignedIn) {
-      return AppRoutes.auth;
-    }
-    final state = _userProvider.accountState;
-    if (state == AvelineAccountState.suspended) {
-      return AppRoutes.suspended;
-    }
-    if (state == AvelineAccountState.active) {
-      return AppRoutes.home;
-    }
-    if (!_userProvider.hasCompletedOnboarding) {
-      return _onboardingProvider.accountType == null
-          ? AppRoutes.accountType
-          : AppRoutes.onboarding;
-    }
-    return _onboardingProvider.isOwner
-        ? AppRoutes.ownerOnboarding
-        : AppRoutes.orgSetup;
-  }
-
+  /// Builds the router through [AppRouter], the same factory a widget test
+  /// uses, so what is tested is what ships.
   GoRouter _buildRouter() {
-    return GoRouter(
-      initialLocation: _initialLocation(),
+    return AppRouter.build(
+      authRepository: _authRepository,
+      userProvider: _userProvider,
+      onboardingProvider: _onboardingProvider,
+      catalogRepository: _catalogRepository,
+      customerRepository: _customerRepository,
+      conversationRepository: _conversationRepository,
+      threadRepository: _threadRepository,
+      commerceRepository: _commerceRepository,
       refreshListenable: Listenable.merge(
         [widget.clerkAuthState, _userProvider, _onboardingProvider],
       ),
-      redirect: (context, state) {
-        final result = RouteGuards.redirectForAuth(
-          state.matchedLocation,
-          isSignedIn: _authRepository.isSignedIn,
-          hasCompletedOnboarding: _authRepository.isSignedIn
-              ? _userProvider.hasCompletedOnboarding
-              : null,
-          accountState: _authRepository.isSignedIn
-              ? _userProvider.accountState?.wireValue
-              : null,
-          accountType: _authRepository.isSignedIn
-              ? _onboardingProvider.accountType?.wireValue
-              : null,
-          // A signed-in profile load can still fail after the bootstrap, for
-          // instance when signing in from the auth screen. Without this the
-          // guards would park the user on the account-type picker with no
-          // explanation and no way to retry.
-          //
-          // Only when no profile is held: the auth listener refetches the
-          // profile periodically, and a background refresh that fails must not
-          // pull a user who is already using the app onto the retry screen.
-          profileFailed: _authRepository.isSignedIn &&
-              _userProvider.user == null &&
-              _userProvider.hasLoadFailed,
-        );
-        debugPrint(
-          '[router] ${state.matchedLocation} signedIn=${_authRepository.isSignedIn} '
-          'onboarded=${_userProvider.hasCompletedOnboarding} '
-          'state=${_userProvider.accountState?.wireValue} '
-          'type=${_onboardingProvider.accountType?.wireValue} -> $result',
-        );
-        return result;
-      },
-      routes: [
-        GoRoute(
-          path: AppRoutes.home,
-          name: 'home',
-          builder: (context, state) => const MainShell(),
-        ),
-        GoRoute(
-          path: AppRoutes.catalog,
-          name: 'catalog',
-          builder: (context, state) => PermissionGuard(
-            permission: Permissions.catalogView,
-            child: MainShell(
-              child: CatalogScreen(repository: _catalogRepository),
-            ),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.catalogFilters,
-          name: 'catalogFilters',
-          // A full-screen editor rather than a panel: it is reached from the
-          // field row, returns its draft to the catalog, and carries its own
-          // back affordance so it does not need the shell's header.
-          builder: (context, state) {
-            final initial = state.extra is CatalogFilters
-                ? state.extra as CatalogFilters
-                : (state.uri.queryParameters.isNotEmpty
-                    ? CatalogFilters.fromQueryParameters(state.uri.queryParameters)
-                    : null);
-
-            return PermissionGuard(
-              permission: Permissions.catalogView,
-              child: CatalogFilterScreen(initial: initial),
-            );
-          },
-        ),
-        GoRoute(
-          path: AppRoutes.catalogProductPattern,
-          name: 'catalogProduct',
-          // Declared after the static `/catalog/filters` route so that segment
-          // is not read as a product id.
-          //
-          // The piece is deliberately not passed as `extra`: the router
-          // re-parses its location whenever the auth or profile listenable
-          // fires, and `extra` does not survive that, so the screen resolves
-          // the piece from the id the location already carries.
-          builder: (context, state) => PermissionGuard(
-            permission: Permissions.catalogView,
-            child: CatalogProductScreen(
-              productId: state.pathParameters['productId'] ?? '',
-              repository: _catalogRepository,
-            ),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.customers,
-          name: 'customers',
-          builder: (context, state) => PermissionGuard(
-            permission: Permissions.customersView,
-            child: MainShell(
-              child: CustomersScreen(repository: _customerRepository),
-            ),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.customerPattern,
-          name: 'customer',
-          // Declared after the static `/customers` route so that segment is not
-          // read as a client id.
-          //
-          // The client is deliberately not passed as `extra`: the router
-          // re-parses its location whenever the auth or profile listenable
-          // fires, and `extra` does not survive that, so the screen resolves the
-          // profile from the id the location already carries.
-          builder: (context, state) => PermissionGuard(
-            permission: Permissions.customersView,
-            child: CustomerScreen(
-              customerId: state.pathParameters['customerId'] ?? '',
-              repository: _customerRepository,
-            ),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.conversations,
-          name: 'conversations',
-          builder: (context, state) => PermissionGuard(
-            permission: Permissions.conversationsView,
-            child: MainShell(
-              child: ConversationsScreen(
-                repository: _conversationRepository,
-                threadRepository: _threadRepository,
-              ),
-            ),
-          ),
-        ),
-        GoRoute(
-          // A notification knows a thread only by its id, so the row is read before the thread
-          // screen is shown. The anchored message travels as a query parameter: the router
-          // re-parses its location and `extra` does not survive that.
-          path: AppRoutes.threadPattern,
-          name: 'thread',
-          builder: (context, state) => ThreadRouteScreen(
-            conversationId: state.pathParameters['conversationId'] ?? '',
-            messageId: state.uri.queryParameters['messageId'],
-            conversationRepository: _conversationRepository,
-            threadRepository: _threadRepository,
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.settings,
-          name: 'settings',
-          builder: (context, state) => const MainShell(child: SettingsScreen()),
-        ),
-        GoRoute(
-          // Profile was merged into Settings, so the old path forwards rather than
-          // serving a second screen with the same content on it. The header's
-          // avatar and any stored link still name it.
-          path: AppRoutes.profile,
-          redirect: (context, state) => AppRoutes.settings,
-        ),
-        GoRoute(
-          path: AppRoutes.notifications,
-          name: 'notifications',
-          builder: (context, state) => const MainShell(
-            child: NotificationsScreen(),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.orders,
-          name: 'orders',
-          builder: (context, state) => MainShell(
-            child: OrdersListScreen(repository: _commerceRepository),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.createOrder,
-          name: 'createOrder',
-          builder: (context, state) => CreateOrderScreen(
-            commerceRepository: _commerceRepository,
-            catalogRepository: _catalogRepository,
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.orderDetailPattern,
-          name: 'orderDetail',
-          builder: (context, state) => OrderDetailScreen(
-            orderId: state.pathParameters['orderId'] ?? '',
-            repository: _commerceRepository,
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.auth,
-          name: 'auth',
-          builder: (context, state) => const AuthScreen(),
-        ),
-        GoRoute(
-          path: AppRoutes.connection,
-          name: 'connection',
-          // Reuses the opening screen so a failed profile load looks and reads
-          // exactly like a failed start, retry included.
-          builder: (context, state) => Consumer<UserProvider>(
-            builder: (context, userProvider, _) => AvelineLoadingScreen(
-              status: userProvider.isLoading
-                  ? AvelineBootStatus.preparing
-                  : AvelineBootStatus.failed,
-              failure: describeBootstrapFailure(
-                userProvider.errorMessage ?? '',
-              ),
-              onRetry: userProvider.isLoading
-                  ? null
-                  : () => userProvider.fetchUser(context.read<Dio>()),
-            ),
-          ),
-        ),
-        GoRoute(
-          path: AppRoutes.accountType,
-          name: 'accountType',
-          builder: (context, state) => const AccountTypeScreen(),
-        ),
-        GoRoute(
-          path: AppRoutes.onboarding,
-          name: 'onboarding',
-          builder: (context, state) => const OnboardingScreen(),
-        ),
-        GoRoute(
-          path: AppRoutes.ownerOnboarding,
-          name: 'ownerOnboarding',
-          builder: (context, state) => const OwnerOnboardingScreen(),
-        ),
-        GoRoute(
-          path: AppRoutes.orgSetup,
-          name: 'orgSetup',
-          builder: (context, state) => const OrgSetupScreen(),
-        ),
-        GoRoute(
-          path: AppRoutes.suspended,
-          name: 'suspended',
-          builder: (context, state) => const SuspendedScreen(),
-        ),
-        GoRoute(
-          path: AppRoutes.invite,
-          name: 'invite',
-          builder: (context, state) => const InviteScreen(),
-        ),
-      ],
+      initialLocation: AppRouter.initialLocation(
+        authRepository: _authRepository,
+        userProvider: _userProvider,
+        onboardingProvider: _onboardingProvider,
+      ),
     );
   }
 

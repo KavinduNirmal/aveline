@@ -115,4 +115,54 @@ void main() {
       expect(find.byKey(const Key('notification_badge_dot')), findsOneWidget);
     });
   });
+
+  group('AvelineHeader tap targets', () {
+    // The conventional Material minimum tap target, stated as the floor this
+    // suite refuses to go below. The header is on every screen, so a control
+    // that shrinks here is a one-handed miss everywhere.
+    const double minimumTapTarget = 48;
+
+    void expectTapTarget(WidgetTester tester, String label, Key key) {
+      final size = tester.getSize(find.byKey(key));
+      expect(
+        size.width,
+        greaterThanOrEqualTo(minimumTapTarget),
+        reason: '$label is ${size.width} logical pixels wide, below the '
+            '$minimumTapTarget floor',
+      );
+      expect(
+        size.height,
+        greaterThanOrEqualTo(minimumTapTarget),
+        reason: '$label is ${size.height} logical pixels tall, below the '
+            '$minimumTapTarget floor',
+      );
+    }
+
+    testWidgets('every control renders at least a 48x48 logical-pixel target', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_buildHeaderTestBed());
+
+      expectTapTarget(
+        tester,
+        'the navigation-menu button',
+        const Key('aveline_header_menu_button'),
+      );
+      expectTapTarget(
+        tester,
+        'the search button',
+        const Key('aveline_header_search_button'),
+      );
+      expectTapTarget(
+        tester,
+        'the notifications button',
+        const Key('aveline_header_notifications_button'),
+      );
+      expectTapTarget(
+        tester,
+        'the profile button',
+        const Key('aveline_header_profile_button'),
+      );
+    });
+  });
 }

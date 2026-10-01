@@ -294,13 +294,23 @@ function PieceBlock({ block, messageId, bridge }: BlockRendererProps) {
           src={block.imageUrl}
           alt={name}
           className="aspect-4/3 w-full bg-muted object-cover"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none'
+            const placeholder = e.currentTarget.nextElementSibling as HTMLElement | null
+            if (placeholder) {
+              placeholder.classList.remove('hidden')
+              placeholder.classList.add('flex')
+            }
+          }}
         />
-      ) : (
-        // A missing photograph is a state, not a broken image or a stretched blank.
-        <div className="flex aspect-4/3 w-full items-center justify-center bg-muted text-[10px] text-muted-foreground">
-          No photograph
-        </div>
-      )}
+      ) : null}
+      <div
+        className={`aspect-4/3 w-full items-center justify-center bg-muted text-[10px] text-muted-foreground ${
+          block.imageUrl ? 'hidden' : 'flex'
+        }`}
+      >
+        No photograph
+      </div>
       <div className="flex flex-1 flex-col gap-1 p-2.5">
         <p className="line-clamp-2 font-serif text-xs font-medium leading-snug" title={name}>
           {name}
@@ -308,7 +318,9 @@ function PieceBlock({ block, messageId, bridge }: BlockRendererProps) {
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           {block.size && (
             <span className="min-w-0 truncate text-[10px] text-muted-foreground">
-              Size {block.size}
+              {block.size.toLowerCase().startsWith('atelier:') || block.size.toLowerCase().startsWith('size ')
+                ? block.size
+                : `Size ${block.size}`}
             </span>
           )}
           {typeof block.stock === 'number' && (
@@ -322,6 +334,11 @@ function PieceBlock({ block, messageId, bridge }: BlockRendererProps) {
         {typeof block.price === 'number' && (
           <p className="mt-auto pt-1 text-xs font-semibold tabular-nums text-primary">
             LKR {block.price.toLocaleString()}
+          </p>
+        )}
+        {typeof block.price === 'string' && block.price && block.price !== 'Price on Request' && (
+          <p className="mt-auto pt-1 text-xs font-semibold tabular-nums text-primary">
+            {block.price}
           </p>
         )}
       </div>

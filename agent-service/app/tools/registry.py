@@ -517,13 +517,17 @@ class ToolRegistry:
 
     async def get_suppliers(self, org_id: str | None = None) -> list[dict[str, Any]]:
         """Fetch registered partner ateliers/suppliers for an organization."""
-        path = f"/api/v1/orgs/{org_id}/catalog/suppliers" if org_id else "/internal/visual/suppliers"
-        res = await self._client.request("GET", path)
-        if isinstance(res, list):
-            return res
-        if isinstance(res, dict) and "items" in res:
-            return res["items"]
-        return []
+        path = f"/internal/visual/suppliers?organizationId={org_id}" if org_id else "/internal/visual/suppliers"
+        try:
+            res = await self._client.request("GET", path)
+            if isinstance(res, list):
+                return res
+            if isinstance(res, dict) and "items" in res:
+                return res["items"]
+            return []
+        except Exception as ex:
+            logger.warning("get_suppliers lookup failed: %s", ex)
+            return []
 
     # ============================== COMMERCE AGENT ==============================
 

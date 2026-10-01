@@ -20,9 +20,37 @@ logger = logging.getLogger(__name__)
 
 # Currency regex pattern matching standard retail price formats
 _PRICE_REGEX = re.compile(
-    r"(?:(?:\$|€|£|₹|Rs\.?|LKR|USD|EUR|GBP)\s*[\d,]+(?:\.\d{2})?|[\d,]+(?:\.\d{2})?\s*(?:LKR|USD|EUR|GBP))",
+    r"(?:(?:\$|€|£|₹|Rs\.?|LKR|USD|EUR|GBP)\s*[\d,]+(?:\.\d{2})?|[\d,]+(?:\.\d{2})?\s*(?:LKR|USD|EUR|GBP)|\b\d{1,3}(?:,\d{3})*(?:\.\d{2})?\b)",
     re.IGNORECASE,
 )
+
+_NOISE_PHRASES = [
+    "no product",
+    "no products",
+    "matching your selection",
+    "category",
+    "categories",
+    "search result",
+    "search results",
+    "quick view",
+    "add to cart",
+    "view cart",
+    "select options",
+    "placeholder",
+    "showing",
+    "filter",
+    "menu",
+    "sort by",
+    "wishlist",
+    "add to wishlist",
+    "browse wishlist",
+    "% off",
+    "sale",
+    "discount",
+    "off",
+    "on sale",
+    "out of stock",
+]
 
 
 class _ProductCardHTMLParser(HTMLParser):
@@ -39,6 +67,9 @@ class _ProductCardHTMLParser(HTMLParser):
         self._in_script_json_ld = False
         self._in_card = False
         self._card_depth = 0
+        self._title_depth = 0
+        self._price_depth = 0
+        self._ignore_depth = 0
         self._current_card: dict[str, Any] = {}
         self._text_accumulator: list[str] = []
 
@@ -61,56 +92,129 @@ class _ProductCardHTMLParser(HTMLParser):
         # 3. Detect Product Card Containers
         class_val = attr_dict.get("class", "").lower()
         id_val = attr_dict.get("id", "").lower()
-        is_card_start = any(
+
+        # Explicit card markers identifying individual product items
+        is_card_marker = any(
             marker in class_val or marker in id_val
             for marker in [
                 "product-card",
+                "product_card",
                 "product-item",
+                "product_item",
                 "product-grid-item",
                 "grid-product",
-                "product_card",
                 "woocommerce-loopproduct",
-                "product-wrap",
+                "type-product",
+                "card-wrapper",
+                "product-inner",
+                "product-entry",
+                "pls-product-inner",
             ]
-        ) or (tag == "article" and "product" in class_val)
+        )
+
+        # Semantic tag representing a single product (not a parent container)
+        is_container = any(c in class_val for c in ("grid", "list", "row", "loop", "container", "products", "archive", "wrap", "wrapper"))
+        is_semantic_card = tag in ("article", "li") and ("type-product" in class_val or ("product" in class_val and not is_container))
+
+        is_card_start = is_card_marker or is_semantic_card
 
         if is_card_start and not self._in_card:
             self._in_card = True
             self._card_depth = 1
+            self._title_depth = 0
+            self._price_depth = 0
+            self._ignore_depth = 0
             self._current_card = {
                 "title": "",
+                "title_texts": [],
                 "price": "",
+                "price_texts": [],
                 "product_url": "",
                 "image_url": "",
                 "texts": [],
+                "alt_title": "",
+            }
+        elif is_card_start and self._in_card and is_card_marker and (self._current_card.get("image_url") or self._current_card.get("title")):
+            # Sibling card started without closing tag
+            self._finalize_current_card()
+            self._in_card = True
+            self._card_depth = 1
+            self._title_depth = 0
+            self._price_depth = 0
+            self._ignore_depth = 0
+            self._current_card = {
+                "title": "",
+                "title_texts": [],
+                "price": "",
+                "price_texts": [],
+                "product_url": "",
+                "image_url": "",
+                "texts": [],
+                "alt_title": "",
             }
         elif self._in_card:
             self._card_depth += 1
 
-            # Extract links inside card
+            # Check for title elements
+            is_title = tag in ("h1", "h2", "h3", "h4", "h5", "h6") or any(
+                k in class_val for k in ("product-title", "product__title", "entry-title", "card-title", "product_title")
+            )
+            if is_title:
+                self._title_depth += 1
+
+            # Check for price elements
+            is_price = any(
+                k in class_val for k in ("price", "amount", "money", "woocommerce-price", "product-price")
+            )
+            if is_price:
+                self._price_depth += 1
+
+            # Check for ignore elements (wishlist, badges, quick view)
+            is_ignore = any(
+                k in class_val or k in id_val
+                for k in ("wishlist", "quickview", "quick-view", "cart-button", "yith-wcwl", "product-labels", "badge", "on-sale")
+            )
+            if is_ignore:
+                self._ignore_depth += 1
+
+            # Extract links inside card (preferring explicit product detail pages)
             if tag == "a" and "href" in attr_dict:
                 href = attr_dict["href"].strip()
-                if href and not self._current_card.get("product_url"):
-                    self._current_card["product_url"] = urljoin(self.base_url, href)
+                if href and href not in ("#", "/", "") and not href.startswith("javascript:") and not href.startswith("?"):
+                    joined = urljoin(self.base_url, href)
+                    if not self._current_card.get("product_url") or any(kw in joined for kw in ("/product/", "/products/", "/item/", "/p/")):
+                        self._current_card["product_url"] = joined
 
             # Extract images inside card
             if tag == "img":
-                src = (
-                    attr_dict.get("src")
-                    or attr_dict.get("data-src")
-                    or attr_dict.get("data-srcset")
-                    or attr_dict.get("data-original")
-                    or ""
-                ).strip()
-                if src and not self._current_card.get("image_url"):
-                    # Strip query parameters or srcset if needed
-                    src = src.split(",")[0].split(" ")[0].strip()
-                    self._current_card["image_url"] = urljoin(self.base_url, src)
+                candidates = [
+                    attr_dict.get("data-src"),
+                    attr_dict.get("data-lazy-src"),
+                    attr_dict.get("data-original"),
+                    attr_dict.get("data-srcset"),
+                    attr_dict.get("srcset"),
+                    attr_dict.get("src"),
+                ]
+                resolved_img = None
+                for c in candidates:
+                    if not c:
+                        continue
+                    c = c.strip()
+                    if " " in c or "," in c:
+                        c = c.split(",")[0].split(" ")[0].strip()
+                    if c.startswith("data:") or "transparent" in c or "placeholder" in c:
+                        continue
+                    if c.startswith("http") or c.startswith("/"):
+                        resolved_img = urljoin(self.base_url, c)
+                        break
+
+                if resolved_img and not self._current_card.get("image_url"):
+                    self._current_card["image_url"] = resolved_img
 
                 # Use image alt as fallback title
                 alt = attr_dict.get("alt", "").strip()
-                if alt and not self._current_card.get("title") and len(alt) > 3:
-                    self._current_card["title"] = alt
+                if alt and len(alt) > 3 and not any(ign in alt.lower() for ign in _NOISE_PHRASES):
+                    self._current_card["alt_title"] = alt
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "script" and self._in_script_json_ld:
@@ -119,10 +223,16 @@ class _ProductCardHTMLParser(HTMLParser):
             self._text_accumulator = []
 
         if self._in_card:
+            if self._title_depth > 0 and tag in ("h1", "h2", "h3", "h4", "h5", "h6", "div", "span", "a"):
+                self._title_depth -= 1
+            if self._price_depth > 0:
+                self._price_depth -= 1
+            if self._ignore_depth > 0:
+                self._ignore_depth -= 1
+
             self._card_depth -= 1
             if self._card_depth <= 0:
                 self._in_card = False
-                # Finalize current card
                 self._finalize_current_card()
 
     def handle_data(self, data: str) -> None:
@@ -135,32 +245,81 @@ class _ProductCardHTMLParser(HTMLParser):
             return
 
         if self._in_card:
+            if self._ignore_depth > 0:
+                return
+
+            if self._title_depth > 0:
+                self._current_card["title_texts"].append(text)
+
+            if self._price_depth > 0:
+                self._current_card["price_texts"].append(text)
+
             self._current_card["texts"].append(text)
-            # Check if this text looks like a price
+
             price_match = _PRICE_REGEX.search(text)
-            if price_match and not self._current_card.get("price"):
+            if price_match and not self._current_card.get("price") and any(sym in text for sym in ("$", "€", "£", "₹", "Rs", "LKR")):
                 self._current_card["price"] = price_match.group(0).strip()
-            elif not self._current_card.get("title") and len(text) > 3 and not price_match:
-                # Potential title
-                if not any(ign in text.lower() for ign in ["quick view", "sale", "add to cart", "sold out", "new"]):
-                    self._current_card["title"] = text
 
     def _finalize_current_card(self) -> None:
         if not self._current_card:
             return
-        title = self._current_card.get("title") or ""
-        price = self._current_card.get("price") or "Price on Request"
+
+        # 1. Resolve Title
+        title = ""
+        if self._current_card.get("title_texts"):
+            title = " ".join(self._current_card["title_texts"]).strip()
+
+        if not title:
+            title = self._current_card.get("alt_title") or ""
+
+        if not title:
+            for t in self._current_card.get("texts", []):
+                t_clean = t.strip()
+                t_lower = t_clean.lower()
+                if len(t_clean) > 3 and not _PRICE_REGEX.search(t_clean):
+                    if not any(ign in t_lower for ign in _NOISE_PHRASES):
+                        title = t_clean
+                        break
+
+        # 2. Reject noise titles
+        title_lower = title.lower()
+        if not title or len(title) < 2 or any(ign in title_lower for ign in _NOISE_PHRASES):
+            self._current_card = {}
+            return
+
+        cleaned_title = re.sub(
+            r"^(?:side view of a|front view of a|side view of|front view of|wedding sarees in sri lanka -)\s*",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+        cleaned_title = re.sub(
+            r"\s*(?:wearing woman side view|wearing woman front view|wearing woman|front view|side view)$",
+            "",
+            cleaned_title,
+            flags=re.IGNORECASE,
+        ).strip()
+        if len(cleaned_title) >= 3:
+            title = cleaned_title
+
+        # 3. Resolve Price
+        price = self._current_card.get("price")
+        if not price and self._current_card.get("price_texts"):
+            combined_price = " ".join(self._current_card["price_texts"]).strip()
+            pmatch = _PRICE_REGEX.search(combined_price)
+            if pmatch:
+                price = pmatch.group(0).strip()
+                if not any(sym in price for sym in ("$", "€", "£", "₹", "Rs", "LKR")):
+                    price = f"LKR {price}"
+
+        if not price:
+            price = "Price on Request"
+
         product_url = self._current_card.get("product_url") or self.base_url
         image_url = self._current_card.get("image_url")
 
-        # If title wasn't set, try picking from first non-price text
-        if not title:
-            for t in self._current_card.get("texts", []):
-                if len(t) > 3 and not _PRICE_REGEX.search(t):
-                    title = t
-                    break
-
-        if title and len(title) >= 2:
+        # 4. Strictly require valid absolute image URL (no transparent/placeholder assets)
+        if image_url and image_url.startswith("http") and "transparent" not in image_url and "placeholder" not in image_url:
             self.products.append(
                 {
                     "title": title,
@@ -169,6 +328,7 @@ class _ProductCardHTMLParser(HTMLParser):
                     "image_url": image_url,
                 }
             )
+
         self._current_card = {}
 
 
@@ -178,8 +338,8 @@ class AtelierScraperService:
     def __init__(self, allowed_domains: list[str] | None = None):
         self.allowed_domains = [d.lower().strip() for d in (allowed_domains or []) if d and d.strip()]
         self.headers = {
-            "User-Agent": "Aveline-Atelier-Assistant/1.0 (+https://aveline.fashion/bot)",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
 
@@ -212,7 +372,6 @@ class AtelierScraperService:
             if self.allowed_domains:
                 domain_matched = False
                 for allowed in self.allowed_domains:
-                    # Clean allowed domain
                     allowed_clean = urlparse(allowed).hostname or allowed
                     allowed_clean = allowed_clean.lower()
                     if hostname_lower == allowed_clean or hostname_lower.endswith(f".{allowed_clean}"):
@@ -243,21 +402,22 @@ class AtelierScraperService:
                 for item in items:
                     if isinstance(item, dict) and item.get("@type") == "Product":
                         name = item.get("name")
-                        if name:
+                        if name and not any(ign in str(name).lower() for ign in _NOISE_PHRASES):
                             offers = item.get("offers", {})
                             price_val = offers.get("price") or offers.get("lowPrice")
                             currency = offers.get("priceCurrency") or "$"
-                            price_str = f"{currency} {price_val}" if price_val else "Inquire"
+                            price_str = f"{currency} {price_val}" if price_val else "Price on Request"
                             img = item.get("image")
                             img_url = img[0] if isinstance(img, list) and img else (img if isinstance(img, str) else None)
-                            results.append(
-                                {
-                                    "title": str(name),
-                                    "price": price_str,
-                                    "product_url": item.get("url") or base_url,
-                                    "image_url": img_url,
-                                }
-                            )
+                            if img_url and str(img_url).startswith("http") and "transparent" not in str(img_url) and "placeholder" not in str(img_url):
+                                results.append(
+                                    {
+                                        "title": str(name),
+                                        "price": price_str,
+                                        "product_url": item.get("url") or base_url,
+                                        "image_url": img_url,
+                                    }
+                                )
             except Exception:
                 pass
 
@@ -268,14 +428,16 @@ class AtelierScraperService:
             og_price = parser.og_metadata.get("og:price:amount")
             og_curr = parser.og_metadata.get("og:price:currency") or "$"
             price_display = f"{og_curr} {og_price}" if og_price else "Price on Request"
-            results.append(
-                {
-                    "title": og_title,
-                    "price": price_display,
-                    "product_url": parser.og_metadata.get("og:url") or base_url,
-                    "image_url": og_img,
-                }
-            )
+            if og_title and not any(ign in og_title.lower() for ign in _NOISE_PHRASES):
+                if og_img and str(og_img).startswith("http") and "transparent" not in str(og_img) and "placeholder" not in str(og_img):
+                    results.append(
+                        {
+                            "title": og_title,
+                            "price": price_display,
+                            "product_url": parser.og_metadata.get("og:url") or base_url,
+                            "image_url": og_img,
+                        }
+                    )
 
         return results
 
@@ -296,9 +458,12 @@ class AtelierScraperService:
         clean_base = base_url.rstrip("/")
         encoded_query = query.strip().replace(" ", "+")
         search_urls = [
+            f"{clean_base}/?s={encoded_query}&post_type=product",
+            f"{clean_base}/shop/?s={encoded_query}",
             f"{clean_base}/search?q={encoded_query}",
+            f"{clean_base}/search?type=product&q={encoded_query}",
+            f"{clean_base}/collections/all?q={encoded_query}",
             f"{clean_base}/catalog?search={encoded_query}",
-            f"{clean_base}/shop?s={encoded_query}",
         ]
 
         async def _fetch(c: httpx.AsyncClient, target_url: str) -> str | None:
@@ -317,7 +482,7 @@ class AtelierScraperService:
                 if html_content:
                     break
         else:
-            async with httpx.AsyncClient() as new_client:
+            async with httpx.AsyncClient(follow_redirects=True) as new_client:
                 for url in search_urls:
                     html_content = await _fetch(new_client, url)
                     if html_content:
@@ -329,11 +494,22 @@ class AtelierScraperService:
         raw_items = self.parse_html_catalog(html_content, base_url)
         matched_products: list[ScrapedAtelierProduct] = []
 
-        # Deduplicate and convert to ScrapedAtelierProduct
         seen_titles: set[str] = set()
+
         for item in raw_items:
-            title = item.get("title", "").strip()
-            if not title or title.lower() in seen_titles:
+            title = (item.get("title") or "").strip()
+            image_url = item.get("image_url")
+
+            # 1. Require a valid, absolute image URL (no blank / data: / transparent URLs)
+            if not image_url or not isinstance(image_url, str) or not image_url.startswith("http") or "transparent" in image_url or "placeholder" in image_url:
+                continue
+
+            # 2. Reject noise titles
+            title_lower = title.lower()
+            if any(noise in title_lower for noise in _NOISE_PHRASES):
+                continue
+
+            if title.lower() in seen_titles:
                 continue
             seen_titles.add(title.lower())
 
@@ -342,7 +518,7 @@ class AtelierScraperService:
                     title=title,
                     price=item.get("price") or "Price on Request",
                     product_url=item.get("product_url") or base_url,
-                    image_url=item.get("image_url"),
+                    image_url=image_url,
                     fabric_details=None,
                     in_stock=True,
                     atelier_id=atelier_id,

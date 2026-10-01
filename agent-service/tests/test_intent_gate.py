@@ -52,6 +52,27 @@ def test_classify_by_rules_customer_history_suggests_memory_only():
     assert result.suggested_agents == ["memory"]
 
 
+@pytest.mark.parametrize(
+    "message,expected_intent",
+    [
+        ("Context: The customer has a wedding", "event_query"),
+        ("Kavindu Nirmal (new) | Context: The customer has a wedding", "event_query"),
+        ("The customer has a wedding in December and prefers cotton gowns", "customer_preference"),
+        ("Kavindu Nirmal has a wedding in December and prefers cotton only no nylon or spandex", "customer_preference"),
+        ("Add a note for this customer: she likes green silk sarees", "customer_preference"),
+        ("Remember that Kavindu prefers cotton dresses", "customer_preference"),
+        ("Customer note: attending a wedding, prefers pastel silk sarees", "customer_preference"),
+        ("Tell me about this customer", "customer_preference"),
+        ("What are the preferences of this customer?", "customer_preference"),
+    ],
+)
+def test_classify_by_rules_customer_notes_and_context_suggest_memory_only(message, expected_intent):
+    """Customer context, profile updates, and notes must route to Ava only (never triggering Elle)."""
+    result = classify_by_rules(message)
+    assert result.intent_type == expected_intent
+    assert result.suggested_agents == ["memory"]
+
+
 def test_classify_by_rules_general_inquiry_fallback():
     result = classify_by_rules("Hello, how are you today?")
     assert result.intent_type == "general_inquiry"

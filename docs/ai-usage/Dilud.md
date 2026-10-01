@@ -1,3 +1,37 @@
+## Session 2026-10-01 (CI Fix: Dynamic Calendar Period Alignment for Blossom Statement Tests)
+
+**Task:** Fix failing GitHub Actions CI check `Aveline CI / Build, Test & Publish API (pull_request)` caused by calendar month rollover to October 1, 2026 making hardcoded September test dates mismatch `BlossomService.GetOrCreateAccountAsync()` current billing period calculation.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis of Test Failure**:
+   - Diagnosed failure in `BlossomStatementPagingTests.TheReconciliationFormula_IsUnchanged` (`Expected: 100020, Actual: 150`).
+   - `BlossomService.GetOrCreateAccountAsync(organizationId, ct)` determines the active statement period dynamically via `GetCurrentPeriod()` (which uses `DateTime.UtcNow`).
+   - When transitioning into October 2026, `GetCurrentPeriod()` resolves to `(2026-10-01, 2026-11-01)`. Because the unit tests seeded test usage accounts with fixed September 2026 timestamps (`new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc)`), `GetOrCreateAccountAsync` created a fresh default October account with standard 150 limit and 0 ledger transactions instead of matching the seeded September account.
+
+2. **Dynamic Period Alignment in Unit Tests (`Aveline.Api.Tests`)**:
+   - Updated `BlossomStatementPagingTests.cs` and `BlossomStatementDetailTests.cs` to dynamically derive `PeriodStart = new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc)`, `From = PeriodStart`, and `To = PeriodStart.AddMonths(3)`.
+   - Verified that all statement tests remain period-aligned regardless of month boundary rollovers.
+
+3. **Automated Verification**:
+   - Executed `dotnet test Aveline.Api/Aveline.Api.sln -c Release --filter "FullyQualifiedName~BlossomStatement"`: 16/16 passed (100%).
+   - Executed full non-postgres test suite in Release configuration.
+
+### Files Created or Modified
+
+- `Aveline.Api.Tests/BlossomStatementPagingTests.cs`
+- `Aveline.Api.Tests/BlossomStatementDetailTests.cs`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api/Aveline.Api.sln -c Release --filter "FullyQualifiedName~BlossomStatement"`: 16/16 passed (100%).
+- `git status` / `git diff` clean and verified.
+
+---
+
 ## Session 2026-10-01 (Customer Memory Isolation & Visual Agent Routing Safeguards)
 
 **Task:** Prevent the Visual Insight Agent (Elle) from erroneously answering questions, profile updates, preference statements, or context notes intended exclusively for the Customer Memory Agent (Ava).

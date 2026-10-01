@@ -38,6 +38,27 @@ class ClerkAuthRepository implements AuthRepository {
     return AuthUserMapper.fromClerk(user, claims: claims);
   }
 
+  /// Reads what this instance allows from the Clerk environment.
+  ///
+  /// The production and development instances disagree about whether `username`
+  /// is an identifier, and both require longer passwords than the forms used to
+  /// accept, so the UI reads these values instead of hard-coding one instance's
+  /// settings.
+  @override
+  AuthCapabilities get capabilities {
+    final env = _authState.env;
+    if (env.isEmpty) {
+      return AuthCapabilities.unknown;
+    }
+    final username = env.user.attributes[clerk.UserAttribute.username];
+    return AuthCapabilities(
+      usernameEnabled: username?.isEnabled ?? false,
+      usernameRequired: username?.isRequired ?? false,
+      passwordMinLength: env.user.passwordSettings.minLength,
+      signUpCaptchaRequired: env.user.signUp.captchaEnabled,
+    );
+  }
+
   @override
   Future<String?> getToken() async {
     final cached = _cachedToken;
@@ -59,20 +80,15 @@ class ClerkAuthRepository implements AuthRepository {
   Future<void> signOut() => _authState.signOut();
 
   @override
-  Future<String?> signInWithPassword({
+  Future<AuthFailure?> signInWithPassword({
     required String identifier,
     required String password,
-  }) {
-    final cleanIdentifier = identifier.trim();
-    if (cleanIdentifier.isEmpty || password.isEmpty) {
-      return Future.value('Please provide both an identifier and a password.');
-    }
-    return _run(() => _authState.attemptSignIn(
-          strategy: clerk.Strategy.password,
-          identifier: cleanIdentifier,
-          password: password,
-        ));
-  }
+  }) =>
+      _run(() => _authState.attemptSignIn(
+            strategy: clerk.Strategy.password,
+            identifier: identifier,
+            password: password,
+          ));
 
   @override
   String? get secondFactorStrategy {
@@ -88,123 +104,79 @@ class ClerkAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<String?> sendSecondFactorCode() {
+  Future<AuthFailure?> sendSecondFactorCode() {
     // For code-based factors (email/phone) calling attemptSignIn without a code
     // triggers Clerk's prepare step, which dispatches the one-time code.
     return _run(() => _authState.attemptSignIn(strategy: _secondFactorStrategy));
   }
 
   @override
-  Future<String?> verifySecondFactorCode({required String code}) {
-    final cleanCode = code.trim();
-    if (cleanCode.isEmpty) {
-      return Future.value('Please enter the verification code.');
-    }
+  Future<AuthFailure?> verifySecondFactorCode({required String code}) {
     return _run(() => _authState.attemptSignIn(
           strategy: _secondFactorStrategy,
-          code: cleanCode,
+          code: code,
         ));
   }
 
   @override
-  Future<String?> signUpWithPassword({
+  Future<AuthFailure?> signUpWithPassword({
     required String emailAddress,
     String? username,
     String? firstName,
     String? lastName,
     required String password,
-  }) {
-    final cleanEmail = emailAddress.trim();
-    if (cleanEmail.isEmpty || password.isEmpty) {
-      return Future.value('Please provide both an email and a password.');
-    }
-    final cleanUsername =
-        (username == null || username.trim().isEmpty) ? null : username.trim();
-    final cleanFirstName =
-        (firstName == null || firstName.trim().isEmpty) ? null : firstName.trim();
-    final cleanLastName =
-        (lastName == null || lastName.trim().isEmpty) ? null : lastName.trim();
-
-    return _run(() => _authState.attemptSignUp(
-          strategy: clerk.Strategy.password,
-          emailAddress: cleanEmail,
-          username: cleanUsername,
-          firstName: cleanFirstName,
-          lastName: cleanLastName,
-          password: password,
-          passwordConfirmation: password,
-        ));
-  }
+  }) =>
+      _run(() => _authState.attemptSignUp(
+            strategy: clerk.Strategy.password,
+            emailAddress: emailAddress,
+            username: username,
+            firstName: firstName,
+            lastName: lastName,
+            password: password,
+            passwordConfirmation: password,
+          ));
 
   @override
-  Future<String?> sendEmailVerificationCode() =>
+  Future<AuthFailure?> sendEmailVerificationCode() =>
       _run(() => _authState.attemptSignUp(strategy: clerk.Strategy.emailCode));
 
   @override
-  Future<String?> verifyEmailCode({required String code}) {
-    final cleanCode = code.trim();
-    if (cleanCode.isEmpty) {
-      return Future.value('Please enter the verification code.');
-    }
-    return _run(() => _authState.attemptSignUp(
-          strategy: clerk.Strategy.emailCode,
-          code: cleanCode,
-        ));
-  }
+  Future<AuthFailure?> verifyEmailCode({required String code}) =>
+      _run(() => _authState.attemptSignUp(
+            strategy: clerk.Strategy.emailCode,
+            code: code,
+          ));
 
-  /// Extracts the human-readable error message from a [clerk.ClerkError].
+  /// Runs an auth action, translating failures into a presentable [AuthFailure].
   ///
-  /// Clerk's server-error template string contains unformatted '{arg}'.
-  /// The actual user-facing reason (e.g. invalid credentials, identifier not found)
-  /// is stored in [clerk.ClerkError.argument] or [clerk.ClerkError.errors].
-  @visibleForTesting
-  static String extractErrorMessage(clerk.ClerkError error) {
-    if (error.argument case final arg? when arg.trim().isNotEmpty && arg != '{arg}') {
-      return arg.trim();
-    }
-    final errors = error.errors?.errors;
-    if (errors != null && errors.isNotEmpty) {
-      final messages = errors
-          .map((e) => e.fullMessage.trim())
-          .where((m) => m.isNotEmpty && m != 'Unknown error')
-          .toList();
-      if (messages.isNotEmpty) {
-        return messages.join('; ');
-      }
-    }
-    final asString = error.toString().trim();
-    if (asString.isNotEmpty &&
-        !asString.contains('{arg}') &&
-        asString != '(ERROR RECEIVED FROM SERVER)') {
-      final stripped = asString.replaceFirst(' (ERROR RECEIVED FROM SERVER)', '').trim();
-      if (stripped.isNotEmpty) {
-        return stripped;
-      }
-    }
-    final cleanMessage = error.message
-        .replaceFirst('{arg}', '')
-        .replaceFirst('(ERROR RECEIVED FROM SERVER)', '')
-        .trim();
-    if (cleanMessage.isNotEmpty && !cleanMessage.contains('{arg}')) {
-      return cleanMessage;
-    }
-    return 'Authentication failed. Please verify your credentials and try again.';
-  }
-
-  /// Runs an auth action, translating failures into a human-readable message.
-  Future<String?> _run(Future<void> Function() action) async {
+  /// The raw Clerk error is logged in full on purpose: `ClerkError.message` is a
+  /// template (`'{arg} (ERROR RECEIVED FROM SERVER)'`) whose real text lives in
+  /// `argument`/`errors`, so logging only `message` - as this used to - hid the
+  /// cause from both the log and the user.
+  Future<AuthFailure?> _run(Future<void> Function() action) async {
     try {
       await action();
       return null;
     } on clerk.ClerkError catch (error) {
-      final message = extractErrorMessage(error);
-      debugPrint('[clerk auth error] ClerkError: $message - ${error.code}');
-      return message;
+      final failure = AuthFailure.fromClerk(error);
+      debugPrint(
+        '[clerk auth] kind=${failure.kind.name} code=${failure.code} '
+        'detail=${error.errors?.errorMessage} '
+        'raw=${_rawCodes(error)}',
+      );
+      return failure;
     } catch (error, stack) {
-      debugPrint('[clerk auth error] $error\n$stack');
-      return error.toString().replaceFirst('Exception: ', '');
+      debugPrint('[clerk auth] unexpected $error\n$stack');
+      return AuthFailure.fromException(error);
     }
   }
+
+  /// Every code the server returned, for the log line.
+  String _rawCodes(clerk.ClerkError error) =>
+      error.errors?.errors
+          ?.map((e) => '${e.code}: ${e.fullMessage}')
+          .join(' | ') ??
+      'none';
 
   Future<clerk.SessionToken?> _fetchToken() async {
     if (!_authState.isSignedIn) {

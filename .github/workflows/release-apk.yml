@@ -86,7 +86,7 @@ jobs:
     name: Build, sign and publish the APK
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # --- preflight: refuse to publish a known-broken artifact ---------------
       # Fail before spending ten minutes on a build if the configuration that

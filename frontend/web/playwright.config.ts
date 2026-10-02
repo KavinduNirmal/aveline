@@ -35,7 +35,13 @@ export default defineConfig({
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  reporter: [['list']],
+  // The list reporter is what a developer reads; the HTML report is the artefact
+  // the CI E2E stage uploads so a reviewer can open a failing walk instead of
+  // re-running it. `open: 'never'` is required in CI, where nothing may block on
+  // a browser window.
+  reporter: process.env.CI
+    ? [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]]
+    : [['list']],
   // Above Playwright's 5 s default: a cold `bun run dev` can take longer than that to hand back the
   // first document, and a liveness bound that fails a correct redirect is worse than a slow run.
   expect: { timeout: 15_000 },

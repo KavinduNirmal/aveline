@@ -8596,6 +8596,17 @@ components:
         Customer API key, formatted `avl_live_<32 base62 characters>` or
         `avl_test_<...>`. Phase 3. Available on the Rose plan and above.
 
+        **Scope of this scheme.** An API-key principal carries the key's owning
+        organization and its granted scopes, but no Clerk `sub`. Routes that must
+        resolve an acting *user* therefore answer `401` even though the policy
+        accepts the scheme: the conversations surface
+        (`/api/v1/orgs/{organizationId}/conversations/**`) resolves the caller
+        through `ConversationEndpoints.ResolveUserIdAsync`, which reads
+        `ClaimTypes.NameIdentifier`/`sub` and returns `null` for an API key. The
+        org-scoped read routes that need no acting user (billing statistics,
+        catalogue reads, API-key management) do accept it. Found by the
+        cross-surface E2E work; see `tests/e2e/integration/`.
+
   parameters:
     Granularity:
       name: granularity

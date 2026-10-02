@@ -501,7 +501,16 @@ class CommerceAgent:
         subtotal = sum(float(item.get("total_price") or (float(item.get("unit_price", 0.0)) * int(item.get("quantity", 1)))) for item in items)
         total_cost = sum(float(item.get("wholesale_cost", 0.0)) * int(item.get("quantity", 1)) for item in items)
 
-        # 2. Look up customer loyalty tier
+        # 2. Resolve the customer's loyalty tier.
+        #
+        # The VIP keyword is a shortcut for a message that says so outright; everything else
+        # resolves the tier from the customer's own profile. cde287b added the default
+        # tier-discount block below but left this lookup assigning a local that was never
+        # read (ruff F841), so `tier` stayed None for every non-VIP customer: `tier_norm`
+        # fell through every branch, `tier_cap` was 0.0, and the default tier discount the
+        # block documents was never applied. Resolving the tier here is what makes that
+        # block live, and it matches what the other two call sites of
+        # get_customer_loyalty_tier already do.
         tier = state.get("loyalty_tier")
         if not tier:
             message_text = state.get("message", "")
@@ -511,6 +520,7 @@ class CommerceAgent:
                 tier_info = await get_customer_loyalty_tier(
                     org_id, customer_id, customer_name=customer_name, registry=self.registry
                 )
+                tier = str(tier_info.get("tier") or "Regular")
         tier_norm = (tier or "").strip().lower()
         if tier_norm == "vip":
             tier_cap = 0.10
@@ -574,6 +584,23 @@ class CommerceAgent:
                 approval_type = "discount"
                 approval_reason = f"Requested discount {effective_order_discount:.1%} exceeds {tier} tier cap"
 
+        # Every order raised through the conversation queues for owner review, even one that
+        # breached nothing. ADR-024's rules decide *why* a deal needs a decision; this is the
+        # floor underneath them, and it is deliberately reached only when no rule fired, so a
+        # breached rule still names itself (high_value_order, low_margin, discount) rather than
+        # being flattened into the generic type. `tests/test_commerce_graph.py` pins both halves.
+        #
+        # A quote cannot be caught here: the graph routes `purpose == QUOTE_PURPOSE` to the
+        # pricing arm before it ever consults `requires_approval`, and this node is only on the
+        # order path.
+        if not requires_approval:
+            requires_approval = True
+            is_auto_approved = False
+            approval_type = "order_approval"
+            approval_reason = (
+                "Every order placed through the conversation is queued for owner review."
+            )
+
         logger.info(
             "Evaluated deal for org %s: subtotal=%.2f total=%.2f margin=%.4f requires_approval=%s",
             org_id, subtotal, total, margin, requires_approval
@@ -586,7 +613,15 @@ class CommerceAgent:
             "total_cost": total_cost,
             "margin": margin,
             "loyalty_tier": tier,
-            "proposed_discount": effective_order_discount,
+            # The rate the associate or buyer *asked for*, not the rate that ended up applied.
+            # `CommerceAgentInput.proposed_discount` is documented as "discount proposed by
+            # associate/buyer", and the discount lane's quote node treats a non-zero value here
+            # as an explicit request, using it in preference to the rate it extracts from the
+            # message. Writing the effective rate (which includes the tier's standing discount)
+            # meant a tier default silently replaced the customer's requested discount: a
+            # message asking for 10% was reported as 5%. The applied rate is carried by
+            # `discount_amount` and `total` below, which are what the money fields mean.
+            "proposed_discount": proposed_discount,
             "is_auto_approved": is_auto_approved,
             "requires_approval": requires_approval,
             "approval_type": approval_type,

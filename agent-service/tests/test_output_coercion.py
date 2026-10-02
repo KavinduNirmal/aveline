@@ -6,6 +6,8 @@ graceful ``None`` instead of an uncaught exception.
 """
 
 
+import pytest
+
 from app.agents.customer_memory.nodes import coerce_output
 
 
@@ -36,6 +38,7 @@ def test_output_without_phone_is_accepted():
     assert coerce_output(payload) is not None
 
 
+@pytest.mark.golden_behaviour  # GC-04: an invalid schema fails closed, never a partial result
 def test_invalid_status_returns_none():
     payload = {"status": "exploded"}
     assert coerce_output(payload) is None

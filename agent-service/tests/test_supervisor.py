@@ -217,6 +217,7 @@ async def test_accepts_a_code_fenced_reply():
 
 
 @pytest.mark.asyncio
+@pytest.mark.golden_behaviour  # GC-01: an unrecognised agent name is dropped, not executed
 async def test_drops_unknown_agent_names_but_keeps_valid_ones():
     # Lenient on purpose: an invented agent must not discard an otherwise usable decision.
     llm = _StubLlm(_plan(agents=["memory", "shipping", "visual"]))
@@ -247,6 +248,7 @@ async def test_preserves_a_clarification_the_supervisor_asks():
 
 
 @pytest.mark.asyncio
+@pytest.mark.golden_behaviour  # GC-02: the model reply becomes a typed plan with typed flags
 async def test_reads_the_routing_flags():
     llm = _StubLlm(_plan(needs_customer_resolution=True, requires_approval=True))
     plan = await supervise("Any pinkish gowns?", llm=llm)

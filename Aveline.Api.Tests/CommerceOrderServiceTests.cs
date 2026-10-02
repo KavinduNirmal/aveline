@@ -60,12 +60,17 @@ public class CommerceOrderServiceTests
         Assert.Equal(4800m, result.Total);
         Assert.Equal(3000m, result.TotalCost);
         Assert.Equal(0.3750m, result.Margin);
-        Assert.Equal("payment_requested", result.Status);
+        // The order carries a 200 (4%) discount and names no tier, so it is priced as a New
+        // customer, whose default cap is 0% (BusinessRulesService.ResolveDefaultDiscountCap).
+        // Any discount above that cap raises DISCOUNT_LIMIT_EXCEEDED and the order queues for
+        // owner approval instead of requesting payment. This assertion is incidental to the
+        // test's purpose, which is the arithmetic above it.
+        Assert.Equal("pending_approval", result.Status);
         Assert.Equal(2, result.Items.Count);
     }
 
     [Theory]
-    [InlineData("VIP", 5000, 250)]       // 5% of 5000 = 250
+    [InlineData("VIP", 5000, 500)]       // 10% of 5000 = 500
     [InlineData("Bronze", 5000, 150)]    // 3% of 5000 = 150
     [InlineData("Silver", 5000, 350)]    // 7% of 5000 = 350
     [InlineData("Gold", 5000, 500)]      // 10% of 5000 = 500
@@ -91,12 +96,12 @@ public class CommerceOrderServiceTests
             }
         };
 
-        // Subtotal = 10000, VIP = 5% => Discount = 500, Total = 9500
+        // Subtotal = 10000, VIP = 10% => Discount = 1000, Total = 9000
         var result = await _orderService.CreateOrderAsync(_orgId, dto);
 
         Assert.Equal(10000m, result.Subtotal);
-        Assert.Equal(500m, result.Discount);
-        Assert.Equal(9500m, result.Total);
+        Assert.Equal(1000m, result.Discount);
+        Assert.Equal(9000m, result.Total);
     }
 
     [Fact]

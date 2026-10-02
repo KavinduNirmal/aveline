@@ -1,0 +1,36 @@
+{
+  "contractVersion": 1,
+  "internalTokenHeader": "X-Internal-Token",
+  "sampleInternalToken": "aveline-local-development-secret-token-2026",
+  "pendingApprovalStatus": "pending_approval",
+  "paths": {
+    "query": "/agents/query",
+    "resume": "/agents/resume"
+  },
+  "queryRequestFields": ["org_context", "query", "thread_id"],
+  "resumeRequestFields": [
+    "comment",
+    "conversation_id",
+    "customer_id",
+    "customer_name",
+    "decision",
+    "order_id",
+    "organization_id",
+    "revised_discount",
+    "thread_id"
+  ],
+  "apiSendsResumeFields": [
+    "comment",
+    "conversation_id",
+    "customer_name",
+    "decision",
+    "order_id",
+    "organization_id",
+    "revised_discount",
+    "thread_id"
+  ],
+  "queryResponseFields": ["result", "status", "thread_id"],
+  "agentResultFields": ["metadata", "output", "status"],
+  "apiDeserialisedResponseFields": ["result", "status"],
+  "apiDeserialisedResultFields": ["status"]
+}

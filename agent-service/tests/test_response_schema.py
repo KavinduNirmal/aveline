@@ -59,6 +59,7 @@ def test_agent_output_accepts_enum():
     assert output.status == AgentStatus.pending_approval
 
 
+@pytest.mark.golden_behaviour  # GC-04: a schema violation fails once, not a partial result
 def test_agent_output_rejects_invalid_status():
     with pytest.raises(ValidationError):
         AgentOutput(status="not_a_status", output={})
@@ -86,6 +87,7 @@ def test_agent_response_metadata_optional():
     assert response.metadata is None
 
 
+@pytest.mark.golden_behaviour  # GC-02: the typed envelope is closed; unknown steps are refused
 def test_agent_response_rejects_extra_fields():
     with pytest.raises(ValidationError):
         AgentResponse(status="success", output={}, unexpected="x")  # type: ignore[call-arg]

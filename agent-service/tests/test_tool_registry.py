@@ -295,6 +295,7 @@ async def test_registry_search_inventory(client):
 
 @pytest.mark.asyncio
 @respx.mock
+@pytest.mark.golden_behaviour  # GC-03: a specialist reaches only its registered client
 async def test_registry_calculate_margin(client):
     route = respx.post(f"{BASE_URL}/api/internal/orders/order-1/calculate-margin").respond(
         status_code=200, json={"margin": 0.2}

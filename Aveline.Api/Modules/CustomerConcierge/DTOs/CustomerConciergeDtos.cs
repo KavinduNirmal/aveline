@@ -11,10 +11,11 @@ public sealed record CustomerMatchDto(
     string? FullName,
     string PhoneNumber,
     string Status,
-    DateTime? LastVisitAt)
+    DateTime? LastVisitAt,
+    string? Level = null)
 {
     public static CustomerMatchDto From(Customer c) => new(
-        c.Id, c.FullName, c.PhoneNumber, c.Status, c.LastVisitAt);
+        c.Id, c.FullName, c.PhoneNumber, c.Status, c.LastVisitAt, c.Level);
 }
 
 /// <summary>Request to look up customers by name and/or phone. At least one is required.</summary>
@@ -93,7 +94,8 @@ public sealed record CustomerProfileDto(
     int VisitCount,
     IReadOnlyList<CustomerPreferenceDto> Preferences,
     IReadOnlyList<string> Tags,
-    string ConsentStatus)
+    string ConsentStatus,
+    string? Level = null)
 {
     public static CustomerProfileDto From(Customer c, IReadOnlyList<string> tags, string consentStatus) => new(
         c.Id,
@@ -106,7 +108,8 @@ public sealed record CustomerProfileDto(
         c.VisitCount,
         c.Preferences.Select(CustomerPreferenceDto.From).ToList(),
         tags,
-        consentStatus);
+        consentStatus,
+        c.Level);
 }
 
 /// <summary>Request to look up (or create) a customer by phone number.</summary>

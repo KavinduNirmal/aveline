@@ -221,3 +221,34 @@ async def test_publish_agent_messages_publishes_one_event_per_message():
         assert event_type == "message.created"
         assert published_org == org_id
         assert payload["thread_id"] == thread_id
+
+
+def test_build_agent_messages_places_sign_off_after_summary_narrative():
+    result = AgentResponse(
+        status=AgentStatus.success,
+        output={
+            "intent": "commerce_deal",
+            "memory": None,
+            "visual": None,
+            "commerce": {
+                "agent": "commerce",
+                "ran": True,
+                "status": "pending_approval",
+                "summary": "Prepared order for Silk Gown at LKR 45,000 awaiting review.",
+                "total": 45000,
+                "order_id": "ord-123",
+                "approval_reason": "High-value order exceeds threshold",
+            },
+        },
+    )
+    messages = build_agent_messages(result)
+    lina = [m for m in messages if m["author"]["agent_key"] == "lina"]
+    assert len(lina) == 1
+    assert lina[0]["kind"] == "SignOff"
+    blocks = lina[0]["blocks"]
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "text"
+    assert "Prepared order" in blocks[0]["text"]
+    assert blocks[1]["type"] == "sign_off"
+    assert blocks[1]["amount"] == 45000
+    assert blocks[1]["orderId"] == "ord-123"

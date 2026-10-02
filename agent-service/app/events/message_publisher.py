@@ -90,7 +90,7 @@ def build_agent_messages(
                     order_id = sub_output.get("order_id")
                     if order_id:
                         sign_off_block["orderId"] = str(order_id)
-                    blocks = [sign_off_block, *blocks]
+                    blocks = [*blocks, sign_off_block]
             specialist_messages.append(
                 _message(agent_key, kind, blocks, thread_id, workflow_run_id)
             )

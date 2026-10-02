@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Aveline.Api.Common.Media;
 using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.Commerce.Services;
@@ -7,6 +8,7 @@ using Aveline.Api.Modules.Conversations.Attachments;
 using Aveline.Api.Modules.Conversations.DTOs;
 using Aveline.Api.Modules.Conversations.Models;
 using Aveline.Api.Modules.Conversations.Repositories;
+using Aveline.Api.Modules.CustomerConcierge.DTOs;
 using Aveline.Api.Modules.CustomerConcierge.Metrics;
 using Aveline.Api.Modules.CustomerConcierge.Services;
 using Aveline.Api.Modules.Media;
@@ -30,6 +32,7 @@ public class ConversationService : IConversationService
     private readonly IConversationOrderBridge? _orderBridge;
     private readonly IConsentGateService? _consentGate;
     private readonly ConsentMetrics? _consentMetrics;
+    private readonly ICustomerService? _customers;
 
     /// <summary>
     /// <paramref name="mediaTokens"/> mints the bridge's absolute <c>image_url</c>. It is optional
@@ -65,7 +68,8 @@ public class ConversationService : IConversationService
         IOrderContextBuilder? orderContext = null,
         IConversationOrderBridge? orderBridge = null,
         IConsentGateService? consentGate = null,
-        ConsentMetrics? consentMetrics = null)
+        ConsentMetrics? consentMetrics = null,
+        ICustomerService? customers = null)
     {
         _conversations = conversations;
         _messages = messages;
@@ -80,6 +84,7 @@ public class ConversationService : IConversationService
         _orderBridge = orderBridge;
         _consentGate = consentGate;
         _consentMetrics = consentMetrics;
+        _customers = customers;
     }
 
     public async Task<ConversationDto> GetOrCreateSalonAsync(
@@ -1289,6 +1294,61 @@ public class ConversationService : IConversationService
                 }
             }
 
+            customerId ??= conversation.CustomerId;
+
+            string? effectiveCustomerTier = null;
+            if (!customerId.HasValue && !string.IsNullOrWhiteSpace(effectiveCustomerName) && _customers != null)
+            {
+                try
+                {
+                    var lookup = await _customers.LookupAsync(
+                        new CustomerLookupRequest
+                        {
+                            OrganizationId = conversation.OrganizationId,
+                            Name = effectiveCustomerName.Trim()
+                        },
+                        cancellationToken);
+
+                    if (lookup.Matches.Count > 0)
+                    {
+                        var match = lookup.Matches.FirstOrDefault(m =>
+                            string.Equals(m.FullName, effectiveCustomerName.Trim(), StringComparison.OrdinalIgnoreCase))
+                            ?? lookup.Matches[0];
+                        customerId = match.CustomerId;
+                        effectiveCustomerName = match.FullName;
+                        effectiveCustomerTier = !string.IsNullOrWhiteSpace(match.Level) ? match.Level : match.Status;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not lookup customer by name '{CustomerName}' for conversation {ConversationId}", effectiveCustomerName, conversation.Id);
+                }
+            }
+            else if (customerId.HasValue && _customers != null)
+            {
+                try
+                {
+                    var profile = await _customers.GetProfileAsync(conversation.OrganizationId, customerId.Value, cancellationToken);
+                    if (profile != null)
+                    {
+                        effectiveCustomerTier = !string.IsNullOrWhiteSpace(profile.Level) ? profile.Level : profile.Status;
+                        if (string.IsNullOrWhiteSpace(effectiveCustomerName))
+                        {
+                            effectiveCustomerName = profile.FullName;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best effort
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(effectiveCustomerTier) && Regex.IsMatch(query, @"\bVIP\b", RegexOptions.IgnoreCase))
+            {
+                effectiveCustomerTier = "VIP";
+            }
+
             var payload = new
             {
                 query,
@@ -1300,6 +1360,7 @@ public class ConversationService : IConversationService
                     conversation_id = conversation.Id,
                     customer_id = customerId,
                     customer_name = effectiveCustomerName,
+                    loyalty_tier = effectiveCustomerTier,
                     // The staff path (Salon note, regeneration, agent brief), so the tenant's own
                     // account figures are in scope: "how many Blossoms do I have left?" is a
                     // question about this boutique, not about a customer (ADR-026). This flag is

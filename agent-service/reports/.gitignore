@@ -1,0 +1,3 @@
+# Generated output. The behaviour-case report is evidence a CI job uploads, not source to commit.
+# `scripts/run_behaviour_cases.py` writes behaviour-cases.json here.
+*.json

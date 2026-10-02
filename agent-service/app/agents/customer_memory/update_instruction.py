@@ -90,10 +90,17 @@ _NAME_RE = re.compile(
 #: Verb-led forms that state no "name" marker: "rename this customer to Kasha Vivian",
 #: "set the client as Nimal". Tried only when the marker form found nothing, so the more explicit
 #: "with the name X" phrasing is never misread by this looser pattern.
+#:
+#: The object noun is **required**, not optional. With it optional the verb could be read as an
+#: ordinary noun and the following "is" as the value separator, so "the price update is live" was
+#: extracted as an instruction to name the customer "live", and "the stock update is pending" as
+#: "pending". Those messages contain the word "update" but are not instructions to change anything;
+#: a command that rewrites a name names the customer it is about. Requiring the noun keeps every
+#: command form ("rename this customer to X", "set the client as X") and rejects the noun reading.
 _VERB_NAME_RE = re.compile(
     r"\b(?:" + _UPDATE_VERBS + r")\s+"
-    r"(?:this\s+|the\s+|their\s+|that\s+)?"
-    r"(?:customer|client|profile|record)?\s*"
+    r"(?:this\s+|the\s+|their\s+|that\s+|our\s+)?"
+    r"(?:customer|client|profile|record)\b\s*"
     r"(?:to|as|is|:|=)\s+"
     r"(?P<name>" + _WORD + r"(?:\s+" + _WORD + r")*)",
     re.IGNORECASE,

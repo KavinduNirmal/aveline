@@ -6,6 +6,7 @@ business rules evaluation, payment generation, and courier bookings.
 
 import unittest
 
+import pytest
 from _payment_fakes import AnsweringPaymentRegistry
 
 from app.tools.commerce.delivery_tools import book_courier
@@ -70,6 +71,7 @@ class TestCommerceTools(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["requires_approval"])
         self.assertIn("HIGH_VALUE_THRESHOLD_EXCEEDED", result["triggered_rules"])
 
+    @pytest.mark.golden_behaviour  # GC-05: a low margin is refused by code, not by the model
     async def test_validate_business_rules_low_margin_breached(self):
         result = await validate_business_rules(
             org_id="org-1",

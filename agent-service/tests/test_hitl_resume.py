@@ -112,10 +112,18 @@ def shared_saver(monkeypatch) -> InMemorySaver:
 
 
 def _org_context() -> dict:
+    """The payload the API actually sends for a staff order (ConversationService).
+
+    ``customer_name`` is the registered client's name - ``orderContext.CustomerHint`` on the wire -
+    and it is not decoration: a conversational order with line items and no resolved client returns
+    a "which registered client is this for?" prompt instead of evaluating the deal, so a fixture
+    without it never reaches the pause these tests are about.
+    """
     return {
         "organization_id": ORG_ID,
         "conversation_id": "conv-hitl-001",
         "customer_id": None,
+        "customer_name": "Nadia Perera",
         "phone_number": "+94763475058",
         "channel": "whatsapp",
         "direction": "inbound",
@@ -134,6 +142,7 @@ async def _pause(saver: InMemorySaver, thread_id: str = THREAD_ID):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.golden_behaviour  # GC-07: an over-threshold purchase pauses for approval
 async def test_a_purchase_over_the_threshold_pauses_for_approval(shared_saver):
     """The bug ADR-024 was written for: this message produced no pause and no order."""
     response = await _pause(shared_saver)
@@ -155,7 +164,11 @@ async def test_the_pause_carries_every_rule_it_breached(shared_saver):
     # The margin breach matters too: approving this deal is a margin decision, not just a big-order
     # one, and the owner deciding it needs to see both.
     assert "LOW_MARGIN_THRESHOLD" in approval["triggered_rules"]
-    assert approval["total"] == pytest.approx(75000.0)
+    # 75,000 less the customer's default Regular-tier loyalty discount (5%): the tier is
+    # resolved from the customer's own profile (commerce/nodes.py, step 2), and a default
+    # tier discount applies when the message requests no explicit one. Before the F841 fix
+    # that lookup was discarded, so this total was the undiscounted 75,000.
+    assert approval["total"] == pytest.approx(71250.0)
 
 
 async def test_the_graph_is_actually_waiting_on_the_checkpoint(shared_saver):
@@ -194,6 +207,7 @@ async def test_a_message_with_no_items_never_pauses(shared_saver):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.golden_behaviour  # GC-07: an approval settles the deal
 async def test_an_approval_settles_the_deal(shared_saver):
     await _pause(shared_saver)
 
@@ -209,6 +223,7 @@ async def test_an_approval_settles_the_deal(shared_saver):
     assert commerce["needs_approval"] is False
 
 
+@pytest.mark.golden_behaviour  # GC-07: a rejection cancels the deal
 async def test_a_rejection_cancels_the_deal(shared_saver):
     await _pause(shared_saver)
 
@@ -307,7 +322,18 @@ async def test_an_out_of_range_discount_is_not_treated_as_a_rate(shared_saver):
 
     response = await resume_concierge(THREAD_ID, {"decision": "revised", "revised_discount": 5000})
 
-    assert response.output["commerce"]["deal"]["applied_discount_percent"] == pytest.approx(0.0)
+    applied = response.output["commerce"]["deal"]["applied_discount_percent"]
+    # The 5,000 is an amount, not a rate, so it is ignored and no discount is applied: the
+    # customer's tier here carries no standing discount, and the revised value named no
+    # valid rate either. Read as a rate it would clamp to 100% off, which is the failure
+    # this test exists to prevent.
+    #
+    # This assertion is on exact zero rather than on the tier's standing discount on
+    # purpose. The deal node now resolves the customer's tier, and it also no longer writes
+    # the *applied* rate into `state["proposed_discount"]`: that overloaded field made a
+    # resumed deal inherit the paused deal's tier discount as if the associate had asked
+    # for it, which is the bug that briefly made this value 0.05.
+    assert applied == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

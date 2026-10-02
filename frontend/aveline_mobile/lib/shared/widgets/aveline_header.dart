@@ -130,24 +130,30 @@ class AvelineHeader extends StatelessWidget implements PreferredSizeWidget {
           padding: const EdgeInsets.only(right: 12, left: 4),
           child: InkWell(
             key: const Key('aveline_header_profile_button'),
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(24),
             onTap: () => _handleProfile(context),
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: CircleAvatar(
-                radius: 14,
-                backgroundColor: scheme.primary.withValues(alpha: 0.12),
-                backgroundImage:
-                    profileImageUrl != null && profileImageUrl.isNotEmpty
-                        ? NetworkImage(profileImageUrl)
-                        : null,
-                child: profileImageUrl == null || profileImageUrl.isEmpty
-                    ? Icon(
-                        Icons.person_outline_rounded,
-                        size: 18,
-                        color: scheme.primary,
-                      )
-                    : null,
+            // The avatar itself is 36 across, which leaves a tap target below
+            // the 48x48 minimum this app asserts. The target is stated here
+            // rather than inherited from the circle's radius.
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: Center(
+                child: CircleAvatar(
+                  radius: 14,
+                  backgroundColor: scheme.primary.withValues(alpha: 0.12),
+                  backgroundImage:
+                      profileImageUrl != null && profileImageUrl.isNotEmpty
+                          ? NetworkImage(profileImageUrl)
+                          : null,
+                  child: profileImageUrl == null || profileImageUrl.isEmpty
+                      ? Icon(
+                          Icons.person_outline_rounded,
+                          size: 18,
+                          color: scheme.primary,
+                        )
+                      : null,
+                ),
               ),
             ),
           ),

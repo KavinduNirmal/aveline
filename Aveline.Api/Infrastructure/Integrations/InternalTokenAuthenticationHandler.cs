@@ -56,9 +56,11 @@ public class InternalTokenAuthenticationHandler(
             return Task.FromResult(AuthenticateResult.Fail("Internal token not configured or insecure on server."));
         }
 
-        // Constant-time comparison to prevent timing attacks
+        // Constant-time comparison to prevent timing attacks. The null-forgiving operator is
+        // justified: RejectKnownPlaceholder above already returned non-null for a missing or blank
+        // value, so reaching this line means configuredToken is a non-empty string.
         var providedBytes = System.Text.Encoding.UTF8.GetBytes(providedToken);
-        var configuredBytes = System.Text.Encoding.UTF8.GetBytes(configuredToken);
+        var configuredBytes = System.Text.Encoding.UTF8.GetBytes(configuredToken!);
 
         if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(providedBytes, configuredBytes))
         {

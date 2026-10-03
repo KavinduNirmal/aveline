@@ -27,7 +27,12 @@ flutter run \
 
 ## Authentication
 
-- Sign-in / sign-up via the Clerk SDK's prebuilt UI (`features/auth/`).
+- Sign-in / sign-up via the Clerk SDK's custom-flow APIs (`features/auth/`): the
+  password forms, plus a button for each social provider the instance has enabled.
+- Social sign-in opens the provider's own consent page, which needs
+  `com.clerk.flutter://callback` in the instance's authorised redirect URLs or
+  Clerk answers `resource_missmatch` and the page never opens. Set on production;
+  see `lib/features/auth/README.md`.
 - Sessions persist across restarts (SDK); the router redirects based on auth
   state (`core/router/route_guards.dart`).
 - Every API call attaches `Authorization: Bearer <jwt>` and refreshes / signs

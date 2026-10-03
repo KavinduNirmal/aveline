@@ -189,14 +189,6 @@ class _SignInFormState extends State<SignInForm> {
                     ),
                   ),
           ),
-          const SizedBox(height: 16),
-          Text(
-            'Protected by Clerk · your session stays on this device',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
         ],
       ),
     );

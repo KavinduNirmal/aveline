@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:clerk_auth/clerk_auth.dart' as clerk;
 import 'package:flutter/foundation.dart';
 
+import 'social_provider.dart';
+
 /// What a failure means, for callers that branch on it.
 enum AuthFailureKind {
   /// The identifier and password pair did not match.
@@ -145,6 +147,7 @@ class AuthCapabilities {
     this.usernameRequired = false,
     this.passwordMinLength = 8,
     this.signUpCaptchaRequired = false,
+    this.socialProviders = const [],
   });
 
   /// Whether the instance accepts a username at all.
@@ -160,6 +163,11 @@ class AuthCapabilities {
   /// way to send a captcha token, so a sign-up attempted in this state is
   /// guaranteed to fail; the form refuses rather than trying.
   final bool signUpCaptchaRequired;
+
+  /// The social providers this instance can sign in with, in the order it lists
+  /// them. Empty on an instance with no social connections, and in the window
+  /// before the environment has loaded.
+  final List<SocialProvider> socialProviders;
 
   /// Conservative defaults for tests and for the window before the instance
   /// environment has loaded.

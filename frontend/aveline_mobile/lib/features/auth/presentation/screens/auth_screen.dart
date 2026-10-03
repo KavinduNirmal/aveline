@@ -4,14 +4,16 @@ import '../../../../shared/widgets/aurora_field.dart';
 import '../../../../shared/widgets/blossom.dart';
 import '../widgets/sign_in_form.dart';
 import '../widgets/sign_up_form.dart';
+import '../widgets/social_auth_buttons.dart';
 
 enum _AuthMode { signIn, signUp }
 
 /// Sign-in / sign-up entry screen built with Clerk's custom-flow APIs.
 ///
 /// The sign-in and sign-up methods shown reflect the Clerk Dashboard instance
-/// settings (email/username + password). Email verification, when required, is
-/// handled inline by the forms.
+/// settings: email/username + password, and whichever social providers the
+/// instance has enabled. Email verification, when required, is handled inline by
+/// the forms.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -112,6 +114,29 @@ class _AuthScreenState extends State<AuthScreen> {
                                 child: _mode == _AuthMode.signIn
                                     ? const SignInForm(key: ValueKey('signin'))
                                     : const SignUpForm(key: ValueKey('signup')),
+                              ),
+                              // Keyed by the mode so switching tabs abandons a
+                              // half-finished provider sign-up rather than
+                              // leaving the next tab showing its prompts. The
+                              // section renders nothing when the instance has no
+                              // social connections, in which case the divider
+                              // that separates it from the form is not drawn
+                              // either.
+                              SocialAuthButtons(
+                                key: ValueKey('social-${_mode.name}'),
+                                isSignUp: _mode == _AuthMode.signUp,
+                              ),
+                              // The note is about the session, not about any one
+                              // way in, so it sits under every Clerk-backed
+                              // option rather than between them.
+                              const SizedBox(height: 20),
+                              Text(
+                                'Protected by Clerk · your session stays on '
+                                'this device',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                ),
                               ),
                             ],
                           ),

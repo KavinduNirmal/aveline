@@ -688,33 +688,30 @@ are unavailable. It also means **session revocation is not observable through th
 weakens incident response. Functional impact is a broken feature. Not currently an exposure — the
 endpoint is authenticated and returns no data — but it is a genuine defect with security relevance.
 
-**Root cause — still open, and two candidate explanations eliminated.** The paragraph above guesses a
-misconfigured secret key or base URL. Both were tested directly against Clerk's live API and neither
-holds:
+**Root cause — the wrong Clerk route, and the paragraph above is wrong on both counts.** Not the secret
+key and not the base URL. `ClerkAdminClient` lists sessions from `/users/{id}/sessions`, which Clerk
+serves only far enough to load the user; for a **real** user id the request then falls through to a
+router that answers with a plain-text `404 page not found`. Verified against the live API with a live
+test-user token:
 
-| Check | Result |
-|-------|--------|
-| The key authenticates | ✅ valid — Clerk answers in its JSON error shape, not an auth rejection |
-| `/v1/users/{id}/sessions` is a real route | ✅ it validates the user id and returns `{"code":"resource_not_found"}` for an unknown one |
-| `Clerk__BackendApiUrl` in the container app | **unset** — `az containerapp show … env[?name=='Clerk__BackendApiUrl']` returns `[]` |
+| Request | Result |
+|---------|--------|
+| `GET /v1/users/{id}` | `200 application/json` — the key, the instance and the user are all fine |
+| `GET /v1/users/{id}/sessions` | `404` · `text/plain` · **`404 page not found`** — the defect |
+| `GET /v1/sessions?user_id={id}` | `200 application/json` — the user's sessions, 7 of them |
 
-With the variable unset the client falls back to its own default, `https://api.clerk.com/v1`, and no
-commit on any branch has ever set a different one. So the URL is right, not stale.
+Two things made this look like an upstream outage and cost two wrong diagnoses. First, the endpoint
+maps **any** `HttpRequestException` to `502`, so a routing mistake is indistinguishable from Clerk being
+down. Second, probing the route with a **made-up** user id returns Clerk's JSON
+`{"code":"resource_not_found"}` instead of the plain-text 404 — an unknown id takes a different code
+path, so the route looks healthy precisely when tested with the id that cannot exercise it.
 
-What the plain-text `404 page not found` actually indicates is unresolved. It is not Clerk's shape (its
-own 404s are `application/json`), so it came from something in front of — or instead of — Clerk's API.
-A request to `https://api.clerk.com/users/{id}/sessions` (no `/v1`) reproduces that exact body, as does
-the Frontend API host, but nothing in the deployed configuration points either way.
-
-The discriminator to capture next time is the **current** response body, not the one recorded above: a
-`502` whose message reads `Clerk Backend API rejected … : <status> <body>` means Clerk answered and
-rejected, while a socket-level message means the container could not reach Clerk at all. A timeout
-would surface as `500`, because `TaskCanceledException` is not an `HttpRequestException` and so is not
-caught by the endpoint's 502 mapping.
-
-**Applied regardless.** `ClerkAdminClient` now includes the request URI in every
-`HttpRequestException`, so the next occurrence names the URL it actually called instead of leaving the
-operator to infer it. That is the only change from this investigation that survived.
+**Applied.** `ClerkAdminClient` now lists from `/sessions?user_id=…&limit=500`. The `limit` matters for
+the revoke path, which lists through the same call and would otherwise see only the first page of ten
+(the live test user alone has 7 active sessions). The client also now names the request URI in every
+`HttpRequestException`, so the next failure of this kind identifies its own URL rather than leaving
+someone to infer it. `ClerkAdminClientTests` pinned the wrong URL before this and now pins the right
+one, which is why the suite stayed green throughout.
 
 ### F-4.6 — Session and token handling summary · **PASS**
 
@@ -746,7 +743,7 @@ admin-gated, but it is an internal inconsistency in the fingerprinting policy.
 
 | ID | Patch | Priority |
 |----|-------|----------|
-| PF-4.1 | Fix the Clerk Backend API credential/base URL so `/users/me/sessions` works; restore session visibility for incident response | Medium · **partial** — key, route and base URL all cleared; root cause still open, see F-4.5 |
+| PF-4.1 | Fix the Clerk Backend API credential/base URL so `/users/me/sessions` works; restore session visibility for incident response | Medium · **applied** — route corrected to `/sessions?user_id=…`, verified against the live API; deploy pending |
 | PF-4.2 | Apply the same Production withholding to `gitSha`/`buildTime` on the admin system-statistics route, or document why admins may see it | Low |
 | PF-4.3 | Add a test asserting `ChangeMemberRoleAsync` rejects every platform role value, locking in the F-4.1 separation | Low |
 
@@ -761,7 +758,7 @@ admin-gated, but it is an internal inconsistency in the fingerprinting policy.
 
 | ID | Question |
 |----|----------|
-| OQ-4.1 | ~~Is the Clerk secret key in Key Vault the correct `sk_…` for this instance, and is the Backend API base URL correct?~~ **Partly answered:** the key is valid and the route exists; `Clerk__BackendApiUrl` is unset, so the base URL is the client default. What answered with the plain-text 404 is still unexplained — see F-4.5. |
+| OQ-4.1 | ~~Is the Clerk secret key in Key Vault the correct `sk_…` for this instance, and is the Backend API base URL correct?~~ **Answered — no.** The key and base URL are both correct; the defect was the request route. See F-4.5. |
 | OQ-4.2 | Is there any operator/support impersonation feature intended for the platform admin? None was found, and admin is denied boutique access (F-4.4). |
 | OQ-4.3 | Does the auth-audit log record denied admin attempts with actor attribution at runtime? (Extends OQ-3.2.) |
 

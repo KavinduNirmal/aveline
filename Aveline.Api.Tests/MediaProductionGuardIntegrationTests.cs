@@ -90,7 +90,11 @@ public class MediaProductionGuardIntegrationTests
                 // guard below to remain the failure under test.
                 builder.UseSetting("Database:AllowInMemoryInProduction", "true");
                 builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:59999");
-                builder.UseSetting("AgentService:InternalToken", "test-internal-token");
+                // This host runs in Production, where the internal-token guard refuses a weak
+                // token (F-2.6). Satisfy it here so the media guard stays the failure under test.
+                builder.UseSetting(
+            "AgentService:InternalToken",
+            TestAgentService.ProductionInternalToken);
                 builder.UseSetting("Observability:AgentIsCritical", "false");
 
                 if (overrideSetting is { } setting)

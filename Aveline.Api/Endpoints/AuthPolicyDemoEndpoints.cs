@@ -17,13 +17,14 @@ public static class AuthPolicyDemoEndpoints
         var group = endpoints.MapGroup("/policies").WithTags("Auth Policy Demo");
 
         group.MapGet("/associate", () => Results.Ok(new { message = "Any staff member can access this." }))
-            .RequireAuthorization(AuthorizationConfiguration.AssociatesPolicy);
+            .RequireAuthorization(AuthorizationConfiguration.StaffAccessPolicy);
 
-        group.MapGet("/manager", () => Results.Ok(new { message = "Managers and above can access this." }))
-            .RequireAuthorization(AuthorizationConfiguration.ManagersPolicy);
-
-        group.MapGet("/owner", () => Results.Ok(new { message = "Store owners only." }))
-            .RequireAuthorization(AuthorizationConfiguration.OwnersPolicy);
+        // The manager/owner demonstrations that used to live here were removed: neither route has
+        // an organization segment to scope against, and the roles they named can only arrive
+        // through the Clerk `org_role` claim, which this deployment never populates. A route that
+        // needs "manager of this boutique" belongs on `/orgs/{organizationId}/…` with an
+        // org-scoped policy, where the membership is the source of truth. The Managers/Owners
+        // policies themselves remain defined and unit-tested for platform callers.
 
         group.MapGet("/approvals/approve", () => Results.Ok(new { message = "Requires the approvals:approve permission." }))
             .RequireAuthorization(Permissions.ApprovalsApprove);

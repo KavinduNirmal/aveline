@@ -4,6 +4,7 @@ using Aveline.Api.Infrastructure.Eventing;
 using Aveline.Api.Modules.ApiAccess.Repositories;
 using Aveline.Api.Modules.Audit.Models;
 using Aveline.Api.Modules.Audit.Services;
+using Aveline.Api.Modules.Organizations.Models;
 using Aveline.Api.Modules.Organizations.Repositories;
 using Aveline.Api.Modules.Organizations.Services;
 using Aveline.Api.Modules.Shared.DTOs;
@@ -79,7 +80,16 @@ public class UserService : IUserService
                 }
             }
 
-            return cached;
+            var hadNoRole = string.IsNullOrEmpty(cached.OrganizationRole);
+            var enriched = await WithMembershipContextAsync(cached, cancellationToken);
+            if (hadNoRole && !string.IsNullOrEmpty(enriched.OrganizationRole))
+            {
+                // Write the derivation back once, so it does not re-run on every request; an empty
+                // role would otherwise be re-derived until the entry's 24-hour TTL expired.
+                await _cacheService.SetUserAsync(clerkId, enriched, cancellationToken: cancellationToken);
+            }
+
+            return enriched;
         }
 
         // 2. Cache Miss - Query Database
@@ -171,8 +181,8 @@ public class UserService : IUserService
             }
         }
 
-        var cacheItem = MapToCacheItem(dbUser);
-        var userDto = UserDto.FromEntity(dbUser);
+        var cacheItem = await WithMembershipContextAsync(MapToCacheItem(dbUser), cancellationToken);
+        var userDto = await WithMembershipContextAsync(UserDto.FromEntity(dbUser), cancellationToken);
         await _cacheService.SetUserAsync(clerkId, cacheItem, cancellationToken: cancellationToken);
         await _cacheService.SetUserProfileAsync(clerkId, userDto, cancellationToken: cancellationToken);
         return cacheItem;
@@ -182,7 +192,11 @@ public class UserService : IUserService
     {
         // 1. Check Redis profile cache
         var cachedProfile = await _cacheService.GetUserProfileAsync(clerkId, cancellationToken);
-        if (cachedProfile != null)
+        // An empty organization role is either the state this projection exists to fix (an entry
+        // cached before members were included) or a caller who genuinely holds no membership.
+        // Re-derive it rather than serve it for the cache's 24-hour life: the clients read an empty
+        // role as "no permissions", which makes it the one value not worth trusting to a cache.
+        if (cachedProfile != null && !string.IsNullOrEmpty(cachedProfile.OrganizationRole))
         {
             return cachedProfile;
         }
@@ -194,7 +208,7 @@ public class UserService : IUserService
             return null;
         }
 
-        var dto = UserDto.FromEntity(user);
+        var dto = await WithMembershipContextAsync(UserDto.FromEntity(user), cancellationToken);
 
         // 3. Populate Redis profile cache
         await _cacheService.SetUserProfileAsync(clerkId, dto, cancellationToken: cancellationToken);
@@ -523,6 +537,90 @@ public class UserService : IUserService
             : AccountState.OnboardingPending;
     }
 
+    /// <summary>
+    /// Projects the caller's active-membership role and organization onto a user read model,
+    /// when that model carries no organization role of its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>User.OrganizationRole</c> mirrors the Clerk <c>org_role</c> claim. This deployment
+    /// creates no Clerk organization, so that claim is always empty and only the owner onboarding
+    /// wizard ever wrote the column — as a side effect, for the owner alone. Every *invited*
+    /// member was left with an empty role, and the clients derive permissions from it (the mobile
+    /// builds them from <c>[userRole, organizationRole]</c>), so a staff account saw an empty home
+    /// and locked-out sections while the API would have served it: the org-scoped policies resolve
+    /// the membership directly and never consult this column.
+    /// </para>
+    /// <para>
+    /// The membership is that canonical record, so it is consulted here rather than trusted to a
+    /// claim nothing can mint. The value is projected, never persisted: the column stays empty, so
+    /// a membership role change is picked up on the next read with no second write path to keep in
+    /// step. A model that already carries a role is returned untouched, which keeps the claim
+    /// authoritative wherever a Clerk organization genuinely supplies one.
+    /// </para>
+    /// </remarks>
+    private async Task<UserDto> WithMembershipContextAsync(
+        UserDto dto,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrEmpty(dto.OrganizationRole) || _organizationRepository is null)
+        {
+            return dto;
+        }
+
+        var context = await ResolveActiveMembershipContextAsync(dto.Id, cancellationToken);
+        if (context is not null)
+        {
+            dto.OrganizationRole = context.Value.Role;
+            dto.OrganizationId = context.Value.OrganizationId;
+        }
+
+        return dto;
+    }
+
+    /// <inheritdoc cref="WithMembershipContextAsync(UserDto, CancellationToken)"/>
+    private async Task<UserOnboardingCacheItem> WithMembershipContextAsync(
+        UserOnboardingCacheItem item,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrEmpty(item.OrganizationRole) || _organizationRepository is null)
+        {
+            return item;
+        }
+
+        var context = await ResolveActiveMembershipContextAsync(item.Id, cancellationToken);
+        if (context is not null)
+        {
+            // The cache item carries the role only; `/auth/claims` reads its `Account.OrganizationRole`
+            // and has no organization-id field to fill.
+            item.OrganizationRole = context.Value.Role;
+        }
+
+        return item;
+    }
+
+    /// <summary>
+    /// The role and organization of the user's active membership, or <see langword="null"/> when
+    /// they hold none. The first active membership wins; the product is single-boutique per
+    /// member, and the org-scoped policies are what disambiguate a multi-membership caller.
+    /// </summary>
+    private async Task<(string Role, string OrganizationId)?> ResolveActiveMembershipContextAsync(
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        if (_organizationRepository is null)
+        {
+            return null;
+        }
+
+        var memberships = await _organizationRepository.ListMembershipsForUserAsync(userId, cancellationToken);
+        var active = memberships.FirstOrDefault(m => m.Status == MembershipStatus.Active);
+
+        return active is null
+            ? null
+            : (active.BoutiqueRole, active.OrganizationId.ToString());
+    }
+
     private static bool HasLegacyOrgContext(User user)
     {
         return !string.IsNullOrWhiteSpace(user.OrganizationRole)
@@ -616,8 +714,8 @@ public class UserService : IUserService
         await _userRepository.UpdateAsync(user, cancellationToken);
         _logger.LogInformation("User read model synchronized from refreshed session claims. clerkId={ClerkId}", user.ClerkId);
 
-        var cacheItem = MapToCacheItem(user);
-        var dto = UserDto.FromEntity(user);
+        var cacheItem = await WithMembershipContextAsync(MapToCacheItem(user), cancellationToken);
+        var dto = await WithMembershipContextAsync(UserDto.FromEntity(user), cancellationToken);
         await _cacheService.SetUserAsync(user.ClerkId, cacheItem, cancellationToken: cancellationToken);
         await _cacheService.SetUserProfileAsync(user.ClerkId, dto, cancellationToken: cancellationToken);
         return cacheItem;

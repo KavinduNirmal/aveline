@@ -41,14 +41,14 @@ describe('the action mapping per block type', () => {
     ])
   })
 
-  it('offers Forward alone on an item block', () => {
-    // The brief names one action for an item block, so the tile grid does not grow a Copy.
-    expect(actionIds({ type: 'piece', name: 'Silk Slip Dress' })).toEqual(['forward'])
+  it('offers Send to customer and Forward on an item block', () => {
+    expect(actionIds({ type: 'piece', name: 'Silk Slip Dress' })).toEqual(['send_to_customer', 'forward'])
   })
 
-  it('offers Copy, Forward and Regenerate on a lookbook block', () => {
+  it('offers Copy, Send to customer, Forward and Regenerate on a lookbook block', () => {
     expect(actionIds({ type: 'look', name: 'Gala Ensemble' })).toEqual([
       'copy',
+      'send_to_customer',
       'forward',
       'regenerate',
     ])
@@ -80,7 +80,7 @@ describe('the action mapping per block type', () => {
     const piece = resolveBlockActions({ type: 'piece', name: 'Dress' }, openEnvironment())
     expect(piece.map((action) => action.id)).not.toContain('regenerate')
     expect(piece.map((action) => action.id)).not.toContain('copy')
-    expect(piece).toHaveLength(1)
+    expect(piece).toHaveLength(2)
   })
 
   it('labels every action it can draw', () => {

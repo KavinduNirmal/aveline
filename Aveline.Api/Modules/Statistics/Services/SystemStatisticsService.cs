@@ -83,6 +83,13 @@ public sealed class SystemStatisticsService : ISystemStatisticsService
             .ToList();
 
         return new SystemOverviewDto(
+            // Build metadata is shown here, unlike on /health. That is deliberate, not an
+            // oversight: /health is anonymous and withholds the release identity so an
+            // unauthenticated probe cannot fingerprint the deployment (M-3, see
+            // HealthCheckResponseWriter). This route requires StatsSystemPolicy, so only an
+            // authenticated operator sees it, and an operator needs the exact build to correlate
+            // a regression with a deploy. Security assessment F-4.7 raised the inconsistency;
+            // this comment records the resolution - keep it and document it.
             new SystemVersionDto(
                 _deployment.Current.GitSha,
                 _deployment.Current.BuildTime,

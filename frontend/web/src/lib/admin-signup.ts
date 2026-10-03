@@ -34,3 +34,27 @@ export const CONSOLE_ROLES: readonly string[] = ['owner', 'admin']
 export function hasConsoleRole(roles: readonly string[] | null | undefined): boolean {
   return (roles ?? []).some((role) => CONSOLE_ROLES.includes(role.toLowerCase()))
 }
+
+/**
+ * Aveline team roles that never complete tenant onboarding, mirroring the backend's
+ * `Roles.OnboardingExemptRoles` (`Aveline.Api/Authorization/Roles.cs`).
+ *
+ * The backend `OnboardingMiddleware` already waives the onboarding gate for these roles: a
+ * user holding one may call the API while `accountState` is still `OnboardingPending`.
+ * The frontend gate has to waive it too. When it does not, an administrator whose role was
+ * granted without the account being activated (an approval, or a direct
+ * `UPDATE "Users" SET "UserRole" = ...`) is admitted by one guard and refused by the other:
+ * `AdminPendingPage` sees the console role and redirects to `/admin`, while
+ * `RequireAccountState` sees `OnboardingPending` and redirects back to `/admin/pending`.
+ * That pair is an infinite redirect loop, and each lap re-fetches `/auth/claims`.
+ *
+ * Deliberately wider than {@link CONSOLE_ROLES}: a `moderator` is onboarding-exempt but still
+ * refused at the console door by `hasConsoleRole` (strategy C2), which is a stated refusal
+ * rather than a redirect.
+ */
+export const ONBOARDING_EXEMPT_ROLES: readonly string[] = ['moderator', 'admin', 'owner']
+
+/** True when any of the supplied roles is exempt from tenant onboarding. */
+export function isOnboardingExempt(roles: readonly string[] | null | undefined): boolean {
+  return (roles ?? []).some((role) => ONBOARDING_EXEMPT_ROLES.includes(role.toLowerCase()))
+}

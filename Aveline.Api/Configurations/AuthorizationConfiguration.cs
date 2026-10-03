@@ -13,6 +13,19 @@ public static class AuthorizationConfiguration
     public const string ManagersPolicy = "Managers";
     public const string OwnersPolicy = "Owners";
 
+    /// <summary>
+    /// Staff gate for routes with no <c>organizationId</c> in their path, which therefore cannot
+    /// use the org-scoped policies: a platform team role, or an active organization membership.
+    /// </summary>
+    /// <remarks>
+    /// This replaces putting <see cref="AssociatesPolicy"/> on such a route. That policy matches
+    /// <c>Roles.StaffAccess</c>, whose boutique entries arrive only through the Clerk
+    /// <c>org_role</c> claim — always empty in this deployment, because no Clerk organization is
+    /// ever created — so a boutique owner was refused while platform staff were admitted. See
+    /// <see cref="StaffMembershipRequirement"/>.
+    /// </remarks>
+    public const string StaffAccessPolicy = "StaffAccess";
+
     /// <summary>Team-level reviewers allowed to review admin access requests.</summary>
     public const string AdminReviewPolicy = "AdminReview";
 
@@ -205,6 +218,7 @@ public static class AuthorizationConfiguration
         services.AddHttpContextAccessor();
         services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
         services.AddSingleton<IAuthorizationHandler, OrganizationScopeAuthorizationHandler>();
+        services.AddSingleton<IAuthorizationHandler, StaffMembershipAuthorizationHandler>();
 
         services.AddAuthorization(options =>
         {
@@ -227,6 +241,14 @@ public static class AuthorizationConfiguration
 
             // Role-based policies.
             options.AddPolicy(AssociatesPolicy, p => p.RequireRole(Roles.StaffAccess));
+
+            // Staff gate for a path with no organization segment. The tenant half of the staff
+            // role list is resolved from the membership tables, not from the JWT org claims.
+            options.AddPolicy(StaffAccessPolicy, p =>
+            {
+                p.RequireAuthenticatedUser();
+                p.AddRequirements(new StaffMembershipRequirement());
+            });
 
             options.AddPolicy(ManagersPolicy, p => p.RequireRole(Roles.ManagementAccess));
 

@@ -144,7 +144,7 @@ public sealed record MarkConversationReadRequest(Guid LastReadMessageId);
 /// A replay whose stored row already went out is answered from that row rather than sending the
 /// same words to the customer a second time.
 /// </param>
-public sealed record DeliverToCustomerRequest(string Text, Guid? ClientMessageId = null);
+public sealed record DeliverToCustomerRequest(string Text, Guid? ClientMessageId = null, string? ImageUrl = null);
 
 /// <summary>
 /// The result of a delivery attempt. <see cref="Delivered"/> is the whole answer: when it is

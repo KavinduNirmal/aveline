@@ -170,6 +170,51 @@ public class OrganizationAuthorizationIntegrationTests : IAsyncLifetime
         Assert.Contains("owner", await response.Content.ReadAsStringAsync());
     }
 
+    [Fact]
+    public async Task AssociateRoute_AdmitsABoutiqueMember_WhoseTokenCarriesNoOrgRole()
+    {
+        // The regression behind the "no access" reports on a correctly set-up boutique. This
+        // deployment creates no Clerk organization, so the token carries no `org_role`, and the
+        // old RequireRole(Roles.StaffAccess) gate could never see `org:boutique_owner` — every real
+        // member was refused while platform staff were admitted. The membership row is canonical.
+        var (_, member, _) = await SeedBoutiqueAsync("assoc_member");
+        var token = CreateToken(member.ClerkId); // no user_role, no org_role
+
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AssociateRoute_RefusesAnAccountWithNeitherTeamRoleNorMembership()
+    {
+        await using (var context = CreateSeedContext())
+        {
+            context.Users.Add(new User
+            {
+                Id = Guid.CreateVersion7(),
+                ClerkId = "outsider_assoc",
+                Email = "outsider.assoc@aveline.lk",
+                FirstName = "Outsider",
+                LastName = "Assoc",
+                Username = "outsider_assoc",
+                UserRole = string.Empty,
+                OrganizationRole = string.Empty,
+                HasCompletedOnboarding = true,
+                AccountState = AccountState.Active,
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var token = CreateToken("outsider_assoc");
+        var response = await _client.SendAsync(
+            Authorized(HttpMethod.Get, "/api/v1/policies/associate", token));
+
+        // Active, so the onboarding gate lets it through; the staff gate is what refuses it.
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private async Task<(User owner, User member, Organization org)> SeedBoutiqueAsync(string slugSuffix)
     {
         await using var context = CreateSeedContext();

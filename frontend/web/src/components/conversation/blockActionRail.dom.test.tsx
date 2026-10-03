@@ -52,16 +52,16 @@ describe('which rail a block draws, end to end', () => {
     expect(drawnActions()).toEqual(['copy', 'send_to_customer', 'regenerate'])
   })
 
-  it('draws Forward alone under an item block', () => {
+  it('draws Send to customer and Forward under an item block', () => {
     const { value } = bridge()
     render(<BlockList blocks={[PIECE]} messageId="msg-1" bridge={value} />)
-    expect(drawnActions()).toEqual(['forward'])
+    expect(drawnActions()).toEqual(['send_to_customer', 'forward'])
   })
 
-  it('draws Copy, Forward and Regenerate under a lookbook block', () => {
+  it('draws Copy, Send to customer, Forward and Regenerate under a lookbook block', () => {
     const { value } = bridge()
     render(<BlockList blocks={[LOOK]} messageId="msg-1" bridge={value} />)
-    expect(drawnActions()).toEqual(['copy', 'forward', 'regenerate'])
+    expect(drawnActions()).toEqual(['copy', 'send_to_customer', 'forward', 'regenerate'])
   })
 
   it('draws no rail under a block type the mapping does not name', () => {

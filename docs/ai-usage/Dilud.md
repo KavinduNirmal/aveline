@@ -1,3 +1,255 @@
+## Session 2026-10-03 (Branch Synchronization, Test Resolution & WhatsApp Media Pipeline Configuration)
+
+**Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts, verify the WhatsApp inbound photo-to-Salon chat pipeline, and configure the local `.env` environment with Cloudinary media storage and WhatsApp gateway settings.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Branch Analysis & Synchronization**:
+   - Compared `visual-agent-tuning` with `origin/development`.
+   - Merged incoming commits from `origin/development` including PR #503 (E2E composed stack, k6 performance gating, and stage-1 CI fixes).
+
+2. **Merge Conflict Resolution (`agent-service/app/agents/commerce/nodes.py`)**:
+   - Resolved merge conflict in `evaluate_deal()`:
+     - Preserved `tier_info = await get_customer_loyalty_tier(...)` with clean type assertion.
+     - Preserved conversational order review fallback (`if not requires_approval: approval_type = "order_approval"`), maintaining rule specificity while guaranteeing owner review floor for conversational orders.
+
+3. **Inbound WhatsApp Photo Pipeline Verification**:
+   - Verified that when a customer sends an image via WhatsApp:
+     - `WebhookEndpoints.cs` receives the webhook and downloads media bytes from Meta Graph API via `IWhatsAppService.GetMediaAsync`.
+     - Validates MIME type and magic bytes via `AttachmentContentPolicy`, then persists the `Attachment` via `MediaService` (configured with Cloudinary).
+     - `ConversationService.cs` appends an `attachment` block to the conversation message and broadcasts it in real-time over SignalR to active Salon clients.
+     - Frontend `blocks.tsx` (`AttachmentBlock` and `AttachmentViewer`) renders the photo with interactive fullscreen preview.
+     - The Agent Service consumes the `message.received` event containing `attachment_id` and invokes the Elle visual agent workflow.
+
+4. **Environment Configuration (`.env`) & Container Recovery**:
+   - Updated `.env` with the verified WhatsApp Meta base URL (`https://graph.facebook.com`), Cloudinary storage settings (`Media__Provider=cloudinary`, `Media__ReadFromCloudinary=true`), token signing keys, and DeepSeek/Gemini service endpoints.
+   - Diagnosed dashboard infinite loading spinner: `POSTGRES_PASSWORD=change-me` failed authentication against the initialized `postgres_data` volume (which uses `1234`), causing `aveline_api` to crash loop on startup migrations.
+   - Restored `POSTGRES_PASSWORD=1234` in `.env` and restarted `aveline_api`.
+   - Verified API health endpoint (`http://localhost:5091/health`) is 100% Healthy across database, redis, agent-service, and clerk-jwks.
+
+5. **Direct Customer Delivery & WhatsApp Garment Photo Messaging Implementation**:
+   - Extended `DeliverToCustomerRequest` DTO, `ICustomerDeliveryService.DeliverAsync`, and `CustomerDeliveryService.cs` in `Aveline.Api` to accept an `imageUrl` and route through `_whatsApp.SendImageAsync` when provided.
+   - Updated `agent-service/app/agents/visual_insight/nodes.py` to format all curated pieces with names and prices directly into the customer suggestion block.
+   - Added `send_to_customer` action to piece, item, and look blocks in `blockActions.ts` so staff can deliver cards directly to the current customer with one click, as well as forward to other clients.
+   - Updated `useBlockActions.tsx`, `ConversationsContext.tsx`, and `conversations-api.ts` to forward garment image URLs to the delivery endpoint.
+   - Rebuilt Docker containers (`aveline_api` and `aveline_agent`).
+
+6. **Inbound WhatsApp Photo Root Cause Diagnosis & Resolution**:
+   - Diagnosed why images sent from WhatsApp did not appear in the Salon:
+     1. **Meta Webhook Base64 Checksum Mismatch**: Meta WhatsApp Cloud API webhooks provide the image's SHA-256 hash in `media.Sha256` encoded as a 44-character Base64 string. `WebhookEndpoints.cs` previously compared this directly against our 64-character lowercase Hex `AttachmentContentHash.Compute(bytes)`, causing real Meta image webhook payloads to be rejected with `Inbound WhatsApp media refused: the channel's sha256 does not match the downloaded bytes`.
+     2. **Normalized Checksum Verification**: Added `HashesMatch` helper in `WebhookEndpoints.cs` to decode Base64 channel hashes and normalize them to Hex, while still supporting Hex test doubles. Added unit test `Post_WithAnImage_WhenMetaSuppliesBase64Sha256_PersistsCanonicalHexContentHash` in `WebhookEndpointsIntegrationTests.cs` (27/27 tests passed).
+     3. **Meta Media Download Access Token**: Inbound image attachments require a valid Meta Graph API Access Token configured in Settings -> Integrations -> WhatsApp so the API server can resolve and download the raw bytes from Meta's media CDN (`https://graph.facebook.com/{mediaId}`). When a placeholder/demo access token is stored, Meta rejects the media download request and the message falls back to text-only.
+
+### Files Created or Modified
+
+- `Aveline.Api/Endpoints/WebhookEndpoints.cs`
+- `Aveline.Api.Tests/WebhookEndpointsIntegrationTests.cs`
+- `Aveline.Api/Modules/Conversations/DTOs/MessageDtos.cs`
+- `Aveline.Api/Modules/Conversations/Services/ICustomerDeliveryService.cs`
+- `Aveline.Api/Modules/Conversations/Services/CustomerDeliveryService.cs`
+- `Aveline.Api/Endpoints/ConversationEndpoints.cs`
+- `Aveline.Api.Tests/CustomerDeliveryServiceTests.cs`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `frontend/web/src/lib/conversations-api.ts`
+- `frontend/web/src/contexts/ConversationsContext.tsx`
+- `frontend/web/src/components/conversation/blockActions.ts`
+- `frontend/web/src/components/conversation/useBlockActions.tsx`
+- `frontend/web/src/components/conversation/blockActions.test.ts`
+- `frontend/web/src/components/conversation/blockActionRail.dom.test.tsx`
+- `.env`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~WebhookEndpointsIntegrationTests"`: 27/27 passed (100%).
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CustomerDeliveryServiceTests"`: 16/16 passed (100%).
+- `npx vitest run src/components/conversation/`: 18/18 test files passed (203/203 tests).
+- `npx vitest run src/lib/conversations-api.test.ts`: 20/20 passed (100%).
+- `docker compose up -d --build api`: successfully rebuilt and restarted.
+- `curl.exe -i http://localhost:5091/health`: HTTP 200 OK (database: Healthy, redis: Healthy, agent-service: Healthy, clerk-jwks: Healthy).
+- `docker ps`: all services running and healthy.
+
+---
+
+## Session 2026-10-01 (Visual Intelligence & CI: Ruff Lint Configuration & Pipeline Stabilization)
+
+**Task:** Diagnose and fix GitHub Actions CI failure on `Aveline CI / Lint & Test Python Agent Service` and stabilize repository scripts and workflow against ruff lint rules.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **CI Workflow & Configuration Alignment (`.github/workflows/ci.yml`, `ruff.toml`)**:
+   - Diagnosed root cause of the 33-second fast failure in GitHub Actions: `Run Ruff Lint` ran at the repository root without `working-directory: agent-service`, causing Ruff to bypass `agent-service/pyproject.toml` (which configures `ignore = ["E501"]` and `known-first-party = ["app"]`) and evaluate with default unconfigured rules.
+   - Updated `.github/workflows/ci.yml` to run `ruff check app/` with `working-directory: agent-service`, matching the pattern used in the Pytest step.
+   - Added a repository root `ruff.toml` mirroring the `agent-service/pyproject.toml` configuration so root-level invocations remain consistent and resilient.
+
+2. **Ruff Linter Fixes (`agent-service/`)**:
+   - Fixed unused local variables (`org_id`, `target_cat`, `img`) across `app/agents/visual_insight/nodes.py` and `scripts/probe_rithihi_products.py`.
+   - Renamed ambiguous variable names `l` -> `link_url` in `scripts/inspect_rithihi.py` and `scripts/probe_adithri.py` to conform to Ruff rule `E741`.
+   - Formatted and organized imports across `agent-service/scripts/` (`test_live_adithri.py`, `test_rithihi_live.py`, `test_elle_adithri_flow.py`, `test_elle_rithihi_flow.py`, `process_customer_photo_sourcing.py`).
+   - Verified 100% clean check with `ruff check agent-service/app/ agent-service/scripts/ agent-service/tests/`.
+
+3. **Automated Test & Coverage Verification**:
+   - Ran `pytest tests/ --cov=app --cov-fail-under=90` in `agent-service`: 1,048 passed, 0 failures, 92.06% coverage (exceeding the 90% CI gate).
+   - Verified .NET API test suite: 4,192 passed, 0 failures.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/commerce/nodes.py`
+- `.github/workflows/ci.yml`
+- `ruff.toml`
+- `agent-service/scripts/inspect_rithihi.py`
+- `agent-service/scripts/probe_adithri.py`
+- `agent-service/scripts/probe_rithihi_products.py`
+- `agent-service/scripts/process_customer_photo_sourcing.py`
+- `agent-service/scripts/test_elle_adithri_flow.py`
+- `agent-service/scripts/test_elle_rithihi_flow.py`
+- `agent-service/scripts/test_live_adithri.py`
+- `agent-service/scripts/test_rithihi_live.py`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Multi-Color & Ensemble In-Stock Inventory Matching)
+
+**Task:** Diagnose and resolve issue where uploading a saree ensemble image (`photo-1617627143750-d86bc21e42bb.avif`) or black saree (`IMG_6445.webp`) returned incorrect inventory matches vs partner atelier sourcing.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - The Orange/Crimson Kanjeevaram Saree image (`photo-1617627143750-d86bc21e42bb.avif`) carried a Magenta Blouse, matching the boutique's in-stock Magenta saree.
+   - For `IMG_6445.webp` (Black Saree), the boutique inventory possessed no black sarees. An overly broad category-fallback and description substring match previously allowed mismatched sarees into candidate results.
+
+2. **Ensemble & Secondary Color Inventory Discovery (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Enhanced `search_inventory` in `VisualInsightAgent`:
+     - When an initial lookup using `primary_color` yields 0 matches, the agent checks candidate ensemble colors (`secondary_colors`, `detected_items[*].primary_color`, `detected_items[*].secondary_colors`).
+     - Removed broad category-only fallback to prevent returning mismatched items when the requested color is not in stock.
+     - Confined `_is_color_match` strictly to `item_color` and `item_name` word boundaries, avoiding false matches on accessory words in item descriptions.
+   - Added item deduplication by `itemId`.
+
+3. **Automated Testing & Live Verification**:
+   - Added unit test `test_visual_insight_graph_matches_ensemble_secondary_color_in_stock` in `agent-service/tests/agents/test_visual_insight_graph.py`.
+   - Verified 16/16 pytest tests in `test_visual_insight_graph.py` pass (100%).
+   - Verified live execution across all test cases:
+     - **Black Saree (`IMG_6445.webp`)**: 0 boutique matches -> Scrapes partner ateliers and returns 4 verified black sarees (`Midnight Black Sequin Saree`, etc.).
+     - **Orange/Magenta Saree (`photo-1617627143750-d86bc21e42bb.avif`)**: Matches 1 in-stock boutique piece -> 0 partner atelier lookups.
+     - **Yellow Lehenga (`791143597...webp`)**: 0 boutique matches -> Returns 2 verified yellow lehengas from Adithri Sarees.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/tests/agents/test_visual_insight_graph.py`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Category Resolution, Color Family Expansion & Partner Sourcing Match Alignment)
+
+**Task:** Fix Visual Agent returning green/purple sarees for yellow lehenga inquiries and ensure partner atelier scraping accurately searches, verifies, and scores requested garments by color and silhouette.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Intelligent Garment Category Resolution (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Implemented `_resolve_garment_category` to map high-level umbrella categories (`"ethnic_couture"`) to precise garment categories (`"Lehengas"`, `"Sarees"`, `"Gowns"`, `"Kurtas & Tunics"`, etc.) from multi-item analysis attributes (`clothing_type`, `suggested_item_name`, `description`).
+   - Expanded category token recognition in `_is_category_match` to support taxonomy aliases (`dress`, `choli`, `sari`, `tunic`, `slip`, `gown`).
+
+2. **Expanded Color Taxonomy & Strict Conflict Filtering (`agent-service/app/services/fabric_verifier.py`)**:
+   - Expanded `_COLOR_FAMILIES` with modern fashion tones (`chartreuse`, `lime`, `mustard yellow`, `lemon`, `amber`, `canary`, `skyblue`, `emeraldgreen`, etc.).
+   - Added multi-token color matching and strict conflict penalties (-0.35) for conflicting color families and (-0.30) for conflicting silhouettes (e.g., sarees when a lehenga was requested).
+   - Prunes unrelated partner pieces below the 0.60 threshold so only genuinely aligned garments are returned.
+
+3. **Smart Sourcing Query Expansion & Scraper Title Cleanup (`agent-service/app/tools/inventory/supplier_tools.py`, `agent-service/app/services/atelier_scraper.py`)**:
+   - `scrape_atelier_catalog` now generates targeted query permutations combining detected color and category (e.g. `"mustard yellow lehenga"`, `"mustard lehenga"`, `"yellow lehenga"`, `"lehenga"`).
+   - Cleaned `_finalize_current_card` to extract clean headings and strip noisy trailing page elements (ratings, review blocks, price fragments).
+
+4. **Verification**:
+   - Ran `test_graph_yellow.py`: Yellow/Chartreuse lehenga attachment matched `Mustard – Yellow Embroidered Lehenga Set` with score 0.99 from Adithri Sarees; 0 mismatched sarees returned.
+   - Ran `test_graph_black.py`: Black saree attachment matched `Midnight Black Sequin Saree` with score 0.99; 0 yellow or green garments returned.
+   - All 15 `test_visual_insight_graph.py` and 45 `agent-service/tests/tools` tests passed.
+   - All 4,192 .NET API tests passed.
+
+### Files Created or Modified
+
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `agent-service/app/services/fabric_verifier.py`
+- `agent-service/app/services/atelier_scraper.py`
+- `agent-service/app/tools/inventory/supplier_tools.py`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Multimodal Retry Resilience & Multi-Turn Keyword Pruning)
+
+**Task:** Resolve duplicate/stale visual search results across multiple image uploads in Salon, resolve Google Gemini 503 high-demand exceptions, and add transient retry handling.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Transient Provider 429/503 Automatic Retry (`Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`)**:
+   - Added exponential retry loop (up to 3 attempts with 1-2s delay) for HTTP 429 (Too Many Requests) and HTTP 503 (Service Unavailable) returned by Gemini Vision.
+   - Prevents transient spikes in Google model demand from immediately tripping the deterministic fallback.
+
+2. **Active Vision Model Switch (`.env`)**:
+   - Replaced `gemini-3.5-flash` (which suffered persistent 503 high-demand errors on the Google API endpoint) with **`gemini-3.1-flash-lite`**, which provides fast, zero-503 multimodal vision analysis.
+
+3. **Multi-Turn Stop Word Expansion (`agent-service/app/agents/visual_insight/nodes.py`)**:
+   - Expanded stop word set in `parse_visual_intent` to prune conversational noise and pronouns (`"this"`, `"that"`, `"these"`, `"those"`, `"it"`, `"picture"`, `"photo"`, `"image"`, `"outfit"`, `"similar"`, `"something"`, etc.).
+   - Prevents generic inquiries like `"is this in stock"` from treating `"this"` as a literal product search query against partner atelier scrapers.
+
+4. **Rebuild & Live Verification**:
+   - Rebuilt `aveline-api` and `aveline-agent` images and restarted containers via Docker Compose.
+   - Verified live visual analysis via `POST /internal/visual/analyze-image` returning `"isFallback": false`.
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisionService.cs`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `.env`
+- `docs/ai-usage/Dilud.md`
+
+---
+
+## Session 2026-10-01 (Visual Intelligence: Gemini Multimodal Vision Model Alignment)
+
+**Task:** Diagnose and resolve visual image search fallback returning green/purple sarees when uploading yellow garment in Salon. Align `VISION_MODEL` with active Google Generative Language endpoint (`gemini-3.5-flash`).
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis of Fallback Mode**:
+   - Inspected `aveline_api` docker logs and diagnosed that Google Generative Language API returned HTTP 404 (`This model models/gemini-2.0-flash is no longer available`) when `VisionService.cs` called the multimodal OpenAI chat completions endpoint.
+   - When the provider returns non-success, `VisionService` falls back to `GenerateDeterministicAnalysis`. Without keyword hints in the filename or prompt (`"is this in stock"`), fallback defaulted category to `saree` and color to `emerald`.
+   - The agent then queried partner atelier Adithri for emerald sarees.
+
+2. **Model Availability Verification & Configuration**:
+   - Querying `https://generativelanguage.googleapis.com/v1beta/models` verified active Gemini models.
+   - Verified that `gemini-3.5-flash` successfully authenticates with the user's `VISION_API_KEY` and accurately performs multimodal vision inspection.
+   - Updated `VISION_MODEL=gemini-3.5-flash` in `.env` and recreated the `aveline_api` container via `docker compose up -d api`.
+
+3. **Live Verification**:
+   - Verified live multimodal image analysis through `POST /internal/visual/analyze-image` returning `"isFallback": false`.
+
+### Files Created or Modified
+
+- `.env`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- Tested live Gemini Vision completions via HTTP request against Google Generative Language API.
+- Executed `POST /internal/visual/analyze-image` on `http://localhost:5091` confirming `"isFallback": false`.
+
+---
+
 ## Session 2026-10-01 (CI Fix: Dynamic Calendar Period Alignment for Blossom Statement Tests)
 
 **Task:** Fix failing GitHub Actions CI check `Aveline CI / Build, Test & Publish API (pull_request)` caused by calendar month rollover to October 1, 2026 making hardcoded September test dates mismatch `BlossomService.GetOrCreateAccountAsync()` current billing period calculation.

@@ -1,9 +1,9 @@
 """Probe script to inspect shopadithri.com structure and search capability."""
 
 import asyncio
-import httpx
-import re
 from html.parser import HTMLParser
+
+import httpx
 
 
 class LinkAndClassParser(HTMLParser):
@@ -32,14 +32,14 @@ async def probe():
         # Check homepage
         res = await client.get("https://shopadithri.com/")
         print(f"Homepage status: {res.status_code}")
-        
+
         parser = LinkAndClassParser()
         parser.feed(res.text)
-        
-        saree_links = [l for l in parser.links if "saree" in l.lower() or "product" in l.lower() or "shop" in l.lower() or "collection" in l.lower()]
+
+        saree_links = [link_url for link_url in parser.links if "saree" in link_url.lower() or "product" in link_url.lower() or "shop" in link_url.lower() or "collection" in link_url.lower()]
         print(f"Discovered {len(saree_links)} relevant links on homepage:")
-        for l in list(dict.fromkeys(saree_links))[:15]:
-            print("  ", l)
+        for link_url in list(dict.fromkeys(saree_links))[:15]:
+            print("  ", link_url)
 
         # Let's search for "yellow" or "saree"
         for search_path in ["/search?q=yellow", "/?s=yellow", "/shop/?filter_color=yellow", "/collections/all?q=yellow"]:

@@ -455,4 +455,150 @@ public class UserServiceTests
         Assert.Equal("org_switch_boutique", dbUser.OrganizationId);
         Assert.Equal(AccountState.Active, dbUser.AccountState);
     }
+
+    // ── Membership-derived organization context ───────────────────────────────────────────
+    //
+    // A live staff device logged `[user] fetchUser OK: ... orgRole=` on every poll while the API
+    // returned no 403 at all: the mobile derives permissions from `[userRole, organizationRole]`,
+    // so an empty role renders an empty home and locked-out sections. The row was empty because
+    // `User.OrganizationRole` mirrors a Clerk `org_role` claim this deployment can never mint —
+    // only the owner onboarding wizard ever wrote it, as a side effect, for the owner alone.
+
+    [Fact]
+    public async Task GetByClerkIdAsync_ProjectsTheMembershipRole_WhenTheRowCarriesNone()
+    {
+        var (user, org) = await SeedMemberAsync("clerk_staff_projection", Roles.BoutiqueStaff);
+
+        var dto = await CreateSutWithOrganizationRepository().GetByClerkIdAsync(user.ClerkId);
+
+        Assert.NotNull(dto);
+        Assert.Equal(Roles.BoutiqueStaff, dto!.OrganizationRole);
+        Assert.Equal(org.Id.ToString(), dto.OrganizationId);
+    }
+
+    [Fact]
+    public async Task GetByClerkIdAsync_ReDerivesPastACachedEmptyRole()
+    {
+        // An entry cached before members were included would otherwise serve an empty role for the
+        // entry's 24-hour life, so deploying the fix would not repair a warm instance.
+        var (user, _) = await SeedMemberAsync("clerk_staff_warm_cache", Roles.BoutiqueStaff);
+        await _cacheService.SetUserProfileAsync(user.ClerkId, UserDto.FromEntity(user));
+
+        var dto = await CreateSutWithOrganizationRepository().GetByClerkIdAsync(user.ClerkId);
+
+        Assert.NotNull(dto);
+        Assert.Equal(Roles.BoutiqueStaff, dto!.OrganizationRole);
+    }
+
+    [Fact]
+    public async Task GetByClerkIdAsync_LeavesARowThatAlreadyCarriesARoleAlone()
+    {
+        // The claim stays authoritative where one exists, so a future Clerk organization is not
+        // overwritten by whichever membership happens to be first.
+        var (user, _) = await SeedMemberAsync("clerk_claim_wins", Roles.BoutiqueOwner);
+        user.OrganizationRole = "org:from-claim";
+        user.OrganizationId = "org_from_claim";
+        await _dbContext.SaveChangesAsync();
+
+        var dto = await CreateSutWithOrganizationRepository().GetByClerkIdAsync(user.ClerkId);
+
+        Assert.NotNull(dto);
+        Assert.Equal("org:from-claim", dto!.OrganizationRole);
+        Assert.Equal("org_from_claim", dto.OrganizationId);
+    }
+
+    [Fact]
+    public async Task GetByClerkIdAsync_LeavesARolelessNonMemberEmpty()
+    {
+        var user = NewMemberRow("clerk_no_membership");
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+
+        var dto = await CreateSutWithOrganizationRepository().GetByClerkIdAsync(user.ClerkId);
+
+        Assert.NotNull(dto);
+        Assert.Equal(string.Empty, dto!.OrganizationRole);
+    }
+
+    [Fact]
+    public async Task GetOrSynchronizeUserAsync_ProjectsTheMembershipRoleOntoTheCacheItem()
+    {
+        // `/auth/claims` reads `Account.OrganizationRole` from this item, so the middleware path
+        // has to agree with `/users/me`.
+        var (user, _) = await SeedMemberAsync("clerk_staff_cache_item", Roles.BoutiqueStaff);
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(new[]
+        {
+            new Claim("sub", user.ClerkId),
+            new Claim("email", user.Email),
+        }, "TestAuth"));
+
+        var item = await CreateSutWithOrganizationRepository()
+            .GetOrSynchronizeUserAsync(user.ClerkId, principal);
+
+        Assert.Equal(Roles.BoutiqueStaff, item.OrganizationRole);
+    }
+
+    /// <summary>
+    /// A service with the organization repository wired in, which is what enables the membership
+    /// projection. The shared <c>_sut</c> leaves that optional dependency null, so the claim-driven
+    /// tests above stay isolated to the claim path.
+    /// </summary>
+    private UserService CreateSutWithOrganizationRepository()
+    {
+        var orgRepository = new OrganizationRepository(_dbContext);
+        var invitationRepository = new InvitationRepository(_dbContext);
+        var organizationService = new OrganizationService(
+            orgRepository, invitationRepository, new FakeInvitationCodeStore(), _userRepository, _cacheService,
+            NullLogger<OrganizationService>.Instance);
+
+        return new UserService(
+            _userRepository, _cacheService, organizationService, NullLogger<UserService>.Instance,
+            orgRepository);
+    }
+
+    private static User NewMemberRow(string clerkId) => new()
+    {
+        Id = Guid.CreateVersion7(),
+        ClerkId = clerkId,
+        Email = $"{clerkId}@aveline.lk",
+        FirstName = "Invited",
+        LastName = "Member",
+        Username = clerkId,
+        UserRole = Roles.Staff,
+        OrganizationRole = string.Empty,
+        OrganizationId = string.Empty,
+        HasCompletedOnboarding = false,
+        AccountState = AccountState.OnboardingPending,
+    };
+
+    private async Task<(User User, Organization Organization)> SeedMemberAsync(
+        string clerkId,
+        string boutiqueRole)
+    {
+        var user = NewMemberRow(clerkId);
+        var organization = new Organization
+        {
+            Id = Guid.CreateVersion7(),
+            Name = $"Boutique {clerkId}",
+            Slug = $"boutique-{clerkId}",
+            OwnerUserId = Guid.CreateVersion7(),
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+
+        _dbContext.Users.Add(user);
+        _dbContext.Organizations.Add(organization);
+        _dbContext.OrganizationMemberships.Add(new OrganizationMembership
+        {
+            OrganizationId = organization.Id,
+            UserId = user.Id,
+            BoutiqueRole = boutiqueRole,
+            Status = MembershipStatus.Active,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        await _dbContext.SaveChangesAsync();
+
+        return (user, organization);
+    }
 }

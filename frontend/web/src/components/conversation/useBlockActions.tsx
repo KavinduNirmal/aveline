@@ -17,6 +17,7 @@ import {
 interface BlockPayload {
   text: string
   title: string
+  imageUrl?: string
 }
 
 /** The state the forward picker and the send confirmation are driven by. */
@@ -34,7 +35,7 @@ export interface UseBlockActionsOptions {
   /** Every Salon, so the forward picker knows which clients a card may go to. */
   conversations: ConversationDto[]
   /** Delivers a block's words to a client's own channel. Rejects when the server refuses. */
-  deliver: (targetConversationId: string, text: string) => Promise<void>
+  deliver: (targetConversationId: string, text: string, clientMessageId?: string, imageUrl?: string) => Promise<void>
   /** Re-runs the agent for the turn behind a message. Absent leaves Regenerate unavailable. */
   regenerate?: (messageId: string) => Promise<void>
   /** True while the agent is producing a reply, which is when a second regenerate is wrong. */
@@ -113,11 +114,13 @@ export function useBlockActions(options: UseBlockActionsOptions): BlockActionsCo
   )
 
   const handleForward = useCallback((block: ActionableBlock, messageId: string) => {
-    setForwardRequest({ messageId, text: blockToText(block), title: blockTitle(block) })
+    const imageUrl = block.imageUrl || (typeof block.url === 'string' ? block.url : undefined)
+    setForwardRequest({ messageId, text: blockToText(block), title: blockTitle(block), imageUrl })
   }, [])
 
   const handleSendToCustomer = useCallback((block: ActionableBlock, messageId: string) => {
-    setSendRequest({ messageId, text: blockToText(block), title: blockTitle(block) })
+    const imageUrl = block.imageUrl || (typeof block.url === 'string' ? block.url : undefined)
+    setSendRequest({ messageId, text: blockToText(block), title: blockTitle(block), imageUrl })
   }, [])
 
   const handleRegenerate = useCallback(
@@ -144,10 +147,14 @@ export function useBlockActions(options: UseBlockActionsOptions): BlockActionsCo
    * associate to do next, and only the server knows which one happened.
    */
   const deliverTo = useCallback(
-    async (messageId: string, targetConversationId: string, text: string, title: string) => {
+    async (messageId: string, targetConversationId: string, text: string, title: string, imageUrl?: string) => {
       markPending(messageId, targetConversationId === conversationId ? 'send_to_customer' : 'forward')
       try {
-        await deliver(targetConversationId, text)
+        if (imageUrl) {
+          await deliver(targetConversationId, text, undefined, imageUrl)
+        } else {
+          await deliver(targetConversationId, text)
+        }
         toast.success(`${title} sent`)
         return true
       } catch (error) {
@@ -167,8 +174,8 @@ export function useBlockActions(options: UseBlockActionsOptions): BlockActionsCo
   const confirmForward = useCallback(
     async (targetConversationId: string) => {
       if (!forwardRequest) return
-      const { messageId, text, title } = forwardRequest
-      const sent = await deliverTo(messageId, targetConversationId, text, title)
+      const { messageId, text, title, imageUrl } = forwardRequest
+      const sent = await deliverTo(messageId, targetConversationId, text, title, imageUrl)
       if (sent) setForwardRequest(null)
     },
     [deliverTo, forwardRequest],
@@ -176,10 +183,10 @@ export function useBlockActions(options: UseBlockActionsOptions): BlockActionsCo
 
   const confirmSend = useCallback(async () => {
     if (!sendRequest || !conversationId) return
-    const { messageId, text, title } = sendRequest
+    const { messageId, text, title, imageUrl } = sendRequest
     setSending(true)
     try {
-      const sent = await deliverTo(messageId, conversationId, text, title)
+      const sent = await deliverTo(messageId, conversationId, text, title, imageUrl)
       if (sent) setSendRequest(null)
     } finally {
       setSending(false)

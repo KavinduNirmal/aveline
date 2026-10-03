@@ -365,3 +365,17 @@ aveline-release.jks
 # =============================================================================
 .docker-tmp/
 texput.log
+
+# =============================================================================
+# Nested working copies that shadow the repository
+# =============================================================================
+# These are full checkouts of this repo (including their own .git) left inside the
+# worktree. They are not tracked, but they were not ignored either, so a `git add -A`
+# would have committed tens of thousands of duplicate files - and a nested .git can
+# shadow the parent for tooling that discovers repositories by walking down from the
+# workspace root. ~2.4 GB combined; safe to delete (security assessment F-6.6).
+# Root-anchored deliberately: `docs/final_document/.probe/` and `docs/submission/.probe/`
+# are tracked documentation directories and must stay visible.
+/.fix/
+/.m424/
+/.probe/

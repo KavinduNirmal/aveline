@@ -249,6 +249,46 @@ public class MediaOptionsValidatorTests
     }
 
     [Fact]
+    public void UrlUploadEnabled_WithAnEmptyAllowlist_IsRefused()
+    {
+        // An empty allow-list means "any host" in ImageUrlFetcher, so enabling the user-supplied
+        // URL fetch without a list would ship an unrestricted server-side fetcher (F-6.4).
+        var act = () => MediaOptionsValidator.ValidateOrThrow(
+            Configuration(
+                ("Media:Provider", "database"),
+                ("Media:ImageUrlUploadEnabled", "true")),
+            HostEnvironment(Environments.Development));
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*Media:ImageUrlUploadEnabled*");
+    }
+
+    [Fact]
+    public void UrlUploadEnabled_WithAnAllowlist_StartsCleanly()
+    {
+        var act = () => MediaOptionsValidator.ValidateOrThrow(
+            Configuration(
+                ("Media:Provider", "database"),
+                ("Media:ImageUrlUploadEnabled", "true"),
+                ("Media:ImageUrlAllowlist", "images.example.com")),
+            HostEnvironment(Environments.Development));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void UrlUploadDisabled_WithAnEmptyAllowlist_StartsCleanly()
+    {
+        // The safe default must keep booting: the fetcher is unreachable, so the empty list is
+        // inert rather than dangerous.
+        var act = () => MediaOptionsValidator.ValidateOrThrow(
+            Configuration(("Media:Provider", "database")),
+            HostEnvironment(Environments.Development));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
     public void AZeroCatalogDisplayWidth_IsRefused()
     {
         var act = () => MediaOptionsValidator.ValidateOrThrow(

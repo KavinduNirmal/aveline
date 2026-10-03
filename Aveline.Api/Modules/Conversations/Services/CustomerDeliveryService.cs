@@ -73,6 +73,7 @@ public sealed class CustomerDeliveryService : ICustomerDeliveryService
         Guid conversationId,
         string text,
         Guid? clientMessageId = null,
+        string? imageUrl = null,
         CancellationToken cancellationToken = default)
     {
         // A blank body is a caller error, not a delivery state: the endpoint refuses it with a
@@ -151,8 +152,18 @@ public sealed class CustomerDeliveryService : ICustomerDeliveryService
             return DeliveryOutcome.Refused(channel.Refusal.Value, channel.Detail!);
         }
 
-        var sent = await _whatsApp.SendMessageAsync(
-            channel.AccessToken!, channel.PhoneNumberId!, handle, body, cancellationToken);
+        WhatsAppSendResult sent;
+        if (!string.IsNullOrWhiteSpace(imageUrl))
+        {
+            sent = await _whatsApp.SendImageAsync(
+                channel.AccessToken!, channel.PhoneNumberId!, handle, imageUrl, body, cancellationToken);
+        }
+        else
+        {
+            sent = await _whatsApp.SendMessageAsync(
+                channel.AccessToken!, channel.PhoneNumberId!, handle, body, cancellationToken);
+        }
+
         if (!sent.IsSuccess)
         {
             // The provider's error is logged, never returned: it can echo the request, and the

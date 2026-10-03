@@ -26,6 +26,7 @@ using Aveline.Api.Modules.Handbook;
 using Aveline.Api.Modules.Home;
 using Aveline.Api.Modules.Home.Endpoints;
 using Aveline.Api.Modules.Integrations;
+using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.Media;
 using Aveline.Api.Modules.Notifications;
 using Aveline.Api.Modules.Notifications.Hubs;
@@ -137,6 +138,10 @@ var app = builder.Build();
 TelemetrySecurityGuard.EnsureIpHashSaltForProduction(app.Environment, app.Configuration);
 // Fail fast when Production would expose /metrics under the committed internal token (S-1).
 MetricsSecurityGuard.EnsureScrapeTokenForProduction(app.Environment, app.Configuration);
+// Fail fast when Production runs with a missing, placeholder, or low-entropy internal service
+// token. That token grants scope=internal:all over every /internal/* endpoint, and the previous
+// single-literal check accepted the value published in docker-compose.yml (assessment F-2.6).
+InternalTokenSecurityGuard.EnsureInternalTokenForProduction(app.Environment, app.Configuration, app.Logger);
 // Fail fast when the media provider is half-configured, and warn (never silently accept) when a
 // Production host keeps image bytes in the database via the approved escape hatch (strategy §3.4).
 MediaOptionsValidator.ValidateOrThrow(app.Configuration, app.Environment, app.Logger);

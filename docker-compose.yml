@@ -33,7 +33,11 @@ services:
       # Password for the least-privilege postgres_exporter role created on first init (S-10).
       POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD is required}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Loopback-bound on purpose. `${POSTGRES_PORT}:5432` binds 0.0.0.0 and would publish the
+      # database on every host interface; on a VPS that is a directly reachable Postgres. The API
+      # and the exporter reach it over the compose network, never through this mapping, so a
+      # host-side client only ever needs 127.0.0.1 (assessment F-1.6 / PF-1.1).
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./observability/postgres-exporter/role.sql:/docker-entrypoint-initdb.d/postgres-exporter-role.sql:ro
@@ -78,10 +82,18 @@ services:
     image: redis:7-alpine
     container_name: aveline_redis
     restart: unless-stopped
+    # Redis had no credential and was published on every interface. Inside the compose network
+    # that is tolerable; reachable from the host - or from the internet on a VPS - it is an open
+    # cache holding rate-limit counters, media-token nonces and cached responses. Password +
+    # loopback binding (assessment F-1.6 / PF-1.1).
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "--appendonly", "no"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Authenticated once --requirepass is set; a bare PING would be rejected with NOAUTH.
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -107,7 +119,7 @@ services:
       ConnectionStrings__DefaultConnection: >-
         Host=${POSTGRES_HOST:-postgres};Port=${POSTGRES_INTERNAL_PORT:-5432};Database=${POSTGRES_DB:-aveline};
         Username=${POSTGRES_USER:-aveline};Password=${POSTGRES_PASSWORD}
-      Redis__ConnectionString: ${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}
+      Redis__ConnectionString: ${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379},password=${REDIS_PASSWORD}
       # Event types the API consumes from the agent service. The `:-` defaults keep the API
       # subscribed to the real event types even when the env vars are unset; an empty-string
       # override would silently disable the subscription and drop Salon messages/states.
@@ -262,7 +274,10 @@ services:
       # (identify customer, memories, consent) used by the Customer Memory agent.
       API_BASE_URL: http://${API_HOST:-api}:${API_INTERNAL_PORT:-8080}
       # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
-      REDIS_URL: redis://${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
+      # REDIS_PASSWORD must be URL-safe (hex — see .env.example): it is interpolated into the
+      # userinfo below, and base64's `/`, `+` and `=` truncate the authority, leaving the agent
+      # pointed at a host named after a fragment of the password.
+      REDIS_URL: redis://:${REDIS_PASSWORD}@${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}
       # LLM provider (openai | deepseek), switched at runtime.

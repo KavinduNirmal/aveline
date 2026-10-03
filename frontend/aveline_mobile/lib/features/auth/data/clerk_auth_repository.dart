@@ -1,10 +1,13 @@
 import 'package:clerk_auth/clerk_auth.dart' as clerk;
 import 'package:clerk_flutter/clerk_flutter.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 import '../domain/auth_claims.dart';
 import '../domain/auth_repository.dart';
 import '../domain/auth_user.dart';
+import '../domain/sign_up_field.dart';
+import '../domain/social_auth_repository.dart';
+import '../domain/social_provider.dart';
 import 'auth_user_mapper.dart';
 
 /// [AuthRepository] backed by the Clerk Flutter SDK.
@@ -12,7 +15,12 @@ import 'auth_user_mapper.dart';
 /// Sessions are persisted by the SDK, so the signed-in state is restored
 /// automatically across app restarts. Tokens are minted from the Aveline JWT
 /// template so they carry the `user_role`/`org_role` claims the backend needs.
-class ClerkAuthRepository implements AuthRepository {
+///
+/// Also the [SocialAuthRepository]: the SDK owns the provider consent page, so
+/// the app hands it the widget to show that page over rather than reimplementing
+/// the web view, its redirect interception and the Google-specific user agent
+/// that page needs.
+class ClerkAuthRepository implements AuthRepository, SocialAuthRepository {
   ClerkAuthRepository(this._authState, {required this.jwtTemplateName});
 
   final ClerkAuthState _authState;
@@ -56,6 +64,7 @@ class ClerkAuthRepository implements AuthRepository {
       usernameRequired: username?.isRequired ?? false,
       passwordMinLength: env.user.passwordSettings.minLength,
       signUpCaptchaRequired: env.user.signUp.captchaEnabled,
+      socialProviders: SocialProvider.listFrom(env.socialConnections),
     );
   }
 
@@ -146,6 +155,84 @@ class ClerkAuthRepository implements AuthRepository {
             strategy: clerk.Strategy.emailCode,
             code: code,
           ));
+
+  @override
+  Future<AuthFailure?> signInWithOAuth(
+    SocialProvider provider, {
+    required BuildContext context,
+  }) =>
+      _runConsent(
+        (onError) =>
+            _authState.ssoSignIn(context, provider.strategy, onError: onError),
+      );
+
+  @override
+  Future<AuthFailure?> signUpWithOAuth(
+    SocialProvider provider, {
+    required BuildContext context,
+  }) =>
+      _runConsent(
+        (onError) =>
+            _authState.ssoSignUp(context, provider.strategy, onError: onError),
+      );
+
+  @override
+  List<SignUpField> get pendingSignUpFields => SignUpField.listFromNames(
+        _authState.signUp?.missingFields.map((field) => field.name) ?? const [],
+      );
+
+  @override
+  bool get signUpIncomplete =>
+      _authState.signUp?.missingFields.isNotEmpty ?? false;
+
+  @override
+  bool get signUpNeedsEmailVerification =>
+      _authState.signUp?.unverified(clerk.Field.emailAddress) ?? false;
+
+  @override
+  Future<AuthFailure?> submitSignUpFields(Map<SignUpField, String> values) =>
+      _run(() => _authState.attemptSignUp(
+            // The SDK's own guidance for finishing a sign-up the provider could
+            // not complete: supply the missing values and let `attemptSignUp`
+            // work out what is left. No strategy is named, because the fields
+            // being filled in are not what the sign-up is attempted with.
+            username: values[SignUpField.username],
+            emailAddress: values[SignUpField.emailAddress],
+            phoneNumber: values[SignUpField.phoneNumber],
+            firstName: values[SignUpField.firstName],
+            lastName: values[SignUpField.lastName],
+          ));
+
+  /// Runs a consent flow, translating failures into a presentable [AuthFailure].
+  ///
+  /// The SDK reports these through an `onError` callback instead of by throwing -
+  /// `ssoSignIn`/`ssoSignUp` catch internally so the error can reach whatever
+  /// overlay is showing - so the failure is collected here and mapped exactly as
+  /// [_run] maps the password flows' errors.
+  Future<AuthFailure?> _runConsent(
+    Future<void> Function(ClerkErrorCallback onError) action,
+  ) async {
+    clerk.ClerkError? reported;
+    try {
+      await action((error) => reported = error);
+    } on clerk.ClerkError catch (error) {
+      reported = error;
+    } catch (error, stack) {
+      debugPrint('[clerk auth] unexpected $error\n$stack');
+      return AuthFailure.fromException(error);
+    }
+
+    final error = reported;
+    if (error == null) {
+      return null;
+    }
+    final failure = AuthFailure.fromClerk(error);
+    debugPrint(
+      '[clerk auth] sso kind=${failure.kind.name} code=${failure.code} '
+      'detail=${error.errors?.errorMessage} raw=${_rawCodes(error)}',
+    );
+    return failure;
+  }
 
   /// Runs an auth action, translating failures into a presentable [AuthFailure].
   ///

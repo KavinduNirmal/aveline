@@ -61,24 +61,35 @@ public sealed class ClerkAdminClient : IClerkAdminClient
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             throw new HttpRequestException(
-                $"Clerk Backend API rejected the role grant for user '{clerkUserId}': " +
-                $"{(int)response.StatusCode} {body}");
+                $"Clerk Backend API rejected the role grant for user '{clerkUserId}' at " +
+                $"{request.RequestUri}: {(int)response.StatusCode} {body}");
         }
     }
 
     public async Task<IReadOnlyList<ClerkSession>> ListSessionsAsync(
         string clerkUserId, CancellationToken cancellationToken = default)
     {
+        // Sessions are listed from `/sessions` filtered by `user_id`.
+        //
+        // Clerk does serve `/users/{id}/sessions`, but only far enough to load the user: for a real
+        // id it hands the request on and a router answers with a plain-text `404 page not found`,
+        // which the endpoint reports as a 502 (assessment F-4.5). For an *unknown* id Clerk answers
+        // in its JSON error shape instead — so probing the route with a made-up id makes it look
+        // healthy, which is exactly how this was misdiagnosed twice.
+        //
+        // `limit` defaults to 10 and caps at 500. Without it, `RevokeAllSessionsAsync` — which lists
+        // through here — would silently revoke only the first page.
         using var request = CreateRequest(
-            HttpMethod.Get, $"/users/{Uri.EscapeDataString(clerkUserId)}/sessions");
+            HttpMethod.Get,
+            $"/sessions?user_id={Uri.EscapeDataString(clerkUserId)}&limit=500");
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
             throw new HttpRequestException(
-                $"Clerk Backend API rejected the session list for user '{clerkUserId}': " +
-                $"{(int)response.StatusCode} {body}");
+                $"Clerk Backend API rejected the session list for user '{clerkUserId}' at " +
+                $"{request.RequestUri}: {(int)response.StatusCode} {body}");
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -117,8 +128,8 @@ public sealed class ClerkAdminClient : IClerkAdminClient
             {
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);
                 throw new HttpRequestException(
-                    $"Clerk Backend API rejected revoking session '{session.Id}': " +
-                    $"{(int)response.StatusCode} {body}");
+                    $"Clerk Backend API rejected revoking session '{session.Id}' at " +
+                    $"{request.RequestUri}: {(int)response.StatusCode} {body}");
             }
 
             revoked++;

@@ -1,7 +1,7 @@
 import asyncio
-import httpx
-import re
 from html.parser import HTMLParser
+
+import httpx
 
 
 class RithihiCatalogInspector(HTMLParser):
@@ -22,7 +22,7 @@ class RithihiCatalogInspector(HTMLParser):
             self.all_links.append((attr_dict["href"], attr_dict.get("title", "")))
         if tag == "img":
             self.all_images.append((attr_dict.get("src", ""), attr_dict.get("alt", "")))
-            
+
         classes = attr_dict.get("class", "").lower()
         if any(marker in classes for marker in ["product", "item", "post", "entry", "card"]) and not self.in_item:
             self.in_item = True
@@ -58,20 +58,20 @@ async def inspect_rithihi():
         # Check /?s=white
         res = await client.get("https://rithihi.com/?s=white")
         print(f"GET https://rithihi.com/?s=white -> HTTP {res.status_code}")
-        
+
         parser = RithihiCatalogInspector()
         parser.feed(res.text)
-        
+
         print(f"Total articles/items parsed: {len(parser.articles)}")
         for idx, art in enumerate(parser.articles[:10], 1):
             text_preview = " | ".join(art["texts"][:3])
             print(f"  [{idx}] Class: {art['classes'][:40]} | Link: {art['link']} | Text: {text_preview[:60]}")
 
         # Check saree links
-        saree_links = [l for l, t in parser.all_links if "saree" in l.lower() or "collection" in l.lower() or "product" in l.lower()]
+        saree_links = [link_url for link_url, t in parser.all_links if "saree" in link_url.lower() or "collection" in link_url.lower() or "product" in link_url.lower()]
         print(f"\nDiscovered {len(saree_links)} saree links on page:")
-        for l in list(dict.fromkeys(saree_links))[:10]:
-            print(f"  -> {l}")
+        for link_url in list(dict.fromkeys(saree_links))[:10]:
+            print(f"  -> {link_url}")
 
 
 if __name__ == "__main__":

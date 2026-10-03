@@ -23,8 +23,11 @@
      - Frontend `blocks.tsx` (`AttachmentBlock` and `AttachmentViewer`) renders the photo with interactive fullscreen preview.
      - The Agent Service consumes the `message.received` event containing `attachment_id` and invokes the Elle visual agent workflow.
 
-4. **Environment Configuration (`.env`)**:
+4. **Environment Configuration (`.env`) & Container Recovery**:
    - Updated `.env` with the verified WhatsApp Meta base URL (`https://graph.facebook.com`), Cloudinary storage settings (`Media__Provider=cloudinary`, `Media__ReadFromCloudinary=true`), token signing keys, and DeepSeek/Gemini service endpoints.
+   - Diagnosed dashboard infinite loading spinner: `POSTGRES_PASSWORD=change-me` failed authentication against the initialized `postgres_data` volume (which uses `1234`), causing `aveline_api` to crash loop on startup migrations.
+   - Restored `POSTGRES_PASSWORD=1234` in `.env` and restarted `aveline_api`.
+   - Verified API health endpoint (`http://localhost:5091/health`) is 100% Healthy across database, redis, agent-service, and clerk-jwks.
 
 ### Files Created or Modified
 
@@ -35,6 +38,8 @@
 ### Verification Performed
 
 - `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CommerceOrderServiceTests"`: 13/13 passed (100%).
+- `curl.exe -i http://localhost:5091/health`: HTTP 200 OK (database: Healthy, redis: Healthy, agent-service: Healthy, clerk-jwks: Healthy).
+- `docker ps`: all services (`aveline_api`, `aveline_agent`, `aveline_postgres`, `aveline_redis`, `aveline_grafana`, `aveline_prometheus`, `aveline_jaeger`) running and healthy.
 - `git status`: clean working tree on `visual-agent-tuning`.
 
 

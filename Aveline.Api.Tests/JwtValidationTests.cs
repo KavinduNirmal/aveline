@@ -144,12 +144,65 @@ public class JwtValidationTests
     [Fact]
     public void Token_WithMismatchedAudience_StillValidates()
     {
+        // Default behaviour (no Clerk:Audience configured) is preserved: the issuer and signing
+        // key already bind the token to this Clerk instance.
         var key = NewKey();
         var (token, _) = CreateToken(Authority, key, audience: "some-other-audience");
 
         var result = Validate(token, key);
 
         Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void NoAudienceConfigured_DoesNotEnforceAudience()
+    {
+        var parameters = AuthenticationConfiguration.BuildTokenValidationParameters(Authority);
+
+        Assert.False(parameters.ValidateAudience);
+        Assert.Null(parameters.ValidAudiences);
+    }
+
+    [Fact]
+    public void AudienceConfigured_EnforcesAudience()
+    {
+        var parameters = AuthenticationConfiguration.BuildTokenValidationParameters(
+            Authority, "aveline-api");
+
+        Assert.True(parameters.ValidateAudience);
+        Assert.Equal(["aveline-api"], parameters.ValidAudiences);
+    }
+
+    [Fact]
+    public void AudienceConfigured_AcceptsTheMatchingAudience()
+    {
+        var key = NewKey();
+        var (token, _) = CreateToken(Authority, key, audience: "aveline-api");
+        var parameters = AuthenticationConfiguration.BuildTokenValidationParameters(
+            Authority, "aveline-api");
+        parameters.IssuerSigningKey = key;
+
+        var result = new JsonWebTokenHandler().ValidateTokenAsync(token, parameters)
+            .GetAwaiter().GetResult();
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void AudienceConfigured_RejectsAForeignAudience()
+    {
+        // This is the F-2.3 gap closed: a token minted for another application on the same Clerk
+        // instance is refused once Clerk:Audience is wired.
+        var key = NewKey();
+        var (token, _) = CreateToken(Authority, key, audience: "another-app");
+        var parameters = AuthenticationConfiguration.BuildTokenValidationParameters(
+            Authority, "aveline-api");
+        parameters.IssuerSigningKey = key;
+
+        var result = new JsonWebTokenHandler().ValidateTokenAsync(token, parameters)
+            .GetAwaiter().GetResult();
+
+        Assert.False(result.IsValid);
     }
 
     [Fact]

@@ -62,10 +62,10 @@ export const BLOCK_ACTION_BUSY_LABELS: Record<BlockActionId, string> = {
  */
 const BLOCK_ACTIONS: Record<string, readonly BlockActionId[]> = {
   suggestion: ['copy', 'send_to_customer', 'regenerate'],
-  piece: ['forward'],
-  item: ['forward'],
-  look: ['copy', 'forward', 'regenerate'],
-  lookbook: ['copy', 'forward', 'regenerate'],
+  piece: ['send_to_customer', 'forward'],
+  item: ['send_to_customer', 'forward'],
+  look: ['copy', 'send_to_customer', 'forward', 'regenerate'],
+  lookbook: ['copy', 'send_to_customer', 'forward', 'regenerate'],
 }
 
 /**

@@ -250,9 +250,11 @@ export async function deliverBlockToCustomer(
   conversationId: string,
   text: string,
   clientMessageId?: string,
+  imageUrl?: string,
 ): Promise<DeliveryReceipt> {
-  const body: { text: string; clientMessageId?: string } = { text }
+  const body: { text: string; clientMessageId?: string; imageUrl?: string } = { text }
   if (clientMessageId) body.clientMessageId = clientMessageId
+  if (imageUrl) body.imageUrl = imageUrl
 
   try {
     const response = await apiClient.post<DeliveryReceipt>(

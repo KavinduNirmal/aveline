@@ -727,7 +727,7 @@ public static class ConversationEndpoints
 
         var outcome = await delivery.DeliverAsync(
             organizationId, userId.Value, conversationId, request.Text,
-            request.ClientMessageId, cancellationToken);
+            request.ClientMessageId, request.ImageUrl, cancellationToken);
 
         if (outcome.Delivered)
         {

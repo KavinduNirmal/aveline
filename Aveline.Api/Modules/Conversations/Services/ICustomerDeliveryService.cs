@@ -92,5 +92,6 @@ public interface ICustomerDeliveryService
         Guid conversationId,
         string text,
         Guid? clientMessageId = null,
+        string? imageUrl = null,
         CancellationToken cancellationToken = default);
 }

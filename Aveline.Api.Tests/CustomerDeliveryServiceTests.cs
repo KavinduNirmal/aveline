@@ -162,6 +162,8 @@ public class CustomerDeliveryServiceTests
         public Task<WhatsAppMediaResult> GetMediaAsync(string accessToken, string mediaId, CancellationToken ct)
             => throw new NotImplementedException();
     
+        public List<(string PhoneNumberId, string To, string ImageUrl, string Caption)> SentImages { get; } = [];
+
         public Task<WhatsAppSendResult> SendImageAsync(
             string accessToken,
             string phoneNumberId,
@@ -169,9 +171,12 @@ public class CustomerDeliveryServiceTests
             string imageUrl,
             string caption,
             CancellationToken cancellationToken = default)
-            => Task.FromResult(new WhatsAppSendResult(
+        {
+            SentImages.Add((phoneNumberId, to, imageUrl, caption));
+            return Task.FromResult(new WhatsAppSendResult(
                 IsSuccess: true, MessageId: "wamid.TESTIMAGE", HttpStatus: 200));
-}
+        }
+    }
 
     private sealed class FakeBroadcaster : IMessageBroadcaster
     {
@@ -485,5 +490,26 @@ public class CustomerDeliveryServiceTests
             () => _sut.DeliverAsync(orgId, userId, conversation.Id, "   "));
 
         Assert.Empty(_whatsApp.Sent);
+    }
+
+    [Fact]
+    public async Task DeliverAsync_SendsImageWhenImageUrlIsProvided()
+    {
+        var (orgId, userId, _, conversation) = GivenAThread();
+        var imageUrl = "https://images.aveline.luxury/midnight-navy-saree.jpg";
+        var caption = "Midnight Navy Sequined Georgette Saree · Size Standard · LKR 75,000";
+
+        var outcome = await _sut.DeliverAsync(
+            orgId, userId, conversation.Id, caption, clientMessageId: null, imageUrl: imageUrl);
+
+        Assert.True(outcome.Delivered);
+        Assert.Equal("WhatsApp", outcome.Channel);
+        Assert.Empty(_whatsApp.Sent);
+        Assert.Single(_whatsApp.SentImages);
+        var (phoneId, to, sentUrl, sentCaption) = _whatsApp.SentImages[0];
+        Assert.Equal(CustomerPhone, to);
+        Assert.Equal(imageUrl, sentUrl);
+        Assert.Equal(caption, sentCaption);
+        Assert.Single(_messages.All);
     }
 }

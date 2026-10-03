@@ -29,18 +29,37 @@
    - Restored `POSTGRES_PASSWORD=1234` in `.env` and restarted `aveline_api`.
    - Verified API health endpoint (`http://localhost:5091/health`) is 100% Healthy across database, redis, agent-service, and clerk-jwks.
 
+5. **Direct Customer Delivery & WhatsApp Garment Photo Messaging Implementation**:
+   - Extended `DeliverToCustomerRequest` DTO, `ICustomerDeliveryService.DeliverAsync`, and `CustomerDeliveryService.cs` in `Aveline.Api` to accept an `imageUrl` and route through `_whatsApp.SendImageAsync` when provided.
+   - Updated `agent-service/app/agents/visual_insight/nodes.py` to format all curated pieces with names and prices directly into the customer suggestion block.
+   - Added `send_to_customer` action to piece, item, and look blocks in `blockActions.ts` so staff can deliver cards directly to the current customer with one click, as well as forward to other clients.
+   - Updated `useBlockActions.tsx`, `ConversationsContext.tsx`, and `conversations-api.ts` to forward garment image URLs to the delivery endpoint.
+   - Rebuilt Docker containers (`aveline_api` and `aveline_agent`).
+
 ### Files Created or Modified
 
+- `Aveline.Api/Modules/Conversations/DTOs/MessageDtos.cs`
+- `Aveline.Api/Modules/Conversations/Services/ICustomerDeliveryService.cs`
+- `Aveline.Api/Modules/Conversations/Services/CustomerDeliveryService.cs`
+- `Aveline.Api/Endpoints/ConversationEndpoints.cs`
+- `Aveline.Api.Tests/CustomerDeliveryServiceTests.cs`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `frontend/web/src/lib/conversations-api.ts`
+- `frontend/web/src/contexts/ConversationsContext.tsx`
+- `frontend/web/src/components/conversation/blockActions.ts`
+- `frontend/web/src/components/conversation/useBlockActions.tsx`
+- `frontend/web/src/components/conversation/blockActions.test.ts`
+- `frontend/web/src/components/conversation/blockActionRail.dom.test.tsx`
 - `.env`
-- `agent-service/app/agents/commerce/nodes.py`
 - `docs/ai-usage/Dilud.md`
 
 ### Verification Performed
 
-- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CommerceOrderServiceTests"`: 13/13 passed (100%).
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CustomerDeliveryServiceTests"`: 16/16 passed (100%).
+- `npx vitest run src/components/conversation/`: 18/18 test files passed (203/203 tests).
+- `npx vitest run src/lib/conversations-api.test.ts`: 20/20 passed (100%).
 - `curl.exe -i http://localhost:5091/health`: HTTP 200 OK (database: Healthy, redis: Healthy, agent-service: Healthy, clerk-jwks: Healthy).
-- `docker ps`: all services (`aveline_api`, `aveline_agent`, `aveline_postgres`, `aveline_redis`, `aveline_grafana`, `aveline_prometheus`, `aveline_jaeger`) running and healthy.
-- `git status`: clean working tree on `visual-agent-tuning`.
+- `docker ps`: all services running and healthy.
 
 
 ---

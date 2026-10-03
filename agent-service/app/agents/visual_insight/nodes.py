@@ -550,21 +550,20 @@ class VisualInsightAgent:
                     "completion_tokens": completion_tokens,
                 }
             else:
-                name = items[0].name
                 # When the customer sent a picture, the reply says what was seen in it. This is the
                 # difference between "we found something" and "we found something for the piece you
                 # photographed", and it is the whole point of the vision path.
                 seen = _describe_what_was_seen(state)
                 if seen:
-                    suggestion = (
-                        f"From your photo, this reads as a {seen} - Elle curated {len(items)} "
-                        f"piece(s) in that spirit, including the {name}."
-                    )
+                    intro = f"From your photo, this reads as a {seen} - Elle curated {len(items)} piece(s) in that spirit:"
                 else:
-                    suggestion = (
-                        f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic, "
-                        f"including the {name}."
-                    )
+                    intro = f"Elle curated {len(items)} piece(s) harmonizing with your aesthetic:"
+
+                item_lines = [
+                    f"• {i.name}" + (f" · LKR {int(i.price):,}" if i.price else "")
+                    for i in items
+                ]
+                suggestion = f"{intro}\n" + "\n".join(item_lines)
                 return {
                     "composed_looks": [look.model_dump()],
                     "suggestion": suggestion,

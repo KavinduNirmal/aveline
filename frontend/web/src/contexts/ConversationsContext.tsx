@@ -214,6 +214,7 @@ interface ConversationsContextValue {
     targetConversationId: string,
     text: string,
     clientMessageId?: string,
+    imageUrl?: string,
   ) => Promise<void>
   /**
    * Asks Aveline to answer the turn behind `messageId` again. Resolves when the **request** is
@@ -908,7 +909,7 @@ export function ConversationsProvider({
    * broadcast over the hub, so the target thread updates itself if it is open.
    */
   const deliverToClient = useCallback(
-    async (targetConversationId: string, text: string, clientMessageId?: string) => {
+    async (targetConversationId: string, text: string, clientMessageId?: string, imageUrl?: string) => {
       const body = text.trim()
       if (!targetConversationId || !body) return
       const receipt = await deliverBlockToCustomer(
@@ -916,6 +917,7 @@ export function ConversationsProvider({
         targetConversationId,
         body,
         clientMessageId,
+        imageUrl,
       )
       // Keep the target row's preview and ordering honest in the list the picker was drawn from.
       setConversations((prev) =>

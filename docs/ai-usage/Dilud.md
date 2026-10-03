@@ -1,6 +1,6 @@
-## Session 2026-10-03 (Branch Synchronization & Stage-1 Test Failure Resolution)
+## Session 2026-10-03 (Branch Synchronization, Test Resolution & WhatsApp Media Pipeline Configuration)
 
-**Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts in commerce node evaluation, and fix the 3 failing tests in `CommerceOrderServiceTests` (Aveline.Api.Tests).
+**Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts, verify the WhatsApp inbound photo-to-Salon chat pipeline, and configure the local `.env` environment with Cloudinary media storage and WhatsApp gateway settings.
 **Tool used:** Antigravity AI Assistant
 **Status:** Completed
 
@@ -8,26 +8,59 @@
 
 1. **Branch Analysis & Synchronization**:
    - Compared `visual-agent-tuning` with `origin/development`.
-   - Merged 18 incoming commits from `origin/development` including PR #503 (E2E composed stack, k6 performance gating, and stage-1 CI fixes).
+   - Merged incoming commits from `origin/development` including PR #503 (E2E composed stack, k6 performance gating, and stage-1 CI fixes).
 
 2. **Merge Conflict Resolution (`agent-service/app/agents/commerce/nodes.py`)**:
    - Resolved merge conflict in `evaluate_deal()`:
      - Preserved `tier_info = await get_customer_loyalty_tier(...)` with clean type assertion.
      - Preserved conversational order review fallback (`if not requires_approval: approval_type = "order_approval"`), maintaining rule specificity while guaranteeing owner review floor for conversational orders.
 
-3. **Automated Verification**:
-   - Verified that `CommerceOrderServiceTests` now passes 13/13 tests (0 failures).
-   - Clean git working tree and merge commit recorded.
+3. **Inbound WhatsApp Photo Pipeline Verification**:
+   - Verified that when a customer sends an image via WhatsApp:
+     - `WebhookEndpoints.cs` receives the webhook and downloads media bytes from Meta Graph API via `IWhatsAppService.GetMediaAsync`.
+     - Validates MIME type and magic bytes via `AttachmentContentPolicy`, then persists the `Attachment` via `MediaService` (configured with Cloudinary).
+     - `ConversationService.cs` appends an `attachment` block to the conversation message and broadcasts it in real-time over SignalR to active Salon clients.
+     - Frontend `blocks.tsx` (`AttachmentBlock` and `AttachmentViewer`) renders the photo with interactive fullscreen preview.
+     - The Agent Service consumes the `message.received` event containing `attachment_id` and invokes the Elle visual agent workflow.
+
+4. **Environment Configuration (`.env`) & Container Recovery**:
+   - Updated `.env` with the verified WhatsApp Meta base URL (`https://graph.facebook.com`), Cloudinary storage settings (`Media__Provider=cloudinary`, `Media__ReadFromCloudinary=true`), token signing keys, and DeepSeek/Gemini service endpoints.
+   - Diagnosed dashboard infinite loading spinner: `POSTGRES_PASSWORD=change-me` failed authentication against the initialized `postgres_data` volume (which uses `1234`), causing `aveline_api` to crash loop on startup migrations.
+   - Restored `POSTGRES_PASSWORD=1234` in `.env` and restarted `aveline_api`.
+   - Verified API health endpoint (`http://localhost:5091/health`) is 100% Healthy across database, redis, agent-service, and clerk-jwks.
+
+5. **Direct Customer Delivery & WhatsApp Garment Photo Messaging Implementation**:
+   - Extended `DeliverToCustomerRequest` DTO, `ICustomerDeliveryService.DeliverAsync`, and `CustomerDeliveryService.cs` in `Aveline.Api` to accept an `imageUrl` and route through `_whatsApp.SendImageAsync` when provided.
+   - Updated `agent-service/app/agents/visual_insight/nodes.py` to format all curated pieces with names and prices directly into the customer suggestion block.
+   - Added `send_to_customer` action to piece, item, and look blocks in `blockActions.ts` so staff can deliver cards directly to the current customer with one click, as well as forward to other clients.
+   - Updated `useBlockActions.tsx`, `ConversationsContext.tsx`, and `conversations-api.ts` to forward garment image URLs to the delivery endpoint.
+   - Rebuilt Docker containers (`aveline_api` and `aveline_agent`).
 
 ### Files Created or Modified
 
-- `agent-service/app/agents/commerce/nodes.py`
+- `Aveline.Api/Modules/Conversations/DTOs/MessageDtos.cs`
+- `Aveline.Api/Modules/Conversations/Services/ICustomerDeliveryService.cs`
+- `Aveline.Api/Modules/Conversations/Services/CustomerDeliveryService.cs`
+- `Aveline.Api/Endpoints/ConversationEndpoints.cs`
+- `Aveline.Api.Tests/CustomerDeliveryServiceTests.cs`
+- `agent-service/app/agents/visual_insight/nodes.py`
+- `frontend/web/src/lib/conversations-api.ts`
+- `frontend/web/src/contexts/ConversationsContext.tsx`
+- `frontend/web/src/components/conversation/blockActions.ts`
+- `frontend/web/src/components/conversation/useBlockActions.tsx`
+- `frontend/web/src/components/conversation/blockActions.test.ts`
+- `frontend/web/src/components/conversation/blockActionRail.dom.test.tsx`
+- `.env`
 - `docs/ai-usage/Dilud.md`
 
 ### Verification Performed
 
-- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CommerceOrderServiceTests"`: 13/13 passed (100%).
-- `git status`: clean working tree on `visual-agent-tuning`.
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CustomerDeliveryServiceTests"`: 16/16 passed (100%).
+- `npx vitest run src/components/conversation/`: 18/18 test files passed (203/203 tests).
+- `npx vitest run src/lib/conversations-api.test.ts`: 20/20 passed (100%).
+- `curl.exe -i http://localhost:5091/health`: HTTP 200 OK (database: Healthy, redis: Healthy, agent-service: Healthy, clerk-jwks: Healthy).
+- `docker ps`: all services running and healthy.
+
 
 ---
 

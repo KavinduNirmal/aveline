@@ -105,7 +105,7 @@ case "${REDIS_HOST:-}" in
   postgres|redis|"") REDIS_HOST=127.0.0.1 ;;
 esac
 
-# docker-compose.yml marks five values `${VAR:?required}`, and compose resolves every service's
+# docker-compose.yml marks six values `${VAR:?required}`, and compose resolves every service's
 # environment even when only postgres/redis are selected. CI has no repo `.env` (it is
 # gitignored), so `up` is self-contained here: generate what is missing and EXPORT it, so the
 # compose invocation, the API connection string and `down` all see the same values. A real
@@ -113,6 +113,8 @@ esac
 #
 # GRAFANA_ADMIN_PASSWORD counts even though this script never starts Grafana: interpolation
 # happens for the whole file, so `docker compose up postgres redis` fails outright without it.
+# REDIS_PASSWORD counts for both reasons - it is required by the redis service that IS started,
+# and by the agent service that is not.
 ensure_compose_env() {
   if [ -z "${POSTGRES_PASSWORD:-}" ]; then
     POSTGRES_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
@@ -134,6 +136,13 @@ ensure_compose_env() {
     GRAFANA_ADMIN_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
   fi
   export GRAFANA_ADMIN_PASSWORD
+  # Hex, not token_urlsafe like the rest: this value is interpolated into a `redis://` URL by
+  # docker-compose.yml and this script, where a `/`, `+` or `=` ends the authority early and
+  # yields a malformed URL. Hex needs no escaping in either a URL or a Redis connection string.
+  if [ -z "${REDIS_PASSWORD:-}" ]; then
+    REDIS_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_hex(24))')"
+  fi
+  export REDIS_PASSWORD
 
   # The published ports must be exported too, or compose falls back to ITS defaults while this
   # script uses its own: compose maps `${POSTGRES_PORT:-5432}`, this script waits on 5433, so
@@ -146,6 +155,15 @@ ensure_compose_env() {
 
 log()  { printf '[e2e-stack] %s\n' "$*" >&2; }
 fail() { printf '[e2e-stack] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Percent-encode a password for the userinfo of a `redis://` URL.
+#
+# The generated password is hex and needs none of this, but `.env` is sourced when it exists and
+# an operator's value may contain `/`, `+` or `=` - the assessment generated exactly such a value
+# locally - any of which ends the authority early and makes the URL point somewhere else.
+url_encode() {
+  python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1"
+}
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
@@ -274,7 +292,7 @@ cmd_up() {
     Clerk__Authority="$idp_url" \
     Clerk__RequireHttpsMetadata=false \
     ConnectionStrings__DefaultConnection="Host=$POSTGRES_HOST;Port=$POSTGRES_PORT;Database=$POSTGRES_DB;Username=$POSTGRES_USER;Password=$POSTGRES_PASSWORD" \
-    Redis__ConnectionString="127.0.0.1:$ENV_REDIS_PORT" \
+    Redis__ConnectionString="127.0.0.1:$ENV_REDIS_PORT,password=$REDIS_PASSWORD" \
     AgentService__BaseUrl="$AGENT_URL" \
     AgentService__InternalToken="$E2E_INTERNAL_TOKEN" \
     Media__Provider=database \
@@ -309,7 +327,7 @@ cmd_up() {
     AGENT_LLM_ENABLED=false \
     API_BASE_URL="$API_URL" \
     DATABASE_URL="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB" \
-    REDIS_URL="redis://127.0.0.1:$ENV_REDIS_PORT/0" \
+    REDIS_URL="redis://:$(url_encode "$REDIS_PASSWORD")@127.0.0.1:$ENV_REDIS_PORT/0" \
     nohup "$agent_python" -m uvicorn app.main:app --host 127.0.0.1 --port "$AGENT_PORT" \
       >"$LOG_DIR/agent.log" 2>&1 &
     echo $! >"$STATE_DIR/agent.pid"
@@ -336,6 +354,8 @@ POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_EXPORTER_PASSWORD=$POSTGRES_EXPORTER_PASSWORD
 METRICS_SCRAPE_TOKEN=$METRICS_SCRAPE_TOKEN
 CREDENTIALS_ENCRYPTION_KEY=$CREDENTIALS_ENCRYPTION_KEY
+REDIS_PASSWORD=$REDIS_PASSWORD
+REDIS_PORT=$ENV_REDIS_PORT
 EOF
   chmod 600 "$STACK_ENV"
   log "stack up. issuer=$idp_url api=$API_URL agent=$AGENT_URL"

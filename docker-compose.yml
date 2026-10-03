@@ -274,6 +274,9 @@ services:
       # (identify customer, memories, consent) used by the Customer Memory agent.
       API_BASE_URL: http://${API_HOST:-api}:${API_INTERNAL_PORT:-8080}
       # Redis Pub/Sub event bus (ADR-014). The agent subscribes to aveline:*:<event_type>.
+      # REDIS_PASSWORD must be URL-safe (hex — see .env.example): it is interpolated into the
+      # userinfo below, and base64's `/`, `+` and `=` truncate the authority, leaving the agent
+      # pointed at a host named after a fragment of the password.
       REDIS_URL: redis://:${REDIS_PASSWORD}@${REDIS_HOST:-redis}:${REDIS_INTERNAL_PORT:-6379}/0
       # Event types this service consumes from the API (empty until a consumer lands).
       SUBSCRIBE_EVENT_TYPES: ${SUBSCRIBE_EVENT_TYPES:-}

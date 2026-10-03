@@ -1292,6 +1292,16 @@ VPS publishing the database) is removed by the loopback bind. Documented instead
 A local `REDIS_PASSWORD` was generated into the gitignored `.env`; without it `docker compose up`
 would now fail.
 
+**Correction (2026-10-03):** the compose *services* carried the password, but the cross-surface E2E
+script starts its API and agent on the host and builds `Redis__ConnectionString`/`REDIS_URL` itself,
+and both were left password-less — so the stage-2 CI job failed before reaching them, at
+`docker compose up postgres redis`: `required variable REDIS_PASSWORD is missing a value`. Two
+follow-ups, both in the same change: `ensure_compose_env` now generates the sixth required value,
+and it generates **hex**, because the agent's `redis://` URL interpolates it into the URL userinfo
+where base64's `/`, `+` and `=` truncate the authority. The old `openssl rand -base64 32` guidance
+in `.env.example` produced exactly such a value for the local `.env`; both it and the compose
+`REDIS_URL` now say why the value must be URL-safe.
+
 ### PF-6.4 — fail-open limiter documented and observable
 
 The behaviour is unchanged (failing closed would trade a cache outage for a product outage), but it

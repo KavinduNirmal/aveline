@@ -3,20 +3,20 @@
 import asyncio
 import os
 import sys
-from urllib.parse import urljoin
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import httpx
+
+from app.schemas.atelier_scraper import ScrapedAtelierProduct
 from app.services.atelier_scraper import AtelierScraperService
 from app.services.fabric_verifier import FabricVerifierService
-from app.schemas.atelier_scraper import ScrapedAtelierProduct
-import httpx
 
 
 async def test_rithihi_white_sarees():
     base_url = "https://rithihi.com"
     query = "white saree"
-    
+
     print("===========================================================================")
     print(f"CONNECTING TO PARTNER ATELIER: Rithihi ({base_url})")
     print(f"CUSTOMER QUERY: '{query}'")
@@ -47,17 +47,17 @@ async def test_rithihi_white_sarees():
                 print(f"Probing {path} ...")
                 res = await client.get(path)
                 print(f"  -> HTTP {res.status_code} (Length: {len(res.text)} bytes)")
-                
+
                 if res.status_code == 200:
                     raw_items = scraper.parse_html_catalog(res.text, base_url)
                     print(f"  -> Extracted {len(raw_items)} product cards from page")
-                    
+
                     for item in raw_items:
                         title = item.get("title", "").strip()
                         if not title or title.lower() in seen_titles:
                             continue
                         seen_titles.add(title.lower())
-                        
+
                         all_scraped.append(
                             ScrapedAtelierProduct(
                                 title=title,

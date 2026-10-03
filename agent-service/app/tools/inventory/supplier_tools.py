@@ -75,11 +75,31 @@ async def scrape_atelier_catalog(
 
         scraper = scraper_service or AtelierScraperService(allowed_domains=allowed_domains)
 
-        # Build clean search queries: prefer singularized query (e.g. "red saree" vs "red sarees")
+        # Build clean search queries: generate compound and singular queries
         clean_q = query.strip()
-        search_queries = [clean_q]
-        if clean_q.endswith("s") and not clean_q.endswith("ss"):
-            search_queries.append(clean_q[:-1])
+        search_queries: list[str] = []
+        if clean_q:
+            search_queries.append(clean_q)
+            if clean_q.endswith("s") and not clean_q.endswith("ss"):
+                search_queries.append(clean_q[:-1])
+
+        cat_singular = ""
+        if detected_category:
+            c = detected_category.strip().lower()
+            cat_singular = c[:-1] if c.endswith("s") and not c.endswith("ss") else c
+            if cat_singular and cat_singular not in search_queries:
+                search_queries.append(cat_singular)
+
+        if detected_color and cat_singular:
+            color_clean = detected_color.strip().lower()
+            color_cat = f"{color_clean} {cat_singular}"
+            if color_cat not in search_queries:
+                search_queries.insert(0, color_cat)
+            for w in color_clean.split():
+                if len(w) > 2:
+                    w_cat = f"{w} {cat_singular}"
+                    if w_cat not in search_queries:
+                        search_queries.append(w_cat)
 
         all_scraped: list[ScrapedAtelierProduct] = []
         seen_urls: set[str] = set()
@@ -104,7 +124,7 @@ async def scrape_atelier_catalog(
                     if item.product_url not in seen_urls:
                         seen_urls.add(item.product_url)
                         all_scraped.append(item)
-                if len(all_scraped) >= max_results_per_atelier * 2:
+                if len(all_scraped) >= max_results_per_atelier * 3:
                     break
 
         # 3. Verify and rank matches with FabricVerifierService (strict color & category validation)

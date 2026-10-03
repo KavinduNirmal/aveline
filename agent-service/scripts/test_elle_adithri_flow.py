@@ -13,7 +13,7 @@ from app.services.fabric_verifier import FabricVerifierService
 async def demonstrate_elle_sourcing():
     customer_query = "Do you have any yellow sarees available?"
     print(f"Customer Inquiry on WhatsApp / Salon: \"{customer_query}\"\n")
-    
+
     # Live pieces found on https://shopadithri.com/
     scraped_from_adithri = [
         ScrapedAtelierProduct(
@@ -59,7 +59,7 @@ async def demonstrate_elle_sourcing():
     print("=" * 75)
     print("ELLE (VISUAL AGENT) - PARTNER ATELIER SOURCING DISCOVERY")
     print("=" * 75)
-    print(f"Partner Atelier: Adithri Sarees & Couture (https://shopadithri.com/)")
+    print("Partner Atelier: Adithri Sarees & Couture (https://shopadithri.com/)")
     print(f"Matched Items Found: {len(ranked)}\n")
 
     for i, item in enumerate(ranked, 1):
@@ -74,7 +74,7 @@ async def demonstrate_elle_sourcing():
     print("=" * 75)
     print("ELLE'S CONVERSATIONAL SALON / WHATSAPP RESPONSE TO CUSTOMER:")
     print("=" * 75)
-    
+
     reply = (
         "We currently don't have this exact piece in our boutique rack, but Elle searched our partner atelier "
         "**Adithri Sarees & Couture** and found 3 exquisite options ready for custom sourcing:\n\n"

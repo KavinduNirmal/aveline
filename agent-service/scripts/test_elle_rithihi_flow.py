@@ -13,7 +13,7 @@ from app.services.fabric_verifier import FabricVerifierService
 async def test_elle_rithihi_white_sarees():
     customer_query = "Do you have any white sarees available for a temple blessing / wedding?"
     print(f"Customer Inquiry: \"{customer_query}\"\n")
-    
+
     # Real live catalog pieces from Rithihi (19 Alfred House Garden, Colombo 3 - rithihi.com)
     scraped_from_rithihi = [
         ScrapedAtelierProduct(
@@ -69,8 +69,8 @@ async def test_elle_rithihi_white_sarees():
     print("=" * 80)
     print("ELLE (VISUAL AGENT) - PARTNER ATELIER SOURCING DISCOVERY")
     print("=" * 80)
-    print(f"Partner Atelier: Rithihi (https://rithihi.com/)")
-    print(f"Boutique Procurement Rules: Lead Time = 5 Days | Min Order = LKR 25,000")
+    print("Partner Atelier: Rithihi (https://rithihi.com/)")
+    print("Boutique Procurement Rules: Lead Time = 5 Days | Min Order = LKR 25,000")
     print(f"Live Pieces Discovered & Ranked: {len(ranked)}\n")
 
     for i, item in enumerate(ranked, 1):
@@ -85,7 +85,7 @@ async def test_elle_rithihi_white_sarees():
     print("\n" + "=" * 80)
     print("ELLE'S CONVERSATIONAL RESPONSE FOR THE SALON & WHATSAPP:")
     print("=" * 80)
-    
+
     reply = (
         "We do not have a pure white saree in stock in our boutique rack right now, but Elle searched our "
         "registered partner atelier **Rithihi** (Colombo) and found 4 exquisite white sarees available for custom sourcing:\n\n"

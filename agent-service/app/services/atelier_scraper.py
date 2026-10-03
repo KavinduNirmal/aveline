@@ -267,7 +267,12 @@ class _ProductCardHTMLParser(HTMLParser):
         # 1. Resolve Title
         title = ""
         if self._current_card.get("title_texts"):
-            title = " ".join(self._current_card["title_texts"]).strip()
+            valid_titles = [
+                t.strip() for t in self._current_card["title_texts"]
+                if len(t.strip()) > 3 and not any(ign in t.lower() for ign in _NOISE_PHRASES)
+            ]
+            if valid_titles:
+                title = valid_titles[0]
 
         if not title:
             title = self._current_card.get("alt_title") or ""
@@ -282,6 +287,7 @@ class _ProductCardHTMLParser(HTMLParser):
                         break
 
         # 2. Reject noise titles
+        title = re.split(r"(?:\bLKR\b|\bUSD\b|\bReviews\b|\bRelated products\b|\bAdd to cart\b|\bDescription\b)", title, flags=re.IGNORECASE)[0].strip()
         title_lower = title.lower()
         if not title or len(title) < 2 or any(ign in title_lower for ign in _NOISE_PHRASES):
             self._current_card = {}

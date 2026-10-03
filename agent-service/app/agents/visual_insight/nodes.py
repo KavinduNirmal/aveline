@@ -49,46 +49,75 @@ def image_analysis_blocked(state: VisualAgentState) -> bool:
 
 #: Color family mappings to allow shade synonyms while strictly pruning unrelated colors
 _COLOR_FAMILIES: dict[str, set[str]] = {
-    "red": {"red", "crimson", "deep crimson", "maroon", "deep maroon", "ruby", "ruby red", "burgundy", "royal burgundy", "scarlet", "wine", "cherry", "vermilion"},
-    "blue": {"blue", "navy", "midnight navy", "sapphire", "midnight sapphire", "cobalt", "royal blue", "indigo", "sky blue", "powder blue", "baby blue", "teal", "peacock teal", "aqua", "turquoise", "peacock"},
-    "green": {"green", "emerald", "emerald green", "sage", "sage green", "mint", "mint green", "olive", "deep olive", "jade", "forest green", "bottle green", "bottle", "forest", "dark green"},
-    "pink": {"pink", "blush", "blush pink", "rose", "dusty rose", "rose pink", "magenta", "fuchsia", "coral", "peach", "apricot", "salmon"},
-    "yellow": {"yellow", "gold", "champagne gold", "antique gold", "rose gold", "zari gold", "mustard", "mustard ochre", "ochre", "buttercup"},
-    "purple": {"purple", "violet", "lavender", "lilac", "amethyst", "deep amethyst", "plum"},
+    "red": {"red", "crimson", "deep crimson", "maroon", "deep maroon", "ruby", "ruby red", "burgundy", "royal burgundy", "scarlet", "wine", "cherry", "vermilion", "rust"},
+    "blue": {"blue", "navy", "midnight navy", "sapphire", "midnight sapphire", "cobalt", "royal blue", "indigo", "sky blue", "skyblue", "powder blue", "baby blue", "teal", "peacock teal", "aqua", "turquoise", "peacock", "darkblue", "lightblue"},
+    "green": {"green", "emerald", "emerald green", "emeraldgreen", "sage", "sage green", "sagegreen", "mint", "mint green", "mintgreen", "olive", "deep olive", "jade", "forest green", "bottle green", "bottlegreen", "forest", "dark green", "darkgreen", "chartreuse", "lime"},
+    "pink": {"pink", "blush", "blush pink", "rose", "dusty rose", "dustyrose", "rose pink", "rosepink", "magenta", "fuchsia", "coral", "peach", "apricot", "salmon"},
+    "yellow": {"yellow", "gold", "champagne gold", "antique gold", "rose gold", "zari gold", "mustard", "mustard ochre", "mustard yellow", "mustardyellow", "ochre", "buttercup", "butter yellow", "chartreuse", "lemon", "canary", "marigold", "amber", "golden", "lime", "lightyellow"},
+    "purple": {"purple", "violet", "lavender", "lilac", "amethyst", "deep amethyst", "plum", "mauve"},
     "white": {"white", "ivory", "heirloom ivory", "off-white", "cream", "pearl"},
-    "black": {"black", "midnight black", "charcoal", "slate grey", "grey", "gray"},
-    "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso"},
+    "black": {"black", "midnight black", "charcoal", "slate grey", "grey", "gray", "noir"},
+    "brown": {"brown", "terracotta", "burnt terracotta", "rust", "camel", "taupe", "sand", "khaki", "espresso", "beige", "tan"},
 }
+
+_CATEGORY_MAPPINGS = [
+    # Sarees
+    (r"\b(sarees?|saris?|kanjeevaram|kanjivaram|banarasi|chanderi|tussar|pochampally|patola|kasavu|silk saree)\b", "Sarees"),
+    # Lehengas
+    (r"\b(lehengas?|lehngas?|ghagras?|choli|lehenga choli)\b", "Lehengas"),
+    # Gowns & Dresses
+    (r"\b(gowns?|evening gowns?|ballgowns?|dress(?:es)?|maxi|midi|frocks?|jumpsuits?|rompers?)\b", "Gowns"),
+    # Kurtas & Tunics / Tops / Blouses
+    (r"\b(kurtas?|kurtis?|tunics?|silk blouses?|blouses?|anarkalis?|sherwanis?|tops?|shirts?)\b", "Kurtas & Tunics"),
+    # Outerwear
+    (r"\b(outerwear|blazers?|jackets?|coats?|overcoats?|trenches?|trenchcoats?|shrugs?|cardigans?|capes?|dusters?)\b", "Outerwear"),
+    # Drapes & Shawls
+    (r"\b(drapes?|shawls?|dupattas?|stoles?|scarfs?|scarves|wraps?|pallus?)\b", "Drapes & Shawls"),
+    # Jewelry & Accessories
+    (r"\b(jewelry|jewellery|accessories|accessory|necklaces?|earrings?|bangles?|clutch(?:es)?|bags?|footwear|heels?|shoes?|belts?)\b", "Jewelry & Accessories"),
+]
+
+
+def _resolve_garment_category(attrs: ImageAttributes) -> str | None:
+    """Resolve a specific garment category from multi-item analysis or silhouette attributes."""
+    text_corpus: list[str] = []
+    if attrs.detected_items:
+        for itm in attrs.detected_items:
+            if itm.clothing_type:
+                text_corpus.append(itm.clothing_type)
+            if itm.suggested_item_name:
+                text_corpus.append(itm.suggested_item_name)
+            if itm.description:
+                text_corpus.append(itm.description)
+    if attrs.silhouette:
+        text_corpus.append(attrs.silhouette)
+    if attrs.category and attrs.category.lower() not in ("garment", "ethnic_couture", "unknown", "top"):
+        text_corpus.append(attrs.category)
+
+    combined = " ".join(text_corpus).lower()
+    for pattern, cat_name in _CATEGORY_MAPPINGS:
+        if re.search(pattern, combined):
+            return cat_name
+    return None
+
 
 _MAX_COMMENTARY_CHARS = 900
 
 
 def _describe_what_was_seen(state: VisualAgentState) -> str | None:
-    """A short noun phrase for the piece the vision path found in the customer's image.
-
-    The acceptance test for this lane is that a reply *refers to what is actually in the picture*
-    rather than asking the customer to describe it, and the analysis was already being computed:
-    ``analyze_image`` fills ``image_attributes`` on every run, and every reply-composing node
-    ignored it. Wiring the image through while leaving the wording generic would answer the
-    customer the same way the defect did, only after a round-trip.
-
-    Reads the analysed attributes rather than the raw message, so the phrase is grounded in what
-    the model saw - "a deep crimson silk saree" - and not in what the customer typed. Returns
-    ``None`` when no analysis happened (no media, or a denied/failed call), which is what keeps the
-    text-only replies byte-identical to before.
-    """
+    """A short noun phrase for the piece the vision path found in the customer's image."""
     raw = state.get("image_attributes")
     if not isinstance(raw, dict):
         return None
 
-    # Attribute order is the order a person would describe a garment in: colour, fabric, type.
-    # "Neutral" is the parse fallback rather than something the model saw, and describing a garment
-    # as "a neutral silk saree" reads as an observation while carrying none - so it is dropped
-    # here rather than allowed to stand in for a colour nobody actually reported.
+    cat = (state.get("search_criteria") or {}).get("category") or raw.get("category")
+    if cat and cat.endswith("s") and not cat.endswith("ss") and len(cat) > 3:
+        cat = cat[:-1]
+
     parts = [
         str(value).strip()
-        for value in (raw.get("primary_color"), raw.get("fabric"), raw.get("category"))
-        if value and str(value).strip() and str(value).strip().lower() != "neutral"
+        for value in (raw.get("primary_color"), raw.get("fabric"), cat)
+        if value and str(value).strip() and str(value).strip().lower() not in ("neutral", "unknown", "garment", "ethnic_couture")
     ]
     if not parts:
         return None
@@ -192,24 +221,7 @@ class VisualInsightAgent:
 
         # 3. Comprehensive Garment Category Taxonomy
         category = None
-        category_mappings = [
-            # Sarees
-            (r"\b(sarees?|saris?|kanjeevaram|kanjivaram|banarasi|chanderi|tussar|pochampally|patola|kasavu|silk saree)\b", "Sarees"),
-            # Lehengas
-            (r"\b(lehengas?|lehngas?|ghagras?|choli|lehenga choli)\b", "Lehengas"),
-            # Gowns & Dresses
-            (r"\b(gowns?|evening gowns?|ballgowns?|dress(?:es)?|maxi|midi|frocks?|jumpsuits?|rompers?)\b", "Gowns"),
-            # Kurtas & Tunics / Tops / Blouses
-            (r"\b(kurtas?|kurtis?|tunics?|silk blouses?|blouses?|anarkalis?|sherwanis?|tops?|shirts?)\b", "Kurtas & Tunics"),
-            # Outerwear
-            (r"\b(outerwear|blazers?|jackets?|coats?|overcoats?|trenches?|trenchcoats?|shrugs?|cardigans?|capes?|dusters?)\b", "Outerwear"),
-            # Drapes & Shawls
-            (r"\b(drapes?|shawls?|dupattas?|stoles?|scarfs?|scarves|wraps?|pallus?)\b", "Drapes & Shawls"),
-            # Jewelry & Accessories
-            (r"\b(jewelry|jewellery|accessories|accessory|necklaces?|earrings?|bangles?|clutch(?:es)?|bags?|footwear|heels?|shoes?|belts?)\b", "Jewelry & Accessories"),
-        ]
-
-        for pattern, cat_name in category_mappings:
+        for pattern, cat_name in _CATEGORY_MAPPINGS:
             if re.search(pattern, msg):
                 category = cat_name
                 break
@@ -218,7 +230,10 @@ class VisualInsightAgent:
         stop_words = {
             "do", "we", "have", "any", "in", "stock", "is", "there", "are", "the", "a", "an",
             "for", "with", "please", "show", "me", "can", "you", "find", "tell", "check",
-            "available", "look", "looking", "i", "want", "need", "pieces", "items", "u", "some", "of"
+            "available", "look", "looking", "i", "want", "need", "pieces", "items", "u", "some", "of",
+            "this", "that", "these", "those", "it", "one", "ones", "picture", "photo", "image", "pic",
+            "outfit", "dress", "saree", "piece", "item", "something", "like", "similar", "same",
+            "also", "too", "anything", "else", "got", "get", "inquire", "what", "about"
         }
         raw_words = [w for w in re.findall(r"\b\w+\b", msg) if len(w) > 2 and w not in stop_words]
 
@@ -279,9 +294,15 @@ class VisualInsightAgent:
 
         attrs: ImageAttributes = outcome.attributes
         criteria = state.get("search_criteria") or {}
-        if attrs.category and not criteria.get("category"):
+
+        # Resolve specific category from detected garments or silhouette
+        resolved_category = _resolve_garment_category(attrs)
+        if resolved_category:
+            criteria["category"] = resolved_category
+        elif attrs.category and not criteria.get("category"):
             criteria["category"] = attrs.category
-        if attrs.primary_color and not criteria.get("color"):
+
+        if attrs.primary_color:
             criteria["color"] = attrs.primary_color
         if attrs.occasion and not criteria.get("occasion"):
             criteria["occasion"] = attrs.occasion
@@ -310,6 +331,49 @@ class VisualInsightAgent:
         try:
             items: list[PieceItem] = await search_inventory(self._registry, criteria)
 
+            # If initial inventory lookup with primary criteria returned empty, check ensemble & secondary colors
+            raw_attrs = state.get("image_attributes")
+            if not items and isinstance(raw_attrs, dict):
+                # Collect secondary and detected items colors
+                candidate_colors: list[str] = []
+                for sc in raw_attrs.get("secondary_colors") or []:
+                    if sc and str(sc).strip():
+                        candidate_colors.append(str(sc).strip())
+                for itm in raw_attrs.get("detected_items") or []:
+                    if itm.get("primary_color") and str(itm["primary_color"]).strip():
+                        candidate_colors.append(str(itm["primary_color"]).strip())
+                    for sc in itm.get("secondary_colors") or []:
+                        if sc and str(sc).strip():
+                            candidate_colors.append(str(sc).strip())
+
+                # Try candidate colors sequentially
+                seen_colors = {str(criteria.get("color", "")).lower()}
+                for color_cand in candidate_colors:
+                    if color_cand.lower() in seen_colors:
+                        continue
+                    seen_colors.add(color_cand.lower())
+                    cand_criteria = dict(criteria)
+                    cand_criteria["color"] = color_cand
+                    try:
+                        c_items = await search_inventory(self._registry, cand_criteria)
+                        if c_items:
+                            items.extend(c_items)
+                            break
+                    except Exception:
+                        pass
+
+            # Deduplicate items by itemId
+            seen_ids = set()
+            deduped_items = []
+            for item in items:
+                item_id = item.itemId or item.id or item.name
+                if item_id and item_id not in seen_ids:
+                    seen_ids.add(item_id)
+                    deduped_items.append(item)
+                elif not item_id:
+                    deduped_items.append(item)
+            items = deduped_items
+
             # Defensive category filter: when a category is requested, filter out mismatched pieces
             target_category = criteria.get("category")
             if target_category and items:
@@ -322,8 +386,20 @@ class VisualInsightAgent:
                 for w in raw_words:
                     if w.endswith("s") and len(w) > 3:
                         category_tokens.add(w[:-1])
-                if "saree" in category_tokens or "sarees" in category_tokens:
-                    category_tokens.add("sari")
+
+                # Expand category tokens with category taxonomy aliases
+                if "gowns" in category_tokens or "gown" in category_tokens:
+                    category_tokens.update({"dress", "dresses", "gown", "gowns", "slip", "maxi", "midi", "frock"})
+                elif "lehengas" in category_tokens or "lehenga" in category_tokens:
+                    category_tokens.update({"lehenga", "lehengas", "choli", "ghagra"})
+                elif "sarees" in category_tokens or "saree" in category_tokens:
+                    category_tokens.update({"saree", "sarees", "sari", "saris", "kanjeevaram", "banarasi", "chanderi"})
+                elif "kurtas" in category_tokens or "kurta" in category_tokens:
+                    category_tokens.update({"kurta", "kurtas", "kurti", "kurtis", "tunic", "tunics", "top", "blouse"})
+
+                raw_cat = (state.get("image_attributes") or {}).get("category")
+                if raw_cat:
+                    category_tokens.update([w for w in re.findall(r"\b\w+\b", str(raw_cat).lower()) if len(w) > 2])
 
                 def _is_category_match(item: PieceItem) -> bool:
                     item_cat = (item.category or "").lower()
@@ -341,28 +417,53 @@ class VisualInsightAgent:
 
                 items = [item for item in items if _is_category_match(item)]
 
-            # Defensive color filter: when a specific color is requested, prune mismatched colors
+            # Defensive color filter: when a specific color is requested or detected, prune mismatched colors
             target_color = criteria.get("color")
-            if target_color and items:
-                norm_color = target_color.lower().strip()
+            raw_attrs = state.get("image_attributes")
+            if (target_color or raw_attrs) and items:
+                # Gather all acceptable base shades
+                acceptable_shades: set[str] = set()
+                if target_color:
+                    acceptable_shades.add(str(target_color).lower().strip())
+                if isinstance(raw_attrs, dict):
+                    if raw_attrs.get("primary_color"):
+                        acceptable_shades.add(str(raw_attrs["primary_color"]).lower().strip())
+                    for sc in raw_attrs.get("secondary_colors") or []:
+                        if sc and str(sc).strip():
+                            acceptable_shades.add(str(sc).lower().strip())
+                    for itm in raw_attrs.get("detected_items") or []:
+                        if itm.get("primary_color") and str(itm["primary_color"]).strip():
+                            acceptable_shades.add(str(itm["primary_color"]).lower().strip())
+                        for sc in itm.get("secondary_colors") or []:
+                            if sc and str(sc).strip():
+                                acceptable_shades.add(str(sc).lower().strip())
+
+                # Expand acceptable shades with all shade synonyms and color families
+                expanded_acceptable: set[str] = set()
+                for base_shade in acceptable_shades:
+                    expanded_acceptable.add(base_shade)
+                    # Add individual significant words (e.g. 'crimson' from 'crimson red')
+                    for w in re.findall(r"\b\w+\b", base_shade):
+                        if len(w) > 2:
+                            expanded_acceptable.add(w)
+
+                    # Expand against known color families
+                    for fam_key, shades in _COLOR_FAMILIES.items():
+                        if base_shade in shades or base_shade == fam_key or any(s in base_shade for s in shades):
+                            expanded_acceptable.update(shades)
+                            expanded_acceptable.add(fam_key)
 
                 def _is_color_match(item: PieceItem) -> bool:
                     item_color = (item.color or "").lower().strip()
                     item_name = (item.name or "").lower().strip()
 
-                    # Direct match
-                    if item_color and (norm_color in item_color or item_color in norm_color):
-                        return True
-                    if re.search(r"\b" + re.escape(norm_color) + r"\b", item_name):
-                        return True
-
-                    # Color family expansion
-                    family_shades = _COLOR_FAMILIES.get(norm_color)
-                    if family_shades:
-                        if any(shade in item_color for shade in family_shades):
+                    # Direct or token match in color field
+                    if item_color:
+                        if any(shade in item_color or item_color in shade for shade in expanded_acceptable):
                             return True
-                        if any(re.search(r"\b" + re.escape(shade) + r"\b", item_name) for shade in family_shades):
-                            return True
+                    # Word boundary match in item name
+                    if any(re.search(r"\b" + re.escape(shade) + r"\b", item_name) for shade in expanded_acceptable):
+                        return True
 
                     return False
 

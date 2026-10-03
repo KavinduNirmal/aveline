@@ -389,7 +389,11 @@ public class OnboardingServiceTests
 
         Assert.True(response.Organization.HasCompletedOnboarding);
         Assert.Equal(6, response.Organization.OnboardingStep);
-        Assert.Equal("owner", response.UserRole);
+        // Onboarding must not promote the platform (Aveline team) role. `Roles.Owner` grants the
+        // whole catalog; a boutique owner's authority is the per-store role asserted below. The
+        // row keeps the Clerk-synced `staff` it was seeded with.
+        Assert.Equal(Roles.Staff, response.UserRole);
+        Assert.NotEqual(Roles.Owner, response.UserRole);
         Assert.Equal(Roles.BoutiqueOwner, response.OrganizationRole);
         Assert.Equal(AccountState.Active.ToString(), response.AccountState);
         Assert.Equal(750m, response.BlossomAllocation);
@@ -400,7 +404,7 @@ public class OnboardingServiceTests
         Assert.NotNull(updatedUser);
         Assert.True(updatedUser.HasCompletedOnboarding);
         Assert.Equal(AccountState.Active, updatedUser.AccountState);
-        Assert.Equal("owner", updatedUser.UserRole);
+        Assert.Equal(Roles.Staff, updatedUser.UserRole);
         // Defect D-9: a literal that is absent from the role catalog grants nothing.
         Assert.Equal(Roles.BoutiqueOwner, updatedUser.OrganizationRole);
     }

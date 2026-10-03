@@ -73,9 +73,35 @@ public class ClerkAdminClientTests
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Get, request.Method);
-        Assert.Equal("https://api.clerk.test/v1/users/user_1/sessions", request.RequestUri!.ToString());
+        // `/sessions?user_id=…`, not `/users/{id}/sessions`. Clerk serves the latter far enough to
+        // load the user and then answers with a plain-text `404 page not found` for a real id, which
+        // the endpoint reports as a 502 for every caller (assessment F-4.5). The old assertion here
+        // pinned that wrong path, so the suite stayed green throughout.
+        Assert.Equal(
+            "https://api.clerk.test/v1/sessions?user_id=user_1&limit=500",
+            request.RequestUri!.ToString());
         Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
         Assert.Equal("sk_test_secret", request.Headers.Authorization.Parameter);
+    }
+
+    [Fact]
+    public async Task ListSessionsAsync_OnRejection_NamesTheUrlItCalled()
+    {
+        // The 502 this raises is the only operator-visible signal, and it omitted the URL. A wrong
+        // `Clerk:BackendApiUrl` answers with a plain-text `404 page not found` from a host that is
+        // not Clerk's API, which reads as a Clerk outage — the live assessment settled on exactly
+        // that wrong root cause (F-4.5 / OQ-4.1). Naming the URL makes it a one-line diagnosis.
+        var handler = new ScriptedHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        {
+            Content = new StringContent("404 page not found", Encoding.UTF8, "text/plain"),
+        });
+        var client = CreateClient(handler);
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(
+            () => client.ListSessionsAsync("user_9"));
+
+        Assert.Contains("https://api.clerk.test/v1/sessions?user_id=user_9&limit=500", error.Message);
+        Assert.Contains("404 page not found", error.Message);
     }
 
     [Fact]

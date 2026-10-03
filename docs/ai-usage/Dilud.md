@@ -1,6 +1,6 @@
-## Session 2026-10-03 (Branch Synchronization & Stage-1 Test Failure Resolution)
+## Session 2026-10-03 (Branch Synchronization, Test Resolution & WhatsApp Media Pipeline Configuration)
 
-**Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts in commerce node evaluation, and fix the 3 failing tests in `CommerceOrderServiceTests` (Aveline.Api.Tests).
+**Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts, verify the WhatsApp inbound photo-to-Salon chat pipeline, and configure the local `.env` environment with Cloudinary media storage and WhatsApp gateway settings.
 **Tool used:** Antigravity AI Assistant
 **Status:** Completed
 
@@ -8,19 +8,27 @@
 
 1. **Branch Analysis & Synchronization**:
    - Compared `visual-agent-tuning` with `origin/development`.
-   - Merged 18 incoming commits from `origin/development` including PR #503 (E2E composed stack, k6 performance gating, and stage-1 CI fixes).
+   - Merged incoming commits from `origin/development` including PR #503 (E2E composed stack, k6 performance gating, and stage-1 CI fixes).
 
 2. **Merge Conflict Resolution (`agent-service/app/agents/commerce/nodes.py`)**:
    - Resolved merge conflict in `evaluate_deal()`:
      - Preserved `tier_info = await get_customer_loyalty_tier(...)` with clean type assertion.
      - Preserved conversational order review fallback (`if not requires_approval: approval_type = "order_approval"`), maintaining rule specificity while guaranteeing owner review floor for conversational orders.
 
-3. **Automated Verification**:
-   - Verified that `CommerceOrderServiceTests` now passes 13/13 tests (0 failures).
-   - Clean git working tree and merge commit recorded.
+3. **Inbound WhatsApp Photo Pipeline Verification**:
+   - Verified that when a customer sends an image via WhatsApp:
+     - `WebhookEndpoints.cs` receives the webhook and downloads media bytes from Meta Graph API via `IWhatsAppService.GetMediaAsync`.
+     - Validates MIME type and magic bytes via `AttachmentContentPolicy`, then persists the `Attachment` via `MediaService` (configured with Cloudinary).
+     - `ConversationService.cs` appends an `attachment` block to the conversation message and broadcasts it in real-time over SignalR to active Salon clients.
+     - Frontend `blocks.tsx` (`AttachmentBlock` and `AttachmentViewer`) renders the photo with interactive fullscreen preview.
+     - The Agent Service consumes the `message.received` event containing `attachment_id` and invokes the Elle visual agent workflow.
+
+4. **Environment Configuration (`.env`)**:
+   - Updated `.env` with the verified WhatsApp Meta base URL (`https://graph.facebook.com`), Cloudinary storage settings (`Media__Provider=cloudinary`, `Media__ReadFromCloudinary=true`), token signing keys, and DeepSeek/Gemini service endpoints.
 
 ### Files Created or Modified
 
+- `.env`
 - `agent-service/app/agents/commerce/nodes.py`
 - `docs/ai-usage/Dilud.md`
 
@@ -28,6 +36,7 @@
 
 - `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CommerceOrderServiceTests"`: 13/13 passed (100%).
 - `git status`: clean working tree on `visual-agent-tuning`.
+
 
 ---
 

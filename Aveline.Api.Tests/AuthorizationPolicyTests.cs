@@ -253,4 +253,51 @@ public class AuthorizationPolicyTests
         var requirement = Assert.Single(policy!.Requirements.OfType<PermissionRequirement>());
         Assert.Equal(Permissions.AnalyticsBusinessRead, requirement.Permission);
     }
+
+    // ── StaffAccess: the no-organization staff gate ────────────────────────────────────────
+
+    [Theory]
+    [InlineData("staff")]
+    [InlineData("customer_relations")]
+    [InlineData("moderator")]
+    [InlineData("admin")]
+    [InlineData("owner")]
+    public void StaffAccessPolicy_Allows_EachPlatformTeamRole(string role)
+    {
+        Assert.True(IsAuthorized(Principal(role), AuthorizationConfiguration.StaffAccessPolicy));
+    }
+
+    [Theory]
+    [InlineData("org:boutique_staff")]
+    [InlineData("org:boutique_manager")]
+    [InlineData("org:boutique_supervisor")]
+    [InlineData("org:boutique_owner")]
+    public void StaffAccessPolicy_DoesNotAuthorizeOnABoutiqueRoleClaimAlone(string role)
+    {
+        // The deliberate change. A boutique role can only reach the principal through the Clerk
+        // `org_role` claim, and this deployment creates no Clerk organizations, so that claim is
+        // always empty. Treating it as sufficient is what refused every real boutique owner; the
+        // tenant half of the gate is the membership lookup, which needs a request context that
+        // this unit test deliberately does not provide.
+        Assert.False(IsAuthorized(Principal(role), AuthorizationConfiguration.StaffAccessPolicy));
+    }
+
+    [Fact]
+    public void StaffAccessPolicy_Denies_PrincipalWithoutRoles()
+    {
+        Assert.False(IsAuthorized(
+            new ClaimsPrincipal(new ClaimsIdentity("test")),
+            AuthorizationConfiguration.StaffAccessPolicy));
+    }
+
+    [Fact]
+    public async Task StaffAccessPolicy_CarriesTheMembershipRequirement()
+    {
+        // Without this requirement the policy would be a plain authenticated-anyone check.
+        var provider = Services.GetRequiredService<IAuthorizationPolicyProvider>();
+        var policy = await provider.GetPolicyAsync(AuthorizationConfiguration.StaffAccessPolicy);
+
+        Assert.NotNull(policy);
+        Assert.Single(policy!.Requirements.OfType<StaffMembershipRequirement>());
+    }
 }

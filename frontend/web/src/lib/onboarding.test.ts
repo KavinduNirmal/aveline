@@ -91,15 +91,18 @@ describe('Onboarding Module Contracts', () => {
         onboardingStep: 6,
         hasCompletedOnboarding: true,
       },
-      userRole: 'owner',
-      organizationRole: 'org:principal',
+      // The completion response carries the Clerk-synced platform (Aveline team) role, not a
+      // promoted `owner`: `owner` grants the whole console catalog, and a boutique owner's
+      // authority is the per-store `organizationRole` instead.
+      userRole: 'staff',
+      organizationRole: 'org:boutique_owner',
       accountState: 'Active',
       blossomAllocation: 750,
       agentWarmedUp: true,
     }
 
-    expect(complete.userRole).toBe('owner')
-    expect(complete.organizationRole).toBe('org:principal')
+    expect(complete.userRole).toBe('staff')
+    expect(complete.organizationRole).toBe('org:boutique_owner')
     expect(complete.accountState).toBe('Active')
     expect(complete.blossomAllocation).toBe(750)
     expect(complete.agentWarmedUp).toBe(true)

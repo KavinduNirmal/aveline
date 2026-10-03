@@ -43,7 +43,8 @@ public static class AuthenticationConfiguration
                 // Defaults to true (secure). Set Clerk:RequireHttpsMetadata=false only
                 // for local development/tests against an HTTP authority.
                 options.RequireHttpsMetadata = configuration.GetValue("Clerk:RequireHttpsMetadata", true);
-                options.TokenValidationParameters = BuildTokenValidationParameters(authority);
+                options.TokenValidationParameters = BuildTokenValidationParameters(
+                    authority, configuration["Clerk:Audience"]);
 
                 options.Events = new JwtBearerEvents
                 {
@@ -88,20 +89,39 @@ public static class AuthenticationConfiguration
     /// <summary>
     /// Builds the JWT validation rules for Clerk session tokens.
     /// </summary>
+    /// <param name="authority">The Clerk Frontend API base; bound as the only valid issuer.</param>
+    /// <param name="audience">
+    /// Optional expected <c>aud</c>. Audience validation is enforced only when this is set, so the
+    /// historical behaviour (no <c>aud</c> claim, issuer-bound) is preserved for deployments that
+    /// have not added the claim to the Clerk JWT template.
+    /// </param>
     /// <remarks>
-    /// Clerk session tokens (including jwt-aveline-v1 template tokens) do not always
-    /// carry an <c>aud</c> claim; the instance signing key (JWKS kid) already scopes
-    /// tokens to this Clerk instance, so audience is not enforced here.
+    /// Clerk session tokens (including jwt-aveline-v1 template tokens) do not always carry an
+    /// <c>aud</c> claim; the instance signing key (JWKS kid) already scopes tokens to this Clerk
+    /// instance, so audience is not enforced by default. That leaves a latent gap: if a second
+    /// application is ever added to the same Clerk instance, tokens minted for it would be
+    /// accepted here because nothing else distinguishes the audience (assessment F-2.3). Wire
+    /// <c>Clerk:Audience</c> (and the matching claim in the JWT template) to close it; see
+    /// ADR-008, "Audience validation" for the revisit trigger.
     /// </remarks>
-    public static TokenValidationParameters BuildTokenValidationParameters(string authority) => new()
+    public static TokenValidationParameters BuildTokenValidationParameters(
+        string authority, string? audience = null)
     {
-        ValidateIssuer = true,
-        ValidIssuer = authority,
-        ValidateAudience = false,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        NameClaimType = ClaimTypes.NameIdentifier,
-    };
+        var audienceConfigured = !string.IsNullOrWhiteSpace(audience);
+
+        return new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = authority,
+            // Opt-in: an absent Clerk:Audience keeps the previous behaviour rather than
+            // rejecting every token at once.
+            ValidateAudience = audienceConfigured,
+            ValidAudiences = audienceConfigured ? [audience!] : null,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            NameClaimType = ClaimTypes.NameIdentifier,
+        };
+    }
 
     private static ILogger Logger(HttpContext httpContext) =>
         httpContext.RequestServices

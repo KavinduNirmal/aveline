@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { hasConsoleRole, isAdminSignUp } from './admin-signup'
+import { hasConsoleRole, isAdminSignUp, isOnboardingExempt } from './admin-signup'
 
 describe('admin-signup', () => {
   describe('isAdminSignUp', () => {
@@ -43,6 +43,38 @@ describe('admin-signup', () => {
       expect(hasConsoleRole(undefined)).toBe(false)
       expect(hasConsoleRole(['staff'])).toBe(false)
       expect(hasConsoleRole(['customer_relations'])).toBe(false)
+    })
+  })
+
+  describe('isOnboardingExempt', () => {
+    it('mirrors the backend Roles.OnboardingExemptRoles list', () => {
+      // Aveline.Api/Authorization/Roles.cs: OnboardingExemptRoles = [moderator, admin, owner].
+      // A drift here re-opens the /admin/pending redirect loop, because the API admits a role
+      // that this side would bounce back into the pending screen.
+      expect(isOnboardingExempt(['moderator'])).toBe(true)
+      expect(isOnboardingExempt(['admin'])).toBe(true)
+      expect(isOnboardingExempt(['owner'])).toBe(true)
+      expect(isOnboardingExempt(['Admin'])).toBe(true)
+      expect(isOnboardingExempt(['OWNER'])).toBe(true)
+      expect(isOnboardingExempt(['staff', 'admin'])).toBe(true)
+    })
+
+    it('exempts a moderator even though the console door refuses it (C2)', () => {
+      // The two lists are deliberately different widths: exempt from onboarding, refused at
+      // the console with a stated reason rather than a redirect loop.
+      expect(isOnboardingExempt(['moderator'])).toBe(true)
+      expect(hasConsoleRole(['moderator'])).toBe(false)
+    })
+
+    it('does not exempt tenants, boutique roles, or an unset role', () => {
+      expect(isOnboardingExempt([])).toBe(false)
+      expect(isOnboardingExempt(null)).toBe(false)
+      expect(isOnboardingExempt(undefined)).toBe(false)
+      expect(isOnboardingExempt(['staff'])).toBe(false)
+      expect(isOnboardingExempt(['customer_relations'])).toBe(false)
+      expect(isOnboardingExempt(['org:boutique_owner'])).toBe(false)
+      // The API assigns the literal "user" when the token carries no user_role claim.
+      expect(isOnboardingExempt(['user'])).toBe(false)
     })
   })
 })

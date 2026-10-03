@@ -165,7 +165,11 @@ public class OnboardingEndpointsIntegrationTests : IAsyncLifetime
         Assert.NotNull(completeBody);
         Assert.True(completeBody.Organization.HasCompletedOnboarding);
         Assert.Equal(6, completeBody.Organization.OnboardingStep);
-        Assert.Equal("owner", completeBody.UserRole);
+        // Onboarding must not promote the platform (Aveline team) role: `Roles.Owner` grants the
+        // whole catalog, while a boutique owner's authority is the per-store role asserted below.
+        // The token carries `user_role=staff`, so the row keeps that value.
+        Assert.Equal(Roles.Staff, completeBody.UserRole);
+        Assert.NotEqual(Roles.Owner, completeBody.UserRole);
         Assert.Equal(Roles.BoutiqueOwner, completeBody.OrganizationRole);
         Assert.Equal(AccountState.Active.ToString(), completeBody.AccountState);
         Assert.Equal(750m, completeBody.BlossomAllocation);

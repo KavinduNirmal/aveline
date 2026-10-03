@@ -167,6 +167,21 @@ public static class MediaOptionsValidator
                 + "comma-separated host names with no scheme, port or path; leave it empty to "
                 + "allow any public host.");
         }
+
+        // An empty allow-list means "any public host" (ImageUrlFetcher.EnsureHostAllowed returns
+        // early). That is only tolerable while the server-side URL fetch is switched off. With
+        // Media:ImageUrlUploadEnabled=true the fetch is reachable by a user-supplied URL, so an
+        // empty list silently removes the host restriction entirely - the classic SSRF setup that
+        // reaches a cloud metadata endpoint. Fail the boot instead of shipping an open fetcher
+        // (security assessment F-6.4).
+        if (options.ImageUrlUploadEnabled && options.ImageUrlAllowlistEntries().Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Media:ImageUrlUploadEnabled=true requires a populated Media:ImageUrlAllowlist. "
+                + "An empty allow-list disables the host restriction in ImageUrlFetcher, so the "
+                + "server would fetch an arbitrary user-supplied URL. Either list the permitted "
+                + "image hosts, or set Media:ImageUrlUploadEnabled=false.");
+        }
     }
 
     private static void ValidateProductionDatabaseOverride(

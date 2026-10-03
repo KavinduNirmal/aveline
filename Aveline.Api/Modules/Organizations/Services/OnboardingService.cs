@@ -283,8 +283,15 @@ public partial class OnboardingService : IOnboardingService
         }
 
         // 3. Update User record
+        //
+        // The platform (Aveline team) role is deliberately NOT written here. `UserRole` mirrors
+        // the Clerk `user_role` claim, and `Roles.Owner` grants the entire permission catalog
+        // (`Permissions.RolePermissions[Roles.Owner] = All`), including the `admin:*`, `revenue:*`
+        // and `pricing:backdate` grants. A boutique owner is not Aveline team: their authority is
+        // the per-store `OrganizationRole` below, which maps to the bounded tenant permission set.
+        // Writing `owner` here made every tenant owner a platform owner in the read model that
+        // `/users/me` and `/auth/claims` serve, so the client offered them the console.
         user.OrganizationId = org.Id.ToString();
-        user.UserRole = Roles.Owner;
         // Defect D-9: the previous literal "org:principal" is absent from Roles.cs and
         // therefore granted nothing. Assign the canonical owner role instead.
         user.OrganizationRole = Roles.BoutiqueOwner;

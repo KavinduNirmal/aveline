@@ -1,5 +1,7 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
+using Aveline.Api.Infrastructure.Integrations;
 using Aveline.Api.Modules.SystemHealth.HealthChecks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -11,10 +13,28 @@ namespace Aveline.Api.Tests;
 /// </summary>
 public class HealthCheckResponseWriterTests
 {
-    private static async Task<JsonElement> WriteAsync(HealthReport report)
+    /// <summary>An anonymous probe: the shape an external monitor sees.</summary>
+    private static async Task<JsonElement> WriteAnonymousAsync(HealthReport report)
     {
         var context = new DefaultHttpContext();
         context.Response.Body = new MemoryStream();
+
+        await HealthCheckResponseWriter.WriteAsync(context, report);
+
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body, Encoding.UTF8);
+        var json = await reader.ReadToEndAsync();
+        return JsonDocument.Parse(json).RootElement.Clone();
+    }
+
+    /// <summary>An authenticated internal service caller: the detailed operator view.</summary>
+    private static async Task<JsonElement> WriteInternalAsync(HealthReport report)
+    {
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Role, InternalTokenAuthenticationHandler.RoleName)],
+            authenticationType: InternalTokenAuthenticationHandler.SchemeName));
 
         await HealthCheckResponseWriter.WriteAsync(context, report);
 
@@ -37,7 +57,7 @@ public class HealthCheckResponseWriterTests
             },
             TimeSpan.FromMilliseconds(41));
 
-        var root = await WriteAsync(report);
+        var root = await WriteInternalAsync(report);
 
         Assert.Equal("Degraded", root.GetProperty("status").GetString());
         Assert.Equal(41, root.GetProperty("totalDurationMs").GetInt32());
@@ -61,12 +81,42 @@ public class HealthCheckResponseWriterTests
             },
             TimeSpan.Zero);
 
-        var root = await WriteAsync(report);
+        var root = await WriteInternalAsync(report);
         var names = root.GetProperty("checks").EnumerateArray()
             .Select(c => c.GetProperty("name").GetString() ?? string.Empty)
             .ToArray();
 
         Assert.Equal(["database", "redis", "agent-service", "clerk-jwks"], names);
+    }
+
+    [Fact]
+    public async Task WriteAsync_AnonymousProbe_WithholdsDependencyNamesAndVersion()
+    {
+        var report = new HealthReport(
+            new Dictionary<string, HealthReportEntry>
+            {
+                ["database"] = new(
+                    HealthStatus.Healthy, "Database reachable.", TimeSpan.FromMilliseconds(4), null, null),
+                ["redis"] = new(
+                    HealthStatus.Healthy, "Redis responded in 0 ms.", TimeSpan.Zero, null, null),
+            },
+            TimeSpan.FromMilliseconds(9));
+
+        var root = await WriteAnonymousAsync(report);
+
+        // The aggregate verdict still answers the orchestrator's question.
+        Assert.Equal("Healthy", root.GetProperty("status").GetString());
+        Assert.Equal(9, root.GetProperty("totalDurationMs").GetInt32());
+
+        // ...but the internal topology is not on offer to an unauthenticated probe (F-1.5).
+        Assert.False(root.TryGetProperty("checks", out _));
+        Assert.False(root.TryGetProperty("version", out _));
+
+        var body = root.GetRawText();
+        Assert.DoesNotContain("database", body);
+        Assert.DoesNotContain("redis", body);
+        Assert.DoesNotContain("agent-service", body);
+        Assert.DoesNotContain("clerk-jwks", body);
     }
 
     [Fact]
@@ -84,14 +134,12 @@ public class HealthCheckResponseWriterTests
             },
             TimeSpan.Zero);
 
-        var context = new DefaultHttpContext();
-        context.Response.Body = new MemoryStream();
-        await HealthCheckResponseWriter.WriteAsync(context, report);
-        context.Response.Body.Position = 0;
-        var body = await new StreamReader(context.Response.Body).ReadToEndAsync();
-
-        Assert.DoesNotContain("hunter2", body);
-        Assert.DoesNotContain("secret-host", body);
-        Assert.DoesNotContain("InvalidOperationException", body);
+        foreach (var root in new[] { await WriteAnonymousAsync(report), await WriteInternalAsync(report) })
+        {
+            var body = root.GetRawText();
+            Assert.DoesNotContain("hunter2", body);
+            Assert.DoesNotContain("secret-host", body);
+            Assert.DoesNotContain("InvalidOperationException", body);
+        }
     }
 }

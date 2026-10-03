@@ -70,7 +70,12 @@ public class EnvironmentHardeningIntegrationTests : IAsyncLifetime
         builder.UseSetting("Database:InMemoryName", TestDatabase.Name());
         builder.UseSetting("Clerk:RequireHttpsMetadata", "false");
         builder.UseSetting("AgentService:BaseUrl", _agentServer.BaseUrl);
-        builder.UseSetting("AgentService:InternalToken", "test-internal-token");
+        // Production boot now refuses a weak internal token (InternalTokenSecurityGuard, F-2.6),
+        // and this host deliberately runs with EnvironmentName=Production. Use a token that meets
+        // the Production bar rather than the short development placeholder.
+        builder.UseSetting(
+            "AgentService:InternalToken",
+            TestAgentService.ProductionInternalToken);
         builder.UseSetting("Observability:AgentIsCritical", "false");
     }
 

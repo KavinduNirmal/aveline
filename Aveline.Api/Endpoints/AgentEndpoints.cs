@@ -32,7 +32,7 @@ public static class AgentEndpoints
 
             return Results.Text(body, "application/json", statusCode: (int)response.StatusCode);
         })
-        .RequireAuthorization(AuthorizationConfiguration.AssociatesPolicy);
+        .RequireAuthorization(AuthorizationConfiguration.StaffAccessPolicy);
 
         return endpoints;
     }

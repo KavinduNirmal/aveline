@@ -82,9 +82,13 @@ public class PaymentEndpointsIntegrationTests : IAsyncLifetime
         // Required by the Production database guard: this host deliberately runs on the
         // in-memory provider.
         builder.UseSetting("Database:AllowInMemoryInProduction", "true");
-        // Required by the agent client's startup guard (AddAgentServiceClient).
+        // Required by the agent client's startup guard (AddAgentServiceClient), and by the
+        // Production internal-token guard, which refuses a weak token (F-2.6). This host boots in
+        // Production, so the value must meet the Production bar.
         builder.UseSetting("AgentService:BaseUrl", "http://127.0.0.1:1");
-        builder.UseSetting("AgentService:InternalToken", "test-internal-token");
+        builder.UseSetting(
+            "AgentService:InternalToken",
+            TestAgentService.ProductionInternalToken);
         builder.UseSetting("Observability:AgentIsCritical", "false");
     }
 

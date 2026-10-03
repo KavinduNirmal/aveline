@@ -444,7 +444,7 @@ public static class WebhookEndpoints
             // which a verified channel hash equals; a channel that supplies none still gets one.
             var contentHash = AttachmentContentHash.Compute(fetched.Bytes);
             if (!string.IsNullOrWhiteSpace(media.Sha256)
-                && !string.Equals(media.Sha256.Trim(), contentHash, StringComparison.OrdinalIgnoreCase))
+                && !HashesMatch(media.Sha256, contentHash))
             {
                 logger.LogWarning(
                     "Inbound WhatsApp media refused: the channel's sha256 does not match the downloaded bytes. organizationId={OrganizationId} mediaId={MediaId}",
@@ -500,6 +500,35 @@ public static class WebhookEndpoints
             _ => ".jpg",
         };
         return $"whatsapp-{externalId ?? "media"}{extension}";
+    }
+
+    /// <summary>
+    /// Matches the channel's SHA-256 hash against our computed lowercase-hex hash. Meta Cloud API
+    /// sends sha256 as Base64 (44 chars), while test doubles or other channels may send Hex (64 chars).
+    /// </summary>
+    private static bool HashesMatch(string channelHash, string computedHexHash)
+    {
+        var trimmed = channelHash.Trim();
+        if (string.Equals(trimmed, computedHexHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        try
+        {
+            var rawBytes = Convert.FromBase64String(trimmed);
+            if (rawBytes.Length == 32)
+            {
+                var convertedHex = Convert.ToHexString(rawBytes).ToLowerInvariant();
+                return string.Equals(convertedHex, computedHexHash, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch (FormatException)
+        {
+            // Not a valid Base64 string
+        }
+
+        return false;
     }
 
     private static async Task<string?> GetAppSecretAsync(

@@ -426,6 +426,28 @@ public class WebhookEndpointsIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Post_WithAnImage_WhenMetaSuppliesBase64Sha256_PersistsCanonicalHexContentHash()
+    {
+        // Meta WhatsApp Cloud API webhooks natively send sha256 as Base64 (44 chars).
+        var orgId = await SeedOrgWithWhatsAppAsync("wh_owner_b64hash", "webhook-b64hash");
+        _whatsApp.Media = new WhatsAppMediaResult(
+            IsSuccess: true, Bytes: TinyPng, ContentType: "image/png", SizeBytes: TinyPng.LongLength);
+
+        var base64Sha256 = Convert.ToBase64String(SHA256.HashData(TinyPng));
+
+        var response = await PostAsync(orgId, MetaMediaPayload(
+            "image", "media-b64hash", "check this photo", "image/png",
+            messageId: "wamid.B64HASH1", from: "+94771110099", sha256: base64Sha256));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var context = CreateContext();
+        var attachment = await context.MessageAttachments
+            .SingleAsync(a => a.OrganizationId == orgId);
+        Assert.Equal(TinyPngSha256, attachment.ContentHash);
+    }
+
+    [Fact]
     public async Task Post_WhenTheChannelsSha256DisagreesWithTheBytes_StoresNothingAndAnswers200()
     {
         // Our computed hash is of the bytes we downloaded; Meta's is of the bytes it served.

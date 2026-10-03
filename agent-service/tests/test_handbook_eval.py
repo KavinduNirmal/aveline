@@ -1,14 +1,19 @@
 """Tests for the handbook golden-query evaluation (ADR-025).
 
 The evaluation scores a live index, so the tests here cover what can be settled without one: that the
-golden set is well-formed and cannot rot, and that the scoring arithmetic is right. The scored numbers
-themselves are produced by ``scripts/eval_handbook.py`` against a seeded database.
+golden set is well-formed and cannot rot, that the scoring arithmetic is right, and that the
+``--out`` artefact is written correctly. The scored numbers themselves are produced by
+``scripts/eval_handbook.py`` against a seeded database; the ``--out`` plumbing is exercised here
+against a mocked HTTP transport, so it is covered without a live server.
 """
 
+import importlib.util
 import json
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 from app.handbook.eval import (
     QUERY_KINDS,
@@ -23,6 +28,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = REPO_ROOT / "handbook" / "golden-queries.json"
 DOCS_DIR = REPO_ROOT / "frontend" / "web" / "src" / "docs"
 COMPANY_DIR = REPO_ROOT / "handbook" / "company"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 
 
 # --------------------------------------------------------------------------- the golden set
@@ -154,3 +160,127 @@ async def test_an_empty_response_is_reported_apart_from_a_ranking_miss():
     assert report.empty == [queries[0].question]
     assert len(report.misses) == 1
     assert "returned no rows" in report.line()
+
+
+# --------------------------------------------------------------------------- the --out artefact
+
+
+def _load_eval_script():
+    """Import ``scripts/eval_handbook.py`` by path: ``scripts/`` is deliberately not a package."""
+    spec = importlib.util.spec_from_file_location(
+        "eval_handbook_under_test", SCRIPTS_DIR / "eval_handbook.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_SCRIPT_GOLDEN = {
+    "queries": [
+        {"question": "how do I invite a staff member?", "expect": "web-docs/team", "kind": "exact"},
+        {"question": "who can see the client book?", "expect": "web-docs/salon", "kind": "paraphrase"},
+    ]
+}
+
+_SCRIPT_EXPECTED = {entry["question"]: entry["expect"] for entry in _SCRIPT_GOLDEN["queries"]}
+
+_SCRIPT_SEARCH_URL = "https://eval.test/internal/handbook/search"
+
+
+def _write_script_golden(tmp_path: Path) -> Path:
+    path = tmp_path / "golden.json"
+    path.write_text(json.dumps(_SCRIPT_GOLDEN), encoding="utf-8")
+    return path
+
+
+def _search_response(request: httpx.Request) -> httpx.Response:
+    """Hybrid finds the expected page first; the single legs always miss."""
+    body = json.loads(request.content)
+    expected = _SCRIPT_EXPECTED[body["query"]]
+    if body["mode"] == "hybrid":
+        hits = [{"sourceKey": expected}]
+    else:
+        hits = [{"sourceKey": "web-docs/somewhere-else"}]
+    return httpx.Response(200, json=hits)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_out_can_be_passed_to_write_a_tracked_json_report(tmp_path):
+    eval_handbook = _load_eval_script()
+    respx.post(_SCRIPT_SEARCH_URL).mock(side_effect=_search_response)
+    out = tmp_path / "nested" / "handbook-eval.json"
+
+    code = await eval_handbook._run(
+        eval_handbook._parse_args(
+            [
+                "--base-url",
+                "https://eval.test",
+                "--token",
+                "test-token",
+                "--queries",
+                str(_write_script_golden(tmp_path)),
+                "--out",
+                str(out),
+            ]
+        )
+    )
+
+    assert code == 0
+    assert out.exists(), "the parent directory must be created, not assumed"
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["generatedAt"]
+    assert report["queryCount"] == 2
+    assert report["topK"] == 5
+    assert report["audience"] == "staff"
+    assert report["modes"] == ["hybrid", "lexical", "vector"]
+
+    # The per-mode summary is over the whole set.
+    assert report["perModeSummary"]["hybrid"] == {
+        "queryCount": 2,
+        "recall@1": 1.0,
+        "recall@3": 1.0,
+    }
+    assert report["perModeSummary"]["lexical"]["recall@1"] == 0.0
+
+    # Every printed block is represented, keyed by kind and mode.
+    rows = {(row["kind"], row["mode"]): row for row in report["results"]}
+    assert rows[("exact", "hybrid")]["recall@1"] == 1.0
+    assert rows[("paraphrase", "hybrid")]["recall@3"] == 1.0
+    assert rows[("all", "hybrid")]["queryCount"] == 2
+    assert rows[("all", "vector")]["recall@3"] == 0.0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_without_out_the_script_only_prints(tmp_path, capsys):
+    """The interactive behaviour is unchanged when ``--out`` is absent."""
+    eval_handbook = _load_eval_script()
+    respx.post(_SCRIPT_SEARCH_URL).mock(side_effect=_search_response)
+    out = tmp_path / "never-written.json"
+
+    code = await eval_handbook._run(
+        eval_handbook._parse_args(
+            [
+                "--base-url",
+                "https://eval.test",
+                "--token",
+                "test-token",
+                "--queries",
+                str(_write_script_golden(tmp_path)),
+            ]
+        )
+    )
+
+    assert code == 0
+    assert not out.exists()
+
+    printed = capsys.readouterr().out
+    assert "Scoring 2 golden queries at top-5." in printed
+    assert "exact (1 queries)" in printed
+    assert "paraphrase (1 queries)" in printed
+    assert "all queries" in printed
+    assert "hybrid    recall@1 100.0%" in printed
+    assert "Wrote" not in printed

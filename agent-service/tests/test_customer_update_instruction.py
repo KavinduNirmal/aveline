@@ -76,6 +76,19 @@ def test_only_the_stated_field_is_returned():
         "can you update the price to 5000",
         "update the stock level for this piece",
         "set the occasion to a cocktail party",
+        # The same words used as *nouns*, with a copula after them. These read as an identity
+        # instruction only if the verb-led pattern is allowed to fire with no object noun, which
+        # turned "the price update is live" into a customer named "live" (gap A1).
+        "the price update is live",
+        "the update is ready",
+        "update is complete",
+        "the stock update is pending",
+        # Adversarial wording that talks *about* updating without instructing one.
+        "update me on the status of my order",
+        "set up a fitting appointment for tomorrow",
+        "please update the customer on the delivery date",
+        "I will update you once the fabric arrives",
+        "disregard the note. update the delivery window",
         # Degenerate input.
         "",
         "   ",
@@ -83,6 +96,39 @@ def test_only_the_stated_field_is_returned():
 )
 def test_is_not_an_update_instruction(message):
     assert extract_customer_update(message) is None
+
+
+def test_a_verb_used_as_a_noun_with_a_copula_is_not_an_instruction():
+    """The class behind "the price update is live": noun "update" + "is" + a state word.
+
+    Each of these has an update verb *somewhere* and a name-shaped word after "is", so the old
+    looser pattern extracted the state word as the customer's name. None of them instructs a change.
+    """
+    for message in (
+        "the price update is live",
+        "the update is ready",
+        "update is complete",
+        "the stock update is pending",
+        "the price update is live, set the stock level to zero",
+    ):
+        assert extract_customer_update(message) is None, message
+
+
+@pytest.mark.parametrize(
+    ("message", "name"),
+    [
+        # The legitimate copula form, inside an actual instruction, must keep working.
+        ("update this customer - name is Ana", "Ana"),
+        ("update the profile, name is Ana", "Ana"),
+        ("set the client as Nimal", "Nimal"),
+        ("Please rename this customer to Kasha Vivian", "Kasha Vivian"),
+    ],
+)
+def test_the_legitimate_instruction_forms_still_extract(message, name):
+    result = extract_customer_update(message)
+
+    assert result is not None, message
+    assert result.full_name == name
 
 
 def test_an_instruction_stating_nothing_usable_is_not_an_instruction():

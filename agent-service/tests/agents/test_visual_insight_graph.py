@@ -111,6 +111,7 @@ async def test_visual_insight_graph_with_image_analysis():
 
 
 @pytest.mark.asyncio
+@pytest.mark.golden_behaviour  # GC-06: exhausted stock raises sourcing, not an order line
 async def test_visual_insight_graph_out_of_stock_sourcing():
     registry = MagicMock()
     registry.search_inventory = AsyncMock(return_value={"items": []})
@@ -395,6 +396,7 @@ async def test_graph_refuses_to_analyse_without_an_organization():
 
 @pytest.mark.asyncio
 @respx.mock
+@pytest.mark.golden_behaviour  # GC-08: a denied analysis ends the run without a business write
 async def test_analyze_image_node_surfaces_a_denied_analysis_distinctly():
     respx.post("http://backend/internal/visual/analyze-image").respond(
         status_code=403, json={"error": "forbidden"}

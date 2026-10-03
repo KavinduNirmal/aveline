@@ -30,6 +30,23 @@ from app.tools.inventory.supplier_tools import scrape_atelier_catalog
 
 logger = logging.getLogger("aveline.agent.visual")
 
+#: The image-analysis outcomes that mean the run never saw the picture. Sourcing after one of them
+#: is the same dishonesty as sourcing after a failed inventory lookup - "we could not look" turned
+#: into "we do not have it" - so both the graph's routing guard and ``check_sourcing`` below treat
+#: them as blocking. Defined once here so the two cannot drift.
+_BLOCKING_ANALYSIS_REASONS = frozenset({"image_analysis_denied", "image_analysis_failed"})
+
+
+def image_analysis_blocked(state: VisualAgentState) -> bool:
+    """Whether the vision analysis the run depended on was denied or failed.
+
+    ``analyze_image`` records one of ``_BLOCKING_ANALYSIS_REASONS`` when the backend refused the
+    analysis (denied) or could not complete it (failed). Either way no attributes were produced, so
+    the run has no evidence about the garment and must not assert anything about stock (gap A1).
+    """
+    return str(state.get("reason") or "") in _BLOCKING_ANALYSIS_REASONS
+
+
 #: Color family mappings to allow shade synonyms while strictly pruning unrelated colors
 _COLOR_FAMILIES: dict[str, set[str]] = {
     "red": {"red", "crimson", "deep crimson", "maroon", "deep maroon", "ruby", "ruby red", "burgundy", "royal burgundy", "scarlet", "wine", "cherry", "vermilion", "rust"},
@@ -590,6 +607,18 @@ class VisualInsightAgent:
                 "text": None,
                 "status": "error",
                 "reason": "inventory_unavailable",
+            }
+
+        if image_analysis_blocked(state):
+            reason = state.get("reason") or "image analysis unavailable"
+            logger.warning("Skipping sourcing: the image analysis did not complete (%s).", reason)
+            return {
+                "sourcing_request": None,
+                "suggestion": None,
+                "summary": None,
+                "text": None,
+                "status": "error",
+                "reason": reason,
             }
 
         msg = state.get("message", "")

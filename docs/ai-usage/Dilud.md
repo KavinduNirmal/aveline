@@ -36,8 +36,16 @@
    - Updated `useBlockActions.tsx`, `ConversationsContext.tsx`, and `conversations-api.ts` to forward garment image URLs to the delivery endpoint.
    - Rebuilt Docker containers (`aveline_api` and `aveline_agent`).
 
+6. **Inbound WhatsApp Photo Root Cause Diagnosis & Resolution**:
+   - Diagnosed why images sent from WhatsApp did not appear in the Salon:
+     1. **Meta Webhook Base64 Checksum Mismatch**: Meta WhatsApp Cloud API webhooks provide the image's SHA-256 hash in `media.Sha256` encoded as a 44-character Base64 string. `WebhookEndpoints.cs` previously compared this directly against our 64-character lowercase Hex `AttachmentContentHash.Compute(bytes)`, causing real Meta image webhook payloads to be rejected with `Inbound WhatsApp media refused: the channel's sha256 does not match the downloaded bytes`.
+     2. **Normalized Checksum Verification**: Added `HashesMatch` helper in `WebhookEndpoints.cs` to decode Base64 channel hashes and normalize them to Hex, while still supporting Hex test doubles. Added unit test `Post_WithAnImage_WhenMetaSuppliesBase64Sha256_PersistsCanonicalHexContentHash` in `WebhookEndpointsIntegrationTests.cs` (27/27 tests passed).
+     3. **Meta Media Download Access Token**: Inbound image attachments require a valid Meta Graph API Access Token configured in Settings -> Integrations -> WhatsApp so the API server can resolve and download the raw bytes from Meta's media CDN (`https://graph.facebook.com/{mediaId}`). When a placeholder/demo access token is stored, Meta rejects the media download request and the message falls back to text-only.
+
 ### Files Created or Modified
 
+- `Aveline.Api/Endpoints/WebhookEndpoints.cs`
+- `Aveline.Api.Tests/WebhookEndpointsIntegrationTests.cs`
 - `Aveline.Api/Modules/Conversations/DTOs/MessageDtos.cs`
 - `Aveline.Api/Modules/Conversations/Services/ICustomerDeliveryService.cs`
 - `Aveline.Api/Modules/Conversations/Services/CustomerDeliveryService.cs`
@@ -55,12 +63,13 @@
 
 ### Verification Performed
 
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~WebhookEndpointsIntegrationTests"`: 27/27 passed (100%).
 - `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CustomerDeliveryServiceTests"`: 16/16 passed (100%).
 - `npx vitest run src/components/conversation/`: 18/18 test files passed (203/203 tests).
 - `npx vitest run src/lib/conversations-api.test.ts`: 20/20 passed (100%).
+- `docker compose up -d --build api`: successfully rebuilt and restarted.
 - `curl.exe -i http://localhost:5091/health`: HTTP 200 OK (database: Healthy, redis: Healthy, agent-service: Healthy, clerk-jwks: Healthy).
 - `docker ps`: all services running and healthy.
-
 
 ---
 

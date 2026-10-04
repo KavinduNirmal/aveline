@@ -653,6 +653,12 @@ class _AvelineAppShellState extends State<AvelineAppShell> {
           value: _notificationsController,
         ),
         ChangeNotifierProvider<HomeController>.value(value: _homeController),
+        Provider<CustomerRepository>.value(value: _customerRepository),
+        Provider<CustomerBookSource>.value(value: _customerRepository),
+        Provider<CatalogProductRepository>.value(value: _catalogRepository),
+        Provider<ConversationRepository>.value(value: _conversationRepository),
+        Provider<ThreadRepository>.value(value: _threadRepository),
+        Provider<CommerceRepository>.value(value: _commerceRepository),
         Provider<Dio>.value(value: _dio),
       ],
       child: MaterialApp.router(

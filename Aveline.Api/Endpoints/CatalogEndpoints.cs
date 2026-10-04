@@ -836,6 +836,29 @@ public static class CatalogEndpoints
         .Produces(StatusCodes.Status403Forbidden)
         .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
 
+        group.MapPut("/sourcing/{id:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid id,
+            [FromBody] UpdateSourcingRequestDto dto,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var updated = await visualService.UpdateSourcingRequestAsync(id, organizationId, dto, cancellationToken);
+            if (updated is null)
+            {
+                return Results.NotFound(new { error = "Sourcing request not found." });
+            }
+
+            return Results.Ok(updated);
+        })
+        .WithName("CatalogUpdateSourcingRequest")
+        .WithSummary("Update details of a sourcing request ticket.")
+        .Produces<SourcingRequestDto>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
         // --- Suppliers & External Catalogs ---
 
         group.MapGet("/suppliers", async (
@@ -870,6 +893,28 @@ public static class CatalogEndpoints
         .WithSummary("Register a new partner atelier or supplier.")
         .Produces<SupplierDto>(StatusCodes.Status201Created)
         .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status401Unauthorized)
+        .Produces(StatusCodes.Status403Forbidden)
+        .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);
+
+        group.MapDelete("/suppliers/{id:guid}", async (
+            [FromRoute] Guid organizationId,
+            [FromRoute] Guid id,
+            [FromServices] IVisualService visualService,
+            CancellationToken cancellationToken) =>
+        {
+            var deleted = await visualService.DeleteSupplierAsync(id, organizationId, cancellationToken);
+            if (!deleted)
+            {
+                return Results.NotFound(new { error = "Supplier not found." });
+            }
+
+            return Results.NoContent();
+        })
+        .WithName("CatalogDeleteSupplier")
+        .WithSummary("Remove a partner atelier or supplier.")
+        .Produces(StatusCodes.Status204NoContent)
+        .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status401Unauthorized)
         .Produces(StatusCodes.Status403Forbidden)
         .RequireAuthorization(AuthorizationConfiguration.BoutiqueMemberPolicy);

@@ -104,6 +104,12 @@ public interface IVisualService
         string status,
         CancellationToken cancellationToken = default);
 
+    Task<SourcingRequestDto?> UpdateSourcingRequestAsync(
+        Guid id,
+        Guid orgId,
+        UpdateSourcingRequestDto dto,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<SupplierDto>> GetSuppliersByOrgIdAsync(
         Guid orgId,
         CancellationToken cancellationToken = default);
@@ -111,6 +117,11 @@ public interface IVisualService
     Task<SupplierDto> CreateSupplierAsync(
         Guid orgId,
         CreateSupplierDto dto,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> DeleteSupplierAsync(
+        Guid id,
+        Guid orgId,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<SupplierCatalogItemDto>> GetSupplierCatalogAsync(

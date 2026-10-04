@@ -1,3 +1,128 @@
+## Session 2026-10-03 (Partner Ateliers: Delete Partner Atelier & Confirmation Dialog)
+
+**Task:** Implement the Delete Partner Atelier feature across backend repository, service, API endpoints, frontend API client, and SuppliersTab UI with safety confirmation dialog.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Approved Implementation Plan Authored (`delete_atelier_plan.md`)**:
+   - Outlined full-stack design covering repository delete operations, service orchestration, endpoint route authorization, frontend API client, and safe confirmation dialog in the UI.
+
+2. **Backend Repository & Service Implementation**:
+   - Added `DeleteAsync(Supplier supplier, CancellationToken ct)` to `ISupplierRepository.cs` and `SupplierRepository.cs`.
+   - Added `DeleteSupplierAsync(Guid id, Guid orgId, CancellationToken ct)` to `IVisualService.cs` and `VisualService.cs`.
+
+3. **Backend Endpoint & Route Authorization**:
+   - Added `DELETE /api/v1/orgs/{organizationId}/catalog/suppliers/{id:guid}` in `CatalogEndpoints.cs`, guarded by `BoutiqueMemberPolicy` and returning `204 NoContent` on success or `404 NotFound` when non-existent.
+   - Updated `CatalogWriteAuthorizationTests.cs` to assert 14 member-gate routes and verify route mapping.
+   - Added integration test cases (`DeleteSupplier_ExistingSupplier_Returns204NoContentAndRemovesSupplier` and `DeleteSupplier_NonExistentSupplier_Returns404NotFound`) in `CatalogEndpointsIntegrationTests.cs`.
+
+4. **Frontend API Client & UI Integration**:
+   - Added `deleteSupplier(organizationId, supplierId)` in `frontend/web/src/lib/catalog-api.ts`.
+   - Updated `SuppliersTab.tsx`:
+     - Added trash icon button on partner atelier cards.
+     - Added interactive confirmation modal (`Remove Partner Atelier`) with clear warning dialog, cancel action, loading spinner, and error/success notifications via `sonner` toast.
+   - Updated `CatalogPanel.tsx`:
+     - Added `handleDeleteSupplier` handler and passed `onDeleteSupplier` to `SuppliersTab`.
+
+5. **Automated Testing & Rebuild**:
+   - Added DOM test coverage in `SuppliersTab.dom.test.tsx` verifying modal display, cancellation, confirmation, and error handling (6/6 tests passing).
+   - Rebuilt and restarted `aveline_api` container with 100% health check pass.
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/ISupplierRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Repositories/SupplierRepository.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `Aveline.Api.Tests/CatalogWriteAuthorizationTests.cs`
+- `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/SuppliersTab.tsx`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `frontend/web/src/components/catalog/SuppliersTab.dom.test.tsx`
+- `delete_atelier_plan.md`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogWriteAuthorizationTests"`: 29/29 passed (100%).
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~CatalogEndpointsIntegrationTests"`: 33/33 passed (100%).
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj --filter "FullyQualifiedName~VisualEndpointsIntegrationTests"`: 36/36 passed (100%).
+- `npx vitest run src/components/catalog/SuppliersTab.dom.test.tsx`: 6/6 passed (100%).
+- `npx vitest run`: 178 test files passed, 1438/1438 tests passed (100%).
+- `docker compose up -d --build api`: successfully built and restarted.
+- `curl.exe -s http://localhost:5091/health`: HTTP 200 OK (all subsystems Healthy).
+
+---
+
+## Session 2026-10-03 (Atelier Sourcing Pipeline: Sourcing Ticket Editing & Pricing Synchronization)
+
+**Task:** Implement full Sourcing Ticket editing capability on the Atelier Sourcing Pipeline board, including backend endpoint and DTO enhancements, frontend API client, and interactive Edit Ticket modal with live margin recalculation.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Backend DTO & Model Enhancements**:
+   - Created `UpdateSourcingRequestDto.cs` in `Aveline.Api/Modules/VisualIntelligence/DTOs/` containing fields for category, color, description, target retail price, estimated atelier cost, proposed markup, partner supplier ID, reference image URL, and status.
+   - Enhanced `SourcingRequestDto.cs` and `CreateSourcingRequestDto.cs` to include `EstimatedCost`, `ProposedMarkup`, `SupplierId`, `SupplierName`, `ClientName`, `ReferenceImageUrl`, and `UpdatedAtUtc`.
+   - Updated `VisualService.cs` and `IVisualService.cs`:
+     - Added `UpdateSourcingRequestAsync` to update existing sourcing request tickets in PostgreSQL and automatically calculate markup (`(targetPrice - estimatedCost) / estimatedCost`).
+     - Enhanced `GetSourcingRequestsByOrgIdAsync` and `CreateSourcingRequestAsync` to project `EstimatedCost`, `ProposedMarkup`, `SupplierId`, and resolved `SupplierName`.
+
+2. **Backend API Endpoint**:
+   - Added `PUT /api/v1/orgs/{organizationId}/catalog/sourcing/{id:guid}` in `CatalogEndpoints.cs`, guarded with `BoutiqueMemberPolicy`.
+   - Updated `CatalogWriteAuthorizationTests.cs` and `CatalogEndpointsIntegrationTests.cs` with test coverage for updating sourcing requests (58/58 tests passing).
+
+3. **Frontend API Client & Type Definitions**:
+   - Added `UpdateSourcingRequestPayload` in `frontend/web/src/types/catalog.ts`.
+   - Added `updateSourcingRequest(organizationId, id, payload)` in `frontend/web/src/lib/catalog-api.ts`.
+   - Enhanced `createSourcingRequest` to pass estimated cost, proposed markup, supplier, client name, and reference images.
+
+4. **Frontend SourcingTab UI & Live Margin Preview**:
+   - Updated `SourcingTab.tsx`:
+     - Added `Pencil` icon button to every ticket card header to open the Edit Ticket modal.
+     - Implemented `Edit Sourcing Ticket` modal allowing operators to update Client Name, Category, Target Color, Bespoke Description, Target Retail Price (LKR), Estimated Atelier Cost (LKR), and Assigned Partner Atelier.
+     - Added dynamic live margin calculation (`+X% margin`) preview in both New and Edit ticket modals.
+     - Added `onUpdateRequest` prop callback.
+   - Updated `CatalogPanel.tsx` to handle `handleUpdateSourcingRequest` with optimistic state update and synchronization with backend API.
+
+5. **Partner Atelier Dropdown Name Resolution**:
+   - Added `Name` alias to `SupplierDto.cs` and normalized `fetchSuppliers` in `catalog-api.ts` so `supplierName` is never omitted.
+   - Updated `SourcingTab.tsx` select options to always render the atelier's name clearly without empty parentheses.
+
+6. **Frontend Test Coverage**:
+   - Added comprehensive DOM tests in `SourcingTab.dom.test.tsx` verifying modal pre-filling, live margin calculation, form submission, and callback handling (9/9 tests passing).
+   - Verified full frontend test suites (72 test files, 713/713 tests passing).
+
+### Files Created or Modified
+
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/UpdateSourcingRequestDto.cs` (Created)
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/SourcingRequestDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/DTOs/CreateSourcingRequestDto.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/IVisualService.cs`
+- `Aveline.Api/Modules/VisualIntelligence/Services/VisualService.cs`
+- `Aveline.Api/Endpoints/CatalogEndpoints.cs`
+- `Aveline.Api.Tests/CatalogEndpointsIntegrationTests.cs`
+- `Aveline.Api.Tests/CatalogWriteAuthorizationTests.cs`
+- `frontend/web/src/types/catalog.ts`
+- `frontend/web/src/lib/catalog-api.ts`
+- `frontend/web/src/components/catalog/SourcingTab.tsx`
+- `frontend/web/src/components/catalog/CatalogPanel.tsx`
+- `frontend/web/src/components/catalog/SourcingTab.dom.test.tsx`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `dotnet test Aveline.Api.Tests/Aveline.Api.Tests.csproj -c Release --filter "FullyQualifiedName~CatalogEndpointsIntegrationTests|FullyQualifiedName~CatalogWriteAuthorizationTests"`: 58/58 passed (100%).
+- `npx vitest run src/components/catalog/SourcingTab.dom.test.tsx`: 9/9 passed (100%).
+- `npx vitest run src/components/catalog/ src/lib/`: 72 test files passed, 713/713 tests passed (100%).
+
+---
+
 ## Session 2026-10-03 (Branch Synchronization, Test Resolution & WhatsApp Media Pipeline Configuration)
 
 **Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts, verify the WhatsApp inbound photo-to-Salon chat pipeline, and configure the local `.env` environment with Cloudinary media storage and WhatsApp gateway settings.

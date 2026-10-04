@@ -11,8 +11,11 @@ import {
   Globe,
   ExternalLink,
   Plus,
+  Trash2,
+  Loader2,
   X,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,15 +27,37 @@ interface SuppliersTabProps {
   suppliers: SupplierMock[]
   organizationId?: string
   onAddSupplier?: (supplier: SupplierMock) => void
+  onDeleteSupplier?: (supplierId: string) => Promise<void>
 }
 
-export function SuppliersTab({ suppliers, organizationId, onAddSupplier }: SuppliersTabProps) {
+export function SuppliersTab({
+  suppliers,
+  organizationId,
+  onAddSupplier,
+  onDeleteSupplier,
+}: SuppliersTabProps) {
   const [activeCatalogSupplier, setActiveCatalogSupplier] = useState<SupplierMock | null>(null)
+  const [supplierToDelete, setSupplierToDelete] = useState<SupplierMock | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const [addModalOpen, setAddModalOpen] = useState(false)
 
   const handleSaveSupplier = (newSupplier: SupplierMock) => {
     if (onAddSupplier) {
       onAddSupplier(newSupplier)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!supplierToDelete || !onDeleteSupplier) return
+    setIsDeleting(true)
+    try {
+      await onDeleteSupplier(supplierToDelete.id)
+      toast.success(`Removed ${supplierToDelete.name} from partner ateliers.`)
+      setSupplierToDelete(null)
+    } catch {
+      toast.error('Failed to remove partner atelier. Please try again.')
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -168,12 +193,12 @@ export function SuppliersTab({ suppliers, organizationId, onAddSupplier }: Suppl
                 </div>
               </div>
 
-              {/* Catalog Action */}
-              <div className="pt-4 mt-4 border-t border-border/60">
+              {/* Catalog & Delete Action */}
+              <div className="pt-4 mt-4 border-t border-border/60 flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="w-full gap-1.5 text-xs h-8 rounded-lg"
+                  className="flex-1 gap-1.5 text-xs h-8 rounded-lg"
                   onClick={() => setActiveCatalogSupplier(supplier)}
                 >
                   <Layers className="size-3.5" />
@@ -181,6 +206,18 @@ export function SuppliersTab({ suppliers, organizationId, onAddSupplier }: Suppl
                     View Atelier Catalog ({supplier.sampleCatalogCount ?? 0} items)
                   </span>
                 </Button>
+                {onDeleteSupplier && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg shrink-0"
+                    onClick={() => setSupplierToDelete(supplier)}
+                    title="Delete Partner Atelier"
+                    aria-label={`Delete ${supplier.name}`}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                )}
               </div>
             </Card>
           ))}
@@ -252,6 +289,61 @@ export function SuppliersTab({ suppliers, organizationId, onAddSupplier }: Suppl
             <div className="flex justify-end pt-3 border-t border-border">
               <Button size="sm" onClick={() => setActiveCatalogSupplier(null)}>
                 Close Catalog
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Delete Partner Atelier Confirmation Modal */}
+      {supplierToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in" role="dialog" aria-modal="true">
+          <Card className="flex flex-col w-full max-w-md border-border bg-background shadow-2xl p-6 gap-4 animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2 text-destructive">
+                <Trash2 className="size-5" />
+                <h3 className="font-serif text-base font-semibold text-foreground">
+                  Remove Partner Atelier
+                </h3>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => !isDeleting && setSupplierToDelete(null)}
+                disabled={isDeleting}
+                className="size-8 p-0"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <div className="py-2 text-xs text-muted-foreground leading-relaxed">
+              <p>
+                Are you sure you want to remove <strong className="text-foreground">{supplierToDelete.name}</strong>?
+              </p>
+              <p className="mt-2 text-[11px] text-muted-foreground/80">
+                This will disconnect the supplier integration and remove wholesale catalog sample links for this atelier.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-border">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSupplierToDelete(null)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="gap-1.5"
+              >
+                {isDeleting && <Loader2 className="size-3.5 animate-spin" />}
+                <span>{isDeleting ? 'Removing...' : 'Remove Atelier'}</span>
               </Button>
             </div>
           </Card>

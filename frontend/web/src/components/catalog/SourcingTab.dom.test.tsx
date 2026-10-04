@@ -37,16 +37,21 @@ function ticket(overrides: Partial<SourcingRequestMock> = {}): SourcingRequestMo
   }
 }
 
-function renderTab(requests: SourcingRequestMock[], onUpdateStatus = vi.fn()) {
+function renderTab(
+  requests: SourcingRequestMock[],
+  onUpdateStatus = vi.fn(),
+  onUpdateRequest = vi.fn(),
+) {
   render(
     <SourcingTab
       sourcingRequests={requests}
-      suppliers={[]}
+      suppliers={[{ id: 'sup-1', name: 'Partner Atelier', specialty: 'Embroidery', contactEmail: '', contactPhone: '', location: 'Colombo' }]}
       onUpdateStatus={onUpdateStatus}
       onAddRequest={vi.fn()}
+      onUpdateRequest={onUpdateRequest}
     />,
   )
-  return { onUpdateStatus }
+  return { onUpdateStatus, onUpdateRequest }
 }
 
 function cardFor(control: HTMLElement): HTMLElement {
@@ -185,5 +190,59 @@ describe('archiving a ticket', () => {
 
     // The old stage is not recorded, so a restore re-enters at the top rather than guessing one.
     expect(onUpdateStatus).toHaveBeenCalledWith('src-1', 'pending')
+  })
+})
+
+describe('editing a ticket', () => {
+  it('opens edit modal with prefilled ticket details and closes on cancel', async () => {
+    renderTab([ticket({ id: 'src-1', clientName: 'Custom Client', category: 'Sarees', targetPrice: 85000, estimatedCost: 40000 })])
+
+    const editBtn = screen.getByRole('button', { name: 'Edit the Sarees ticket for Custom Client' })
+    await userEvent.click(editBtn)
+
+    expect(screen.getByText('Edit Sourcing Ticket')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Custom Client')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('85000')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('40000')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByText('Edit Sourcing Ticket')).not.toBeInTheDocument()
+  })
+
+  it('updates ticket fields and invokes onUpdateRequest with recalculated margin', async () => {
+    const { onUpdateRequest } = renderTab([
+      ticket({
+        id: 'src-1',
+        clientName: 'VIP Client',
+        category: 'Apparel',
+        targetPrice: 0,
+        estimatedCost: 0,
+      }),
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit the Apparel ticket for VIP Client' }))
+
+    const clientInput = screen.getByDisplayValue('VIP Client')
+    await userEvent.clear(clientInput)
+    await userEvent.type(clientInput, 'Updated Client Name')
+
+    const inputsWithZeroPlaceholder = screen.getAllByPlaceholderText('0')
+    const retailInput = inputsWithZeroPlaceholder[0]
+    const costInput = inputsWithZeroPlaceholder[1]
+
+    await userEvent.type(retailInput, '100000')
+    await userEvent.type(costInput, '50000')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    expect(onUpdateRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'src-1',
+        clientName: 'Updated Client Name',
+        targetPrice: 100000,
+        estimatedCost: 50000,
+        proposedMarkup: 1.0,
+      }),
+    )
   })
 })

@@ -35,4 +35,11 @@ public class SupplierRepository : ISupplierRepository
         await _db.Suppliers.AddAsync(supplier, cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task DeleteAsync(Supplier supplier, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(supplier);
+        _db.Suppliers.Remove(supplier);
+        await _db.SaveChangesAsync(cancellationToken);
+    }
 }

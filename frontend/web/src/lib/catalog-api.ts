@@ -12,6 +12,7 @@ import type {
   CreateInventoryItemPayload,
   UpdateInventoryItemPayload,
   CreateSourcingRequestPayload,
+  UpdateSourcingRequestPayload,
   ComposeOutfitPayload,
   UpdateLookbookPayload,
   RecordCatalogSalePayload,
@@ -708,10 +709,30 @@ export async function createSourcingRequest(
       color: payload.color,
       description: payload.description,
       targetPrice: payload.targetPrice,
+      estimatedCost: payload.estimatedCost,
+      proposedMarkup: payload.proposedMarkup,
+      supplierId: payload.supplierId,
+      referenceImageUrl: payload.referenceImageUrl,
+      clientName: payload.clientName,
       quantityNeeded: payload.quantityNeeded ?? 1,
       urgency: payload.urgency ?? 'medium',
       customerId: payload.customerId,
     },
+  )
+  return normalizeSourcingRequest(response.data)
+}
+
+/**
+ * Updates the details of a sourcing request.
+ */
+export async function updateSourcingRequest(
+  organizationId: string,
+  id: string,
+  payload: UpdateSourcingRequestPayload,
+): Promise<SourcingRequest> {
+  const response = await apiClient.put<any>(
+    `${catalogBase(organizationId)}/sourcing/${id}`,
+    payload,
   )
   return normalizeSourcingRequest(response.data)
 }
@@ -751,10 +772,23 @@ export interface CreateSupplierPayload {
 export async function fetchSuppliers(
   organizationId: string,
 ): Promise<Supplier[]> {
-  const response = await apiClient.get<Supplier[]>(
+  const response = await apiClient.get<any[]>(
     `${catalogBase(organizationId)}/suppliers`,
   )
-  return response.data || []
+  return (response.data || []).map((s: any) => ({
+    id: s.id,
+    name: s.name || s.supplierName || 'Partner Atelier',
+    specialty: s.specialty || '',
+    location: s.location || '',
+    contactEmail: s.contactEmail || '',
+    contactPhone: s.contactPhone || '',
+    websiteUrl: s.websiteUrl || '',
+    apiEndpoint: s.apiEndpoint || '',
+    minimumOrder: s.minimumOrder,
+    deliveryTimeDays: s.deliveryTimeDays,
+    isActive: s.isActive ?? true,
+    sampleCatalogCount: s.sampleCatalogCount ?? 0,
+  }))
 }
 
 /**
@@ -788,6 +822,18 @@ export async function createSupplier(
     apiEndpoint: response.data.apiEndpoint || payload.apiEndpoint || payload.websiteUrl || '',
     sampleCatalogCount: response.data.sampleCatalogCount ?? 0,
   }
+}
+
+/**
+ * Removes a partner atelier or supplier.
+ */
+export async function deleteSupplier(
+  organizationId: string,
+  supplierId: string,
+): Promise<void> {
+  await apiClient.delete(
+    `${catalogBase(organizationId)}/suppliers/${supplierId}`,
+  )
 }
 
 /**

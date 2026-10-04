@@ -1,3 +1,42 @@
+## Session 2026-10-04 (Mobile App 'Log a Visit' Quick Action Real Data Connection)
+
+**Task:** Fix the "Log a visit" quick action on the mobile app (`frontend/aveline_mobile`), which was displaying hardcoded demo customer data (`Sarah Jenkins`, `Nirmal Fernando`, `Amina Perera`), and connect it to show real customer data fetched from the backend API.
+**Tool used:** Antigravity AI Assistant
+**Status:** Completed
+
+### Work Performed
+
+1. **Root Cause Analysis**:
+   - In `core/router/app_router.dart`, the `AppRoutes.home` route builder previously initialized `const MainShell()`, defaulting its child to `const HomeScreen()`, which left `widget.customerRepository == null`.
+   - In `features/home/presentation/screens/home_screen.dart`, `_handleQuickAction(QuickAction.logVisit)` used `widget.customerRepository ?? DemoCustomerRepository()`, immediately falling back to mock demo data without attempting to resolve the real repository from `Provider` / `BuildContext`.
+   - In `app.dart`, `MultiProvider` did not register `CustomerRepository` or `CustomerBookSource` directly to the inherited widget tree.
+
+2. **Connected Real Customer Repository to HomeScreen & Router**:
+   - In `app.dart`, registered `Provider<CustomerRepository>.value(value: _customerRepository)` and `Provider<CustomerBookSource>.value(value: _customerRepository)` (alongside catalog, conversation, thread, and commerce repositories) into `MultiProvider.providers`.
+   - In `core/router/app_router.dart`, updated `AppRoutes.home` route builder to explicitly pass `customerRepository`: `MainShell(child: HomeScreen(customerRepository: customerRepository))`.
+   - In `features/home/presentation/screens/home_screen.dart`, added `_providedCustomerBookSource(BuildContext context)` helper method that resolves `CustomerRepository` from `Provider` or constructs an `ApiCustomerRepository` using `Dio` and the active `BoutiqueProvider.organizationId`.
+   - Updated `_handleQuickAction(QuickAction.logVisit)` to use `widget.customerRepository ?? _providedCustomerBookSource(context) ?? DemoCustomerRepository()`.
+
+3. **Automated Unit & Widget Testing**:
+   - Added widget test in `test/features/home/home_quick_actions_test.dart` verifying that `HomeScreen` resolves `CustomerRepository` from `Provider` when `widget.customerRepository` is omitted and correctly presents live clients in the Log Visit sheet.
+   - Executed `flutter test test/features/home/ test/core/router/`: 154/154 passed (100%).
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/app.dart`
+- `frontend/aveline_mobile/lib/core/router/app_router.dart`
+- `frontend/aveline_mobile/lib/features/home/presentation/screens/home_screen.dart`
+- `frontend/aveline_mobile/test/features/home/home_quick_actions_test.dart`
+- `docs/ai-usage/Dilud.md`
+
+### Verification Performed
+
+- `flutter test test/features/home/home_quick_actions_test.dart`: 4/4 passed (100%).
+- `flutter test test/features/home/ test/core/router/`: 154/154 passed (100%).
+- `git diff` clean and verified.
+
+---
+
 ## Session 2026-10-03 (Branch Synchronization, Test Resolution & WhatsApp Media Pipeline Configuration)
 
 **Task:** Synchronize branch `visual-agent-tuning` with upstream `origin/development`, resolve merge conflicts, verify the WhatsApp inbound photo-to-Salon chat pipeline, and configure the local `.env` environment with Cloudinary media storage and WhatsApp gateway settings.
@@ -241,12 +280,40 @@
 ### Files Created or Modified
 
 - `.env`
+=======
+   - In `core/router/app_router.dart`, the `AppRoutes.home` route builder previously initialized `const MainShell()`, defaulting its child to `const HomeScreen()`, which left `widget.customerRepository == null`.
+   - In `features/home/presentation/screens/home_screen.dart`, `_handleQuickAction(QuickAction.logVisit)` used `widget.customerRepository ?? DemoCustomerRepository()`, immediately falling back to mock demo data without attempting to resolve the real repository from `Provider` / `BuildContext`.
+   - In `app.dart`, `MultiProvider` did not register `CustomerRepository` or `CustomerBookSource` directly to the inherited widget tree.
+
+2. **Connected Real Customer Repository to HomeScreen & Router**:
+   - In `app.dart`, registered `Provider<CustomerRepository>.value(value: _customerRepository)` and `Provider<CustomerBookSource>.value(value: _customerRepository)` (alongside catalog, conversation, thread, and commerce repositories) into `MultiProvider.providers`.
+   - In `core/router/app_router.dart`, updated `AppRoutes.home` route builder to explicitly pass `customerRepository`: `MainShell(child: HomeScreen(customerRepository: customerRepository))`.
+   - In `features/home/presentation/screens/home_screen.dart`, added `_providedCustomerBookSource(BuildContext context)` helper method that resolves `CustomerRepository` from `Provider` or constructs an `ApiCustomerRepository` using `Dio` and the active `BoutiqueProvider.organizationId`.
+   - Updated `_handleQuickAction(QuickAction.logVisit)` to use `widget.customerRepository ?? _providedCustomerBookSource(context) ?? DemoCustomerRepository()`.
+
+3. **Automated Unit & Widget Testing**:
+   - Added widget test in `test/features/home/home_quick_actions_test.dart` verifying that `HomeScreen` resolves `CustomerRepository` from `Provider` when `widget.customerRepository` is omitted and correctly presents live clients in the Log Visit sheet.
+   - Executed `flutter test test/features/home/ test/core/router/`: 154/154 passed (100%).
+
+### Files Created or Modified
+
+- `frontend/aveline_mobile/lib/app.dart`
+- `frontend/aveline_mobile/lib/core/router/app_router.dart`
+- `frontend/aveline_mobile/lib/features/home/presentation/screens/home_screen.dart`
+- `frontend/aveline_mobile/test/features/home/home_quick_actions_test.dart`
+>>>>>>> 5e7e8b9 (fix(mobile): connect 'Log a visit' quick action to real customer repository)
 - `docs/ai-usage/Dilud.md`
 
 ### Verification Performed
 
+<<<<<<< HEAD
 - Tested live Gemini Vision completions via HTTP request against Google Generative Language API.
 - Executed `POST /internal/visual/analyze-image` on `http://localhost:5091` confirming `"isFallback": false`.
+=======
+- `flutter test test/features/home/home_quick_actions_test.dart`: 4/4 passed (100%).
+- `flutter test test/features/home/ test/core/router/`: 154/154 passed (100%).
+- `git diff` clean and verified.
+>>>>>>> 5e7e8b9 (fix(mobile): connect 'Log a visit' quick action to real customer repository)
 
 ---
 

@@ -22,6 +22,7 @@ import '../../features/conversations/presentation/screens/thread_route_screen.da
 import '../../features/customers/data/customer_repository.dart';
 import '../../features/customers/presentation/screens/customer_screen.dart';
 import '../../features/customers/presentation/screens/customers_screen.dart';
+import '../../features/home/presentation/screens/home_screen.dart';
 import '../../features/home/presentation/screens/main_shell.dart';
 import '../../features/notifications/presentation/screens/notifications_screen.dart';
 import '../../features/onboarding/presentation/screens/account_type_screen.dart';
@@ -132,7 +133,9 @@ abstract final class AppRouter {
         GoRoute(
           path: AppRoutes.home,
           name: 'home',
-          builder: (context, state) => const MainShell(),
+          builder: (context, state) => MainShell(
+            child: HomeScreen(customerRepository: customerRepository),
+          ),
         ),
         GoRoute(
           path: AppRoutes.catalog,

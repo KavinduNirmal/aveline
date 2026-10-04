@@ -109,10 +109,18 @@ class _StubBook implements CustomerRepository {
 ///
 /// The customer route is a stand-in for the profile: what this file is about is
 /// that "Log a visit" reaches it carrying the right id, not what it draws.
-Future<void> _pumpHome(WidgetTester tester) async {
+Future<void> _pumpHome(
+  WidgetTester tester, {
+  CustomerRepository? customerRepository = const _DefaultToStubBook(),
+  CustomerRepository? providedRepository,
+}) async {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3.0;
   addTearDown(tester.view.reset);
+
+  final repoToPass = customerRepository is _DefaultToStubBook
+      ? _StubBook()
+      : customerRepository;
 
   final router = GoRouter(
     initialLocation: '/home',
@@ -122,7 +130,7 @@ Future<void> _pumpHome(WidgetTester tester) async {
         builder: (context, state) => Scaffold(
           body: HomeScreen(
             focusTasks: const [],
-            customerRepository: _StubBook(),
+            customerRepository: repoToPass,
           ),
         ),
       ),
@@ -138,8 +146,16 @@ Future<void> _pumpHome(WidgetTester tester) async {
   );
 
   await tester.pumpWidget(
-    Provider<AuthRepository>.value(
-      value: _FakeAuthRepository(),
+    MultiProvider(
+      providers: [
+        Provider<AuthRepository>.value(
+          value: _FakeAuthRepository(),
+        ),
+        if (providedRepository != null)
+          Provider<CustomerRepository>.value(
+            value: providedRepository,
+          ),
+      ],
       child: MaterialApp.router(
         theme: AppTheme.light,
         routerConfig: router,
@@ -148,6 +164,15 @@ Future<void> _pumpHome(WidgetTester tester) async {
   );
   await tester.pump();
   await tester.pump();
+}
+
+class _DefaultToStubBook implements CustomerRepository {
+  const _DefaultToStubBook();
+  @override
+  Future<CustomerBook> fetchBook({CustomerQuery query = const CustomerQuery()}) async =>
+      const CustomerBook([]);
+  @override
+  Future<CustomerDetail?> fetchCustomer(String id) async => null;
 }
 
 /// Settles transition animations by hand.
@@ -184,6 +209,22 @@ void main() {
       expect(find.text('Anjali Perera'), findsOneWidget);
     });
 
+    testWidgets('resolves customer repository from Provider when not passed as widget prop', (
+      tester,
+    ) async {
+      await _pumpHome(
+        tester,
+        customerRepository: null,
+        providedRepository: _StubBook(),
+      );
+
+      await tester.tap(find.text('Log a visit'));
+      await _settle(tester);
+
+      expect(find.byKey(const Key('log_visit_clients')), findsOneWidget);
+      expect(find.text('Anjali Perera'), findsOneWidget);
+    });
+
     testWidgets('opens the profile of the client that was picked', (
       tester,
     ) async {
@@ -207,3 +248,4 @@ void main() {
     });
   });
 }
+

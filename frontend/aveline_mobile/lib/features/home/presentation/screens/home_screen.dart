@@ -21,6 +21,7 @@ import '../../../auth/domain/auth_repository.dart';
 import '../../../billing/data/api_payment_repository.dart';
 import '../../../billing/data/payment_repository.dart';
 import '../../../billing/presentation/top_up_sheet.dart';
+import '../../../customers/data/api_customer_repository.dart';
 import '../../../customers/data/customer_repository.dart';
 import '../../../customers/data/demo_customer_repository.dart';
 import '../../domain/client_highlight.dart';
@@ -380,11 +381,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Reads the shared customer repository through Provider, when available.
+  CustomerBookSource? _providedCustomerBookSource(BuildContext context) {
+    try {
+      return context.read<CustomerRepository>();
+    } catch (_) {
+      try {
+        final dio = context.read<Dio>();
+        final boutique = context.read<BoutiqueProvider>();
+        return ApiCustomerRepository(
+          dio,
+          organizationId: () => boutique.organizationId,
+        );
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
   void _handleQuickAction(BuildContext context, QuickAction action) {
     if (action == QuickAction.logVisit) {
       showLogVisitSheet(
         context,
-        repository: widget.customerRepository ?? DemoCustomerRepository(),
+        repository: widget.customerRepository ??
+            _providedCustomerBookSource(context) ??
+            DemoCustomerRepository(),
         // The sheet closes itself before this runs, so the profile arrives over
         // the page it was opened from rather than under a sheet. The visit is
         // recorded first: "Log a visit" must not open a profile and log nothing.

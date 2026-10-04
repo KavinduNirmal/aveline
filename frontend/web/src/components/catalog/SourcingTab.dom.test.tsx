@@ -45,7 +45,20 @@ function renderTab(
   render(
     <SourcingTab
       sourcingRequests={requests}
-      suppliers={[{ id: 'sup-1', name: 'Partner Atelier', specialty: 'Embroidery', contactEmail: '', contactPhone: '', location: 'Colombo' }]}
+      suppliers={[
+        {
+          id: 'sup-1',
+          name: 'Partner Atelier',
+          specialty: 'Embroidery',
+          contactEmail: '',
+          contactPhone: '',
+          location: 'Colombo',
+          minimumOrder: 0,
+          deliveryTimeDays: 7,
+          isActive: true,
+          sampleCatalogCount: 0,
+        },
+      ]}
       onUpdateStatus={onUpdateStatus}
       onAddRequest={vi.fn()}
       onUpdateRequest={onUpdateRequest}

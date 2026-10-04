@@ -5,6 +5,7 @@ import {
   X,
   Check,
   Archive,
+  Pencil,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -35,6 +36,7 @@ interface SourcingTabProps {
   suppliers: SupplierMock[]
   onUpdateStatus: (id: string, newStatus: SourcingRequestMock['status']) => void
   onAddRequest: (request: SourcingRequestMock) => void
+  onUpdateRequest?: (request: SourcingRequestMock) => void
 }
 
 const STAGES: {
@@ -54,6 +56,7 @@ export function SourcingTab({
   suppliers,
   onUpdateStatus,
   onAddRequest,
+  onUpdateRequest,
 }: SourcingTabProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [clientName, setClientName] = useState('')
@@ -66,6 +69,65 @@ export function SourcingTab({
   const [referenceImageUrl] = useState(
     'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?auto=format&fit=crop&w=800&q=80',
   )
+
+  // Edit ticket modal state
+  const [editingTicket, setEditingTicket] = useState<SourcingRequestMock | null>(null)
+  const [editClientName, setEditClientName] = useState('')
+  const [editCategory, setEditCategory] = useState('Lehengas')
+  const [editColor, setEditColor] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editTargetPrice, setEditTargetPrice] = useState('')
+  const [editEstimatedCost, setEditEstimatedCost] = useState('')
+  const [editSupplierId, setEditSupplierId] = useState('')
+
+  const handleOpenEditModal = (ticket: SourcingRequestMock) => {
+    setEditingTicket(ticket)
+    setEditClientName(ticket.clientName || '')
+    setEditCategory(ticket.category || 'Sarees')
+    setEditColor(ticket.color || '')
+    setEditDescription(ticket.itemDescription || '')
+    setEditTargetPrice(ticket.targetPrice ? String(ticket.targetPrice) : '')
+    setEditEstimatedCost(ticket.estimatedCost ? String(ticket.estimatedCost) : '')
+    setEditSupplierId(ticket.supplierId || suppliers[0]?.id || '')
+  }
+
+  const handleSaveEditTicket = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTicket) return
+    if (!editClientName.trim()) {
+      toast.error('Client name is required')
+      return
+    }
+
+    const selectedSupplier =
+      suppliers.find((s) => s.id === editSupplierId) ??
+      suppliers.find((s) => s.id === editingTicket.supplierId) ?? {
+        id: editSupplierId || 'sup-1',
+        name: editingTicket.supplierName || 'Partner Atelier',
+      }
+    const cost = parseFloat(editEstimatedCost) || 0
+    const target = parseFloat(editTargetPrice) || 0
+    const markup = cost > 0 ? (target - cost) / cost : 1.0
+
+    const updated: SourcingRequestMock = {
+      ...editingTicket,
+      clientName: editClientName.trim(),
+      category: editCategory.trim() || editingTicket.category,
+      color: editColor.trim() || 'Custom Hue',
+      itemDescription: editDescription.trim() || editingTicket.itemDescription,
+      supplierId: selectedSupplier.id,
+      supplierName: selectedSupplier.name,
+      estimatedCost: cost,
+      proposedMarkup: Number(markup.toFixed(2)),
+      targetPrice: target,
+    }
+
+    onUpdateRequest?.(updated)
+    toast.success(`Updated sourcing ticket for ${updated.clientName}`, {
+      description: `${updated.category} · ${formatMoney(updated.targetPrice)}`,
+    })
+    setEditingTicket(null)
+  }
 
   /**
    * A board of heavy cards grows past the screen fast, so each one folds.
@@ -273,6 +335,16 @@ export function SourcingTab({
                             </span>
                           </span>
                           <span className="flex shrink-0 items-center gap-0.5">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => handleOpenEditModal(ticket)}
+                              aria-label={`Edit the ${ticket.category} ticket for ${ticket.clientName}`}
+                              title="Edit ticket"
+                            >
+                              <Pencil className="size-3" />
+                            </Button>
                             <Button
                               type="button"
                               variant="ghost"
@@ -511,6 +583,15 @@ export function SourcingTab({
                 </div>
               </div>
 
+              {parseFloat(estimatedCost) > 0 && parseFloat(targetPrice) > 0 && (
+                <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">Estimated Margin:</span>
+                  <span className="font-semibold text-success">
+                    +{Math.round(((parseFloat(targetPrice) - parseFloat(estimatedCost)) / parseFloat(estimatedCost)) * 100)}%
+                  </span>
+                </div>
+              )}
+
               <div className="flex flex-col gap-1">
                 <Label className="text-xs">Assign Partner Atelier</Label>
                 <Select value={supplierId} onValueChange={setSupplierId}>
@@ -518,11 +599,14 @@ export function SourcingTab({
                     <SelectValue placeholder="Choose an atelier" />
                   </SelectTrigger>
                   <SelectContent>
-                    {suppliers.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name} ({s.location})
-                      </SelectItem>
-                    ))}
+                    {suppliers.map((s) => {
+                      const atelierName = s.name || (s as any).supplierName || 'Partner Atelier'
+                      return (
+                        <SelectItem key={s.id} value={s.id}>
+                          {atelierName}{s.location ? ` (${s.location})` : ''}
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -539,6 +623,142 @@ export function SourcingTab({
                 <Button type="submit" size="sm" className="gap-1.5">
                   <Check className="size-4" />
                   <span>Create Ticket</span>
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit Sourcing Ticket Modal */}
+      {editingTicket && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in">
+          <Card className="flex flex-col w-full max-w-lg border-border bg-background shadow-2xl p-6 gap-4 animate-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div>
+                <h3 className="font-serif text-base font-semibold">Edit Sourcing Ticket</h3>
+                <p className="text-xs text-muted-foreground">
+                  Update customer specifications, prices, and partner atelier
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditingTicket(null)}
+                className="size-8 p-0"
+                aria-label="Close edit modal"
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+
+            <form onSubmit={handleSaveEditTicket} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Client Name</Label>
+                <Input
+                  value={editClientName}
+                  onChange={(e) => setEditClientName(e.target.value)}
+                  placeholder="e.g. Sanjana Patel"
+                  className="text-xs"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Category</Label>
+                  <Input
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    placeholder="Lehengas / Sarees"
+                    className="text-xs"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Target Color</Label>
+                  <Input
+                    value={editColor}
+                    onChange={(e) => setEditColor(e.target.value)}
+                    placeholder="e.g. Dusty Lilac & Silver"
+                    className="text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Bespoke Requirements / Description</Label>
+                <Textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Describe custom drape, embroidery style, and deadline..."
+                  rows={3}
+                  className="text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Target retail price (LKR)</Label>
+                  <Input
+                    type="number"
+                    value={editTargetPrice}
+                    onChange={(e) => setEditTargetPrice(e.target.value)}
+                    placeholder="0"
+                    className="text-xs"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label className="text-xs">Est. atelier cost (LKR)</Label>
+                  <Input
+                    type="number"
+                    value={editEstimatedCost}
+                    onChange={(e) => setEditEstimatedCost(e.target.value)}
+                    placeholder="0"
+                    className="text-xs"
+                  />
+                </div>
+              </div>
+
+              {parseFloat(editEstimatedCost) > 0 && parseFloat(editTargetPrice) > 0 && (
+                <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">Calculated Margin:</span>
+                  <span className="font-semibold text-success">
+                    +{Math.round(((parseFloat(editTargetPrice) - parseFloat(editEstimatedCost)) / parseFloat(editEstimatedCost)) * 100)}%
+                  </span>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs">Assign Partner Atelier</Label>
+                <Select value={editSupplierId} onValueChange={setEditSupplierId}>
+                  <SelectTrigger aria-label="Assign partner atelier" className="w-full text-xs">
+                    <SelectValue placeholder="Choose an atelier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers.map((s) => {
+                      const atelierName = s.name || (s as any).supplierName || 'Partner Atelier'
+                      return (
+                        <SelectItem key={s.id} value={s.id}>
+                          {atelierName}{s.location ? ` (${s.location})` : ''}
+                        </SelectItem>
+                      )
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-border">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditingTicket(null)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" className="gap-1.5">
+                  <Check className="size-4" />
+                  <span>Save Changes</span>
                 </Button>
               </div>
             </form>

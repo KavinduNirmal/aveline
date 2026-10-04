@@ -38,9 +38,11 @@ import {
   updateCatalogItem,
   deleteCatalogItem,
   updateSourcingRequestStatus,
+  updateSourcingRequest,
   createSourcingRequest,
   updateLookbook,
   deleteLookbook,
+  deleteSupplier,
 } from '@/lib/catalog-api'
 import type { CatalogSaleReceipt, UpdateLookbookPayload } from '@/types/catalog'
 
@@ -546,6 +548,11 @@ export function CatalogPanel({
           color: newRequest.color,
           description: newRequest.itemDescription,
           targetPrice: newRequest.targetPrice,
+          estimatedCost: newRequest.estimatedCost,
+          proposedMarkup: newRequest.proposedMarkup,
+          supplierId: newRequest.supplierId,
+          referenceImageUrl: newRequest.referenceImageUrl,
+          clientName: newRequest.clientName,
           quantityNeeded: 1,
           urgency: 'medium',
         })
@@ -555,6 +562,37 @@ export function CatalogPanel({
     }
 
     setSourcingRequests((prev) => [newRequest, ...prev])
+  }
+
+  const handleUpdateSourcingRequest = async (updatedRequest: SourcingRequestMock) => {
+    if (orgId) {
+      try {
+        await updateSourcingRequest(orgId, updatedRequest.id, {
+          clientName: updatedRequest.clientName,
+          category: updatedRequest.category,
+          color: updatedRequest.color,
+          description: updatedRequest.itemDescription,
+          targetPrice: updatedRequest.targetPrice,
+          estimatedCost: updatedRequest.estimatedCost,
+          proposedMarkup: updatedRequest.proposedMarkup,
+          supplierId: updatedRequest.supplierId,
+          referenceImageUrl: updatedRequest.referenceImageUrl,
+          status: updatedRequest.status,
+        })
+      } catch {
+        // Fallback to local optimistic update
+      }
+    }
+
+    setSourcingRequests((prev) =>
+      prev.map((req) => (req.id === updatedRequest.id ? updatedRequest : req)),
+    )
+  }
+
+  const handleDeleteSupplier = async (supplierId: string) => {
+    if (!orgId) return
+    await deleteSupplier(orgId, supplierId)
+    setSuppliers((prev) => prev.filter((s) => s.id !== supplierId))
   }
 
   return (
@@ -719,6 +757,7 @@ export function CatalogPanel({
             suppliers={suppliers}
             onUpdateStatus={handleUpdateSourcingStatus}
             onAddRequest={handleAddSourcingRequest}
+            onUpdateRequest={handleUpdateSourcingRequest}
           />
         )}
 
@@ -730,6 +769,7 @@ export function CatalogPanel({
               setSuppliers((prev) => [newSupplier, ...prev.filter((s) => s.id !== newSupplier.id)])
               setSuppliersMeasured(true)
             }}
+            onDeleteSupplier={handleDeleteSupplier}
           />
         )}
       </div>

@@ -363,31 +363,33 @@ public class VisualService : IVisualService
             Id = Guid.NewGuid(),
             OrgId = dto.OrgId,
             CustomerId = dto.CustomerId,
-            ReferenceImageUrl = string.Empty,
+            ReferenceImageUrl = dto.ReferenceImageUrl ?? string.Empty,
             Category = dto.Category,
             Color = dto.Color,
             Description = dto.Description,
             TargetPrice = dto.TargetPrice,
+            EstimatedCost = dto.EstimatedCost,
+            ProposedMarkup = dto.ProposedMarkup,
+            SupplierId = dto.SupplierId,
             Status = "pending",
             CreatedAtUtc = DateTime.UtcNow
         };
 
+        if (!request.ProposedMarkup.HasValue && request.EstimatedCost.HasValue && request.EstimatedCost.Value > 0 && request.ProposedPrice.HasValue)
+        {
+            request.ProposedMarkup = Math.Round((request.ProposedPrice.Value - request.EstimatedCost.Value) / request.EstimatedCost.Value, 2);
+        }
+
         await _sourcingRequestRepository.AddAsync(request, cancellationToken);
 
-        return new SourcingRequestDto
+        string? supplierName = null;
+        if (request.SupplierId.HasValue)
         {
-            Id = request.Id,
-            OrgId = request.OrgId,
-            Category = request.Category,
-            Color = request.Color,
-            Description = request.Description,
-            TargetPrice = request.TargetPrice,
-            QuantityNeeded = dto.QuantityNeeded > 0 ? dto.QuantityNeeded : 1,
-            CustomerId = request.CustomerId,
-            Urgency = string.IsNullOrWhiteSpace(dto.Urgency) ? "medium" : dto.Urgency,
-            Status = request.Status,
-            CreatedAtUtc = request.CreatedAtUtc
-        };
+            var supplier = await _supplierRepository.GetByIdAsync(request.SupplierId.Value, dto.OrgId, cancellationToken);
+            supplierName = supplier?.SupplierName;
+        }
+
+        return MapToSourcingDto(request, supplierName, dto.QuantityNeeded, dto.Urgency);
     }
 
     public async Task<IReadOnlyList<OutfitCompositionDto>> GetLookbooksByOrgIdAsync(
@@ -498,13 +500,13 @@ public class VisualService : IVisualService
         };
     }
 
-    public async Task<IReadOnlyList<SourcingRequestDto>> GetSourcingRequestsByOrgIdAsync(
-        Guid orgId,
-        string? status = null,
-        CancellationToken cancellationToken = default)
+    private static SourcingRequestDto MapToSourcingDto(
+        SourcingRequest r,
+        string? supplierName = null,
+        int quantityNeeded = 1,
+        string urgency = "medium")
     {
-        var requests = await _sourcingRequestRepository.GetByOrgIdAsync(orgId, status, cancellationToken);
-        return requests.Select(r => new SourcingRequestDto
+        return new SourcingRequestDto
         {
             Id = r.Id,
             OrgId = r.OrgId,
@@ -512,9 +514,37 @@ public class VisualService : IVisualService
             Color = r.Color,
             Description = r.Description,
             TargetPrice = r.TargetPrice,
+            EstimatedCost = r.EstimatedCost,
+            ProposedMarkup = r.ProposedMarkup,
+            SupplierId = r.SupplierId,
+            SupplierName = supplierName,
+            ReferenceImageUrl = r.ReferenceImageUrl,
             CustomerId = r.CustomerId,
             Status = r.Status,
-            CreatedAtUtc = r.CreatedAtUtc
+            CreatedAtUtc = r.CreatedAtUtc,
+            UpdatedAtUtc = r.UpdatedAtUtc,
+            QuantityNeeded = quantityNeeded > 0 ? quantityNeeded : 1,
+            Urgency = string.IsNullOrWhiteSpace(urgency) ? "medium" : urgency
+        };
+    }
+
+    public async Task<IReadOnlyList<SourcingRequestDto>> GetSourcingRequestsByOrgIdAsync(
+        Guid orgId,
+        string? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var requests = await _sourcingRequestRepository.GetByOrgIdAsync(orgId, status, cancellationToken);
+        var suppliers = await _supplierRepository.GetByOrgIdAsync(orgId, cancellationToken);
+        var supplierMap = suppliers.ToDictionary(s => s.Id, s => s.SupplierName);
+
+        return requests.Select(r =>
+        {
+            string? supplierName = null;
+            if (r.SupplierId.HasValue && supplierMap.TryGetValue(r.SupplierId.Value, out var name))
+            {
+                supplierName = name;
+            }
+            return MapToSourcingDto(r, supplierName);
         }).ToList();
     }
 
@@ -533,18 +563,62 @@ public class VisualService : IVisualService
         request.Status = status;
         await _sourcingRequestRepository.UpdateAsync(request, cancellationToken);
 
-        return new SourcingRequestDto
+        string? supplierName = null;
+        if (request.SupplierId.HasValue)
         {
-            Id = request.Id,
-            OrgId = request.OrgId,
-            Category = request.Category,
-            Color = request.Color,
-            Description = request.Description,
-            TargetPrice = request.TargetPrice,
-            CustomerId = request.CustomerId,
-            Status = request.Status,
-            CreatedAtUtc = request.CreatedAtUtc
-        };
+            var supplier = await _supplierRepository.GetByIdAsync(request.SupplierId.Value, orgId, cancellationToken);
+            supplierName = supplier?.SupplierName;
+        }
+
+        return MapToSourcingDto(request, supplierName);
+    }
+
+    public async Task<SourcingRequestDto?> UpdateSourcingRequestAsync(
+        Guid id,
+        Guid orgId,
+        UpdateSourcingRequestDto dto,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var request = await _sourcingRequestRepository.GetByIdAsync(id, orgId, cancellationToken);
+        if (request == null)
+        {
+            return null;
+        }
+
+        if (dto.Category != null) request.Category = dto.Category.Trim();
+        if (dto.Color != null) request.Color = dto.Color.Trim();
+        if (dto.Description != null) request.Description = dto.Description.Trim();
+        if (dto.TargetPrice.HasValue) request.TargetPrice = dto.TargetPrice.Value;
+        if (dto.EstimatedCost.HasValue) request.EstimatedCost = dto.EstimatedCost.Value;
+        if (dto.SupplierId.HasValue) request.SupplierId = dto.SupplierId.Value;
+        if (dto.ReferenceImageUrl != null) request.ReferenceImageUrl = dto.ReferenceImageUrl.Trim();
+        if (!string.IsNullOrWhiteSpace(dto.Status)) request.Status = dto.Status.Trim();
+
+        if (dto.ProposedMarkup.HasValue)
+        {
+            request.ProposedMarkup = dto.ProposedMarkup.Value;
+        }
+        else if (request.EstimatedCost.HasValue && request.EstimatedCost.Value > 0 && request.ProposedPrice.HasValue)
+        {
+            request.ProposedMarkup = Math.Round((request.ProposedPrice.Value - request.EstimatedCost.Value) / request.EstimatedCost.Value, 2);
+        }
+
+        await _sourcingRequestRepository.UpdateAsync(request, cancellationToken);
+
+        string? supplierName = null;
+        if (request.SupplierId.HasValue)
+        {
+            var supplier = await _supplierRepository.GetByIdAsync(request.SupplierId.Value, orgId, cancellationToken);
+            supplierName = supplier?.SupplierName;
+        }
+
+        return MapToSourcingDto(
+            request,
+            supplierName,
+            dto.QuantityNeeded ?? 1,
+            dto.Urgency ?? "medium");
     }
 
     public async Task<IReadOnlyList<SupplierDto>> GetSuppliersByOrgIdAsync(
@@ -643,6 +717,21 @@ public class VisualService : IVisualService
             IsActive = supplier.IsActive,
             CreatedAtUtc = supplier.CreatedAtUtc
         };
+    }
+
+    public async Task<bool> DeleteSupplierAsync(
+        Guid id,
+        Guid orgId,
+        CancellationToken cancellationToken = default)
+    {
+        var supplier = await _supplierRepository.GetByIdAsync(id, orgId, cancellationToken);
+        if (supplier == null)
+        {
+            return false;
+        }
+
+        await _supplierRepository.DeleteAsync(supplier, cancellationToken);
+        return true;
     }
 
     public async Task<IReadOnlyList<SupplierCatalogItemDto>> GetSupplierCatalogAsync(

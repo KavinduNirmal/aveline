@@ -216,9 +216,29 @@ export interface CreateSourcingRequestPayload {
   color: string
   description: string
   targetPrice?: number
+  estimatedCost?: number
+  proposedMarkup?: number
+  supplierId?: string
+  clientName?: string
+  referenceImageUrl?: string
   quantityNeeded?: number
   urgency?: string
   customerId?: string
+}
+
+export interface UpdateSourcingRequestPayload {
+  clientName?: string
+  category?: string
+  color?: string
+  description?: string
+  targetPrice?: number
+  estimatedCost?: number
+  proposedMarkup?: number
+  supplierId?: string
+  referenceImageUrl?: string
+  quantityNeeded?: number
+  urgency?: string
+  status?: string
 }
 
 export interface ComposeOutfitPayload {

@@ -66,18 +66,17 @@ public class CatalogWriteAuthorizationTests
     }
 
     [Fact]
-    public void ExactlyTwelveRoutesUseThePermissionFreeMemberGate()
+    public void ExactlyFourteenRoutesUseThePermissionFreeMemberGate()
     {
-        // The ten operational tools, the counter sale, and registering a partner supplier: a staff
-        // member who may record a customer interaction that writes the takings journal must also be
-        // able to sell a piece from the catalog (the customer-interaction route already writes the
-        // same journal at member level), and registering the atelier a piece came from is the same
-        // operational act.
+        // The ten operational tools, the counter sale, registering a partner supplier, editing a
+        // sourcing ticket, and deleting a partner supplier: a staff member who may record a customer
+        // interaction that writes the takings journal must also be able to sell a piece from the catalog,
+        // register or remove an atelier, and update sourcing tickets.
         //
-        // `POST /catalog/suppliers` brought this from eleven to twelve. The count is asserted rather
+        // `DELETE /catalog/suppliers/{id}` brought this from thirteen to fourteen. The count is asserted rather
         // than inferred from the route table on purpose: the failure it guards against is a route
         // silently inheriting the group policy, so a new route has to be accounted for here.
-        Assert.Equal(12, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)));
+        Assert.Equal(14, CountPolicy(nameof(AuthorizationConfiguration.BoutiqueMemberPolicy)));
     }
 
     [Theory]
@@ -110,6 +109,9 @@ public class CatalogWriteAuthorizationTests
     [InlineData("Post", "/lookbooks/compose")]
     [InlineData("Post", "/sourcing")]
     [InlineData("Patch", "/sourcing/{id:guid}/status")]
+    [InlineData("Put", "/sourcing/{id:guid}")]
+    [InlineData("Post", "/suppliers")]
+    [InlineData("Delete", "/suppliers/{id:guid}")]
     [InlineData("Post", "/images/upload")]
     public void EachOperationalRouteNamesTheMemberGate(string method, string route)
     {

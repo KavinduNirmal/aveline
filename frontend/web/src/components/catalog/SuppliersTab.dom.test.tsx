@@ -151,4 +151,56 @@ describe('SuppliersTab and AddSupplierModal', () => {
 
     expect(onAddSupplier).not.toHaveBeenCalled()
   })
+
+  it('opens delete confirmation modal when delete button is clicked and cancels', async () => {
+    const user = userEvent.setup()
+    const onDeleteSupplier = vi.fn().mockResolvedValue(undefined)
+    const supplier = mockSupplier()
+
+    render(
+      <SuppliersTab
+        suppliers={[supplier]}
+        onDeleteSupplier={onDeleteSupplier}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: `Delete ${supplier.name}` })
+    await user.click(deleteBtn)
+
+    expect(screen.getByText('Remove Partner Atelier')).toBeInTheDocument()
+    expect(screen.getByText(/Are you sure you want to remove/i)).toBeInTheDocument()
+
+    const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+    await user.click(cancelBtn)
+
+    expect(screen.queryByText('Remove Partner Atelier')).not.toBeInTheDocument()
+    expect(onDeleteSupplier).not.toHaveBeenCalled()
+  })
+
+  it('calls onDeleteSupplier and shows toast when confirmed', async () => {
+    const user = userEvent.setup()
+    const onDeleteSupplier = vi.fn().mockResolvedValue(undefined)
+    const supplier = mockSupplier({ id: 'sup-del-99', name: 'Galle Lace House' })
+
+    render(
+      <SuppliersTab
+        suppliers={[supplier]}
+        onDeleteSupplier={onDeleteSupplier}
+      />,
+    )
+
+    const deleteBtn = screen.getByRole('button', { name: 'Delete Galle Lace House' })
+    await user.click(deleteBtn)
+
+    const confirmBtn = screen.getByRole('button', { name: /Remove Atelier/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(onDeleteSupplier).toHaveBeenCalledWith('sup-del-99')
+    })
+    expect(toastSuccess).toHaveBeenCalledWith(
+      expect.stringContaining('Removed Galle Lace House'),
+    )
+  })
 })
+

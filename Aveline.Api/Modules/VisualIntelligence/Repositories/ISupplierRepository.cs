@@ -7,4 +7,5 @@ public interface ISupplierRepository
     Task<Supplier?> GetByIdAsync(Guid id, Guid orgId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Supplier>> GetByOrgIdAsync(Guid orgId, CancellationToken cancellationToken = default);
     Task AddAsync(Supplier supplier, CancellationToken cancellationToken = default);
+    Task DeleteAsync(Supplier supplier, CancellationToken cancellationToken = default);
 }

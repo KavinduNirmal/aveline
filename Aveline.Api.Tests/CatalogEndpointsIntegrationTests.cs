@@ -307,6 +307,25 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
         var patchSourcingResponse = await _client.SendAsync(
             Authorized(HttpMethod.Patch, $"/api/v1/orgs/{org.Id}/catalog/sourcing/{createdSourcing.Id}/status", token, JsonContent.Create(updateStatusDto)));
         patchSourcingResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Put sourcing details (edit ticket)
+        var updateDetailsDto = new UpdateSourcingRequestDto
+        {
+            Category = "Gowns",
+            Color = "Emerald & Silver",
+            Description = "Custom beaded emerald couture evening gown",
+            TargetPrice = 95000.00m,
+            EstimatedCost = 45000.00m
+        };
+        var putSourcingResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Put, $"/api/v1/orgs/{org.Id}/catalog/sourcing/{createdSourcing.Id}", token, JsonContent.Create(updateDetailsDto)));
+        putSourcingResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var updatedSourcing = (await putSourcingResponse.Content.ReadFromJsonAsync<SourcingRequestDto>())!;
+        updatedSourcing.Category.Should().Be("Gowns");
+        updatedSourcing.Color.Should().Be("Emerald & Silver");
+        updatedSourcing.TargetPrice.Should().Be(95000.00m);
+        updatedSourcing.EstimatedCost.Should().Be(45000.00m);
+        updatedSourcing.ProposedMarkup.Should().Be(1.11m); // (95000 - 45000)/45000 = 1.11
     }
 
     [Fact]
@@ -1178,4 +1197,64 @@ public class CatalogEndpointsIntegrationTests : IAsyncLifetime
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
+
+    [Fact]
+    public async Task DeleteSupplier_ExistingSupplier_Returns204NoContentAndRemovesSupplier()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_supplier_del");
+        var token = CreateToken(user.ClerkId);
+
+        // 1. Create a supplier
+        var payload = new CreateSupplierDto
+        {
+            SupplierName = "Kandy Silk Guild To Delete",
+            Specialty = "Batik Silks",
+            Location = "Kandy",
+            ContactEmail = "kandy@test.lk"
+        };
+
+        var createResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Post,
+                $"/api/v1/orgs/{org.Id}/catalog/suppliers",
+                token,
+                JsonContent.Create(payload)));
+
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var created = await createResponse.Content.ReadFromJsonAsync<SupplierDto>();
+        created.Should().NotBeNull();
+
+        // 2. Delete the supplier
+        var deleteResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Delete,
+                $"/api/v1/orgs/{org.Id}/catalog/suppliers/{created!.Id}",
+                token));
+
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        // 3. Verify it is no longer in the list
+        var getResponse = await _client.SendAsync(
+            Authorized(HttpMethod.Get, $"/api/v1/orgs/{org.Id}/catalog/suppliers", token));
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var list = await getResponse.Content.ReadFromJsonAsync<List<SupplierDto>>();
+        list.Should().NotBeNull();
+        list!.Should().NotContain(s => s.Id == created.Id);
+    }
+
+    [Fact]
+    public async Task DeleteSupplier_NonExistentSupplier_Returns404NotFound()
+    {
+        var (user, org) = await SeedMemberAndOrgAsync("cat_supplier_404");
+        var token = CreateToken(user.ClerkId);
+
+        var deleteResponse = await _client.SendAsync(
+            Authorized(
+                HttpMethod.Delete,
+                $"/api/v1/orgs/{org.Id}/catalog/suppliers/{Guid.NewGuid()}",
+                token));
+
+        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
 }
+
